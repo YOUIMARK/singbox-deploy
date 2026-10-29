@@ -1,18 +1,31 @@
-# Build and Release Folders
-bin-debug/
-bin-release/
-[Oo]bj/
-[Bb]in/
+# 系统
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
 
-# Other files and folders
-.settings/
+# 开发工具
+.claude/
+.opencode/
+.agents/
+.dsh/
+.mimosa/
+.zcode/
+AGENTS.md
+CLAUDE.md
 
-# Executables
-*.swf
-*.air
-*.ipa
-*.apk
+# 文档
+docs/
+references/
 
-# Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
-# should NOT be excluded as they contain compiler settings and other important
-# information for Eclipse / Flash Builder.
+# 临时文件
+__pycache__/
+*.pyc
+
+# 机密/本地环境
+.env
+.env.*
+!.env.example
