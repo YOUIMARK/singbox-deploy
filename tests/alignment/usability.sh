@@ -23,13 +23,13 @@ profile_edit_flow() {
 }
 classic_delivery() {
     t_seed
-    t_run 0 sbd_dispatch 1 <<< $'4\n1\n1\nfixture-secret\n127.0.0.1\n19504\nexample.com\n29504\nSS交付\ny\n1\n0'
+    t_run 0 sbd_dispatch 1 <<< $'4\n1\n1\nfixture-secret\n127.0.0.1\n19504\nexample.com\nSS交付\ny'
     local id link
     id=$(jq -r '.nodes[0].id' "$SBD_REGISTRY") || exit 1
     link=$(cat "$SBD_EXPORTS/$id.txt") || exit 1
     t_contains "$CASE_TMP/output" "$link"
-    t_contains "$CASE_TMP/output" "$id"
-    t_contains "$CASE_TMP/output" '含凭据'
+    t_contains "$CASE_TMP/output" "分享链接: $link"
+    t_absent "$CASE_TMP/output" '当前节点链接'
     t_assert '创建与交付使用同一个稳定 ID' test "$SBD_NEW_ENTRY_ID" = "$id"
     t_assert '只读交付不提交第二次修订' jq -e '.revision==1' "$SBD_STATE"
 }
@@ -39,9 +39,10 @@ creation_failure_no_delivery() {
         if [[ "${!#}" = "$SBD_STATE" && ! -e "$CASE_TMP/failed" ]]; then : > "$CASE_TMP/failed"; return 1; fi
         command mv "$@"
     }
-    t_run 1 sbd_entry_create_prompt <<< $'4\n1\n1\nfixture-secret\n127.0.0.1\n19504\nexample.com\n29504\n失败节点\ny\n1\n0'
+    t_run 1 sbd_entry_create_prompt <<< $'4\n1\n1\nfixture-secret\n127.0.0.1\n19504\nexample.com\n失败节点\ny'
     t_assert '到达提交失败边界' test -f "$CASE_TMP/failed"
     t_absent "$CASE_TMP/output" '当前节点链接'
+    t_absent "$CASE_TMP/output" '分享链接:'
     t_absent "$CASE_TMP/output" '[成功]'
     t_unchanged
 }
@@ -51,7 +52,7 @@ view_failure_keeps_commit() {
         if [[ "${!#}" = "$SBD_EXPORTS"/node.*.txt ]]; then return 1; fi
         command cat "$@"
     }
-    t_run 1 sbd_entry_create_prompt <<< $'4\n1\n1\nfixture-secret\n127.0.0.1\n19504\nexample.com\n29504\n查看失败\ny\n1'
+    t_run 1 sbd_entry_create_prompt <<< $'4\n1\n1\nfixture-secret\n127.0.0.1\n19504\nexample.com\n查看失败\ny'
     t_contains "$CASE_TMP/output" '节点已提交，但资料查看失败'
     t_assert '查看失败不撤销已经提交的节点' jq -e '.nodes|length==1' "$SBD_REGISTRY"
     t_assert '保留实际已提交修订' jq -e '.revision==1' "$SBD_STATE"

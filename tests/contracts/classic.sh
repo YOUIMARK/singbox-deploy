@@ -66,6 +66,9 @@ menu_contract() {
     t_seed
     t_run 0 sbd_entry_create_prompt <<< $'5\n127.0.0.1\n19505\ncdn.example.com\n29505\n\n\n/ws\n菜单CDN\n\ny'
     NODE_ID=$(jq -r '.nodes[0].id' "$SBD_REGISTRY") || exit 1
+    t_contains "$CASE_TMP/output" "分享链接: $(cat "$SBD_EXPORTS/$NODE_ID.txt")"
+    t_absent "$CASE_TMP/output" '未验证 NAT'
+    t_absent "$CASE_TMP/output" '当前节点链接'
     t_run 0 t_classic_uri
     t_run 0 sbd_entry_change_prompt <<< $'1\n2\n\ny'
     t_run 0 t_classic_uri

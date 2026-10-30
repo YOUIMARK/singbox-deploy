@@ -168,6 +168,28 @@ try:
         assert any('[1]' in line and '[2]' in line for line in page.splitlines()), page
         assert '按回车' not in page
         send('0\n')
+    elif scenario == 'create_link':
+        wait_for('请选择')
+        send('1\n')
+        wait_for('选择配置档')
+        before = clears()
+        start = len(text())
+        send('6\n127.0.0.1\n19506\n\n自动分享Vision\n\nwww.asus.com\ny\n')
+        wait_for('分享链接:', start)
+        wait_for('按回车返回菜单', start)
+        page = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()[start:])
+        assert re.search(r'分享链接: vless://[^\r\n]+@8\.8\.8\.8:19506/?\?', page), page
+        assert '当前节点链接' not in page and '客户端映射端口' not in page, page
+        assert 'Reality 握手目标' not in page and '握手目标端口' not in page, page
+        assert '未验证 NAT' not in page and '[成功]' in page, page
+        assert clears() == before, '显示链接前不能清屏进入其他菜单'
+        stable_page()
+        start = len(text())
+        send('\n')
+        wait_for('请选择', start)
+        page = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()[start:])
+        assert 'singbox-deploy' in page and '按回车' not in page, page
+        send('0\n')
     elif scenario == 'failure':
         wait_for('请选择')
         start = len(text())

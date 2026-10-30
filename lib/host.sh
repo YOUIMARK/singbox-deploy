@@ -93,6 +93,25 @@ sbd_packages() {
     sbd_dependencies
 }
 
+sbd_public_ip() {
+    local url ip family
+    for family in 4 6; do
+        url=https://api.ipify.org
+        [[ "$family" != 6 ]] || url=https://api64.ipify.org
+        if command -v curl >/dev/null 2>&1; then
+            ip=$(curl -fsS "-$family" --connect-timeout 2 --max-time 4 "$url" 2>/dev/null) || continue
+        elif command -v wget >/dev/null 2>&1; then
+            ip=$(wget -q -T 4 -O - "$url" 2>/dev/null) || continue
+        else return 1; fi
+        # 外部响应必须是公网 IP 字面量，不能将错误页、域名或内网地址用作默认值。
+        if ip=$(python3 -c 'import ipaddress,sys; ip=ipaddress.ip_address(sys.argv[1].strip()); sys.exit(1) if not ip.is_global or ip.is_multicast else print(ip)' "$ip" 2>/dev/null); then
+            printf '%s\n' "$ip"
+            return 0
+        fi
+    done
+    return 1
+}
+
 sbd_download() {
     local url="$1" target="$2"
     if command -v curl >/dev/null 2>&1; then

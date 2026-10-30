@@ -242,16 +242,18 @@ sbd_export_rebuild() {
 }
 
 sbd_export_node() {
-    local id="$1" kind="$2" node path metadata
+    local id="$1" kind="$2" display="${3:-normal}" node path metadata
     [[ "$id" =~ ^[A-Za-z][A-Za-z0-9_.-]{0,63}$ && "$id" != schema && "$id" != links ]] || { _error '无效的节点资料 ID'; return 1; }
     node=$(jq -ce --arg id "$id" '[.nodes[]?|select(.id==$id)]|select(length==1)|.[0]' "$SBD_REGISTRY") || { _error '该节点登记已不存在或重复，不显示其他节点资料'; return 1; }
     metadata=$(jq -n --argjson node "$node" '{format:1,nodes:[$node]}') || return 1
     sbd_export_metadata_check /dev/stdin <<< "$metadata" || return 1
     case "$kind" in link) path="$SBD_EXPORTS/$id.txt" ;; json) path="$SBD_EXPORTS/$id.json" ;; *) _error '未知节点资料类型'; return 1 ;; esac
     [[ -s "$path" ]] || { _error "该节点尚无可读取的已提交导出: $path"; return 1; }
-    printf '节点: %s (%s)\n' "$(jq -r .name <<< "$node")" "$id"
+    if [[ "$display" != inline ]]; then printf '节点: %s (%s)\n' "$(jq -r .name <<< "$node")" "$id"; fi
     if [[ "$kind" = link ]]; then
-        sbd_info '以下是已提交的分享链接，含凭据；未实时重建，也不代表连通已验证'
+        if [[ "$display" = inline ]]; then
+            printf '  '; sbd_ui_tint 36 '分享链接: '
+        else sbd_info '以下是已提交的分享链接，含凭据；未实时重建，也不代表连通已验证'; fi
         cat -- "$path" || { _error '读取该节点分享链接失败'; return 1; }
     else
         [[ -s "$SBD_EXPORTS/schema.json" ]] || { _error '客户端 JSON 的本地 Schema 缺失'; return 1; }

@@ -24,6 +24,13 @@ case "$1" in
         sbd_backend() { printf 'openrc\n'; }
         sbd_console
         ;;
+    create_link)
+        t_seed
+        curl() { printf '8.8.8.8\n'; }
+        sbd_service_enabled() { printf 'disabled\n'; }
+        sbd_backend() { printf 'openrc\n'; }
+        sbd_console
+        ;;
     eof)
         sbd_ui_begin 'EOF 测试'
         sbd_ui_pause

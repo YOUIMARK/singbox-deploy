@@ -72,10 +72,13 @@ hy2_salamander() {
 }
 create_prompt_contract() {
     t_seed
-    t_run 0 sbd_entry_create_prompt <<< $'2\n127.0.0.1\n019501\nexample.com\n029501\n菜单节点\nfixture-password\n3\nnode.example.com\n2\ny'
-    t_absent "$CASE_TMP/output" fixture-password
-    t_contains "$CASE_TMP/output" '未验证 NAT'
-    t_assert '菜单真实创建并使用不同映射端口' jq -e '.nodes[0]|.name=="菜单节点" and .client.server_port==29501' "$SBD_REGISTRY"
+    t_run 0 sbd_entry_create_prompt <<< $'2\n127.0.0.1\n019501\nexample.com\n菜单节点\nfixture-password\n3\nnode.example.com\n2\ny'
+    t_contains "$CASE_TMP/output" "[成功] 节点与客户端资料已提交: $SBD_EXPORTS"
+    t_contains "$CASE_TMP/output" '分享链接: anytls://'
+    t_absent "$CASE_TMP/output" '当前节点链接'
+    t_absent "$CASE_TMP/output" '未验证 NAT'
+    t_absent "$CASE_TMP/output" '客户端映射端口'
+    t_assert '菜单真实创建且客户端初始端口沿用监听端口' jq -e '.nodes[0]|.name=="菜单节点" and .client.server_port==19501' "$SBD_REGISTRY"
     t_run 0 sbd_entries_list
     t_absent "$CASE_TMP/output" fixture-password
 }
@@ -111,8 +114,10 @@ hidden_action_retry() {
 }
 post_commit_contract() {
     t_seed
-    t_run 0 sbd_entry_create_prompt <<< $'2\n127.0.0.1\n19501\nexample.com\n29501\n交付节点\nfixture-password\n3\nnode.example.com\n2\ny\n2\n0'
-    t_contains "$CASE_TMP/output" '当前节点链接'
+    t_run 0 sbd_entry_create_prompt <<< $'2\n127.0.0.1\n19501\nexample.com\n交付节点\nfixture-password\n3\nnode.example.com\n2\ny'
+    t_contains "$CASE_TMP/output" "分享链接: $(cat "$SBD_EXPORTS/$SBD_NEW_ENTRY_ID.txt")"
+    t_absent "$CASE_TMP/output" '当前节点链接'
+    t_run 0 sbd_export_node "$SBD_NEW_ENTRY_ID" json
     t_contains "$CASE_TMP/output" "客户端 JSON: $SBD_EXPORTS/"
     t_absent "$CASE_TMP/output" fixture-password
     t_assert '已提交节点的准确 ID 贯穿资料交付' test "$SBD_NEW_ENTRY_ID" = "$(jq -r '.nodes[0].id' "$SBD_REGISTRY")"
@@ -140,9 +145,9 @@ t_case 'AnyReality 真实密钥与原生客户端/服务端' reality_contract
 t_case 'Hysteria2 默认 BBR 和证书指纹 URI' hy2_default
 t_case 'Hysteria2 两侧带宽与 Gecko 自定义 URI 扩展' hy2_custom
 t_case 'Hysteria2 Salamander 特殊密码回读' hy2_salamander
-t_case '完整编号菜单真实创建和凭据不回显' create_prompt_contract
+t_case '精简向导真实创建、自动分享和列表隐藏凭据' create_prompt_contract
 t_case '七档操作菜单只显示适用项且保持原有编号' action_contract
 t_case '隐藏操作编号错误只重问操作字段' hidden_action_retry
-t_case '创建后当前节点 JSON 路径、稳定 ID 和 EOF 语义' post_commit_contract
+t_case '创建后自动分享、可另查 JSON、稳定 ID 和 EOF 语义' post_commit_contract
 t_case '首页空列表明确提示、坏登记不冒充没有节点' empty_list_contract
 t_finish

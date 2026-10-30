@@ -169,7 +169,7 @@ semantic_failure() {
 }
 ss_menu() {
     t_seed
-    t_run 0 sbd_entry_create_prompt <<< $'4\n2\n2\n\n127.0.0.1\n19504\nexample.com\n29504\n菜单SS\ny'
+    t_run 0 sbd_entry_create_prompt <<< $'4\n2\n2\n\n127.0.0.1\n19504\nexample.com\n菜单SS\ny'
     NODE_ID=$(jq -r '.nodes[0].id' "$SBD_REGISTRY") || exit 1
     t_run 0 t_classic_uri
     t_run 0 sbd_entry_change_prompt <<< $'1\n8\n3\n3\n\ny'

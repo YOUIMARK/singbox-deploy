@@ -26,6 +26,12 @@ sbd_entry_submit() {
 
 sbd_entry_host() { sbd_tls_identity "$1" >/dev/null 2>&1 || { _error '地址须为 DNS 名称或不带方括号的 IP'; return 1; }; }
 
+sbd_entry_deliver() {
+    sbd_success "节点与客户端资料已提交: $SBD_EXPORTS"
+    sbd_export_node "$SBD_NEW_ENTRY_ID" link inline || { _error '节点已提交，但资料查看失败；未回滚已提交节点'; return 1; }
+    sbd_ui_pause
+}
+
 sbd_entry_socket_available() {
     python3 - "$1" "$2" "$3" <<'PY'
 import socket, sys
@@ -582,12 +588,44 @@ sbd_entry_listen_prompt() {
     done
 }
 
+sbd_entry_server_prompt() {
+    local default="${1:-}"
+    [[ "${SBD_UI_EOF:-false}" != true ]] || return 2
+    if [[ -n "$default" ]]; then
+        sbd_entry_host_prompt '客户端连接地址' "$default"
+        return $?
+    fi
+    if default=$(sbd_public_ip); then
+        sbd_info '检测到的是出口 IP；若提供商指定其他入站域名/IP，请手动填写'
+        while true; do
+            sbd_ui_prompt "客户端连接地址（回车用公网 IP $default）"
+            if ! IFS= read -r SBD_REPLY; then sbd_info '输入结束，已取消'; return 2; fi
+            SBD_REPLY="${SBD_REPLY:-$default}"
+            sbd_entry_host "$SBD_REPLY" && return 0
+        done
+    fi
+    sbd_info '未能自动获取公网 IP，请手动填写提供商的公网域名/IP'
+    sbd_entry_host_prompt '客户端连接地址（提供商公网域名/IP）'
+}
+
 sbd_entry_port_prompt() {
-    local listen="$1" network="$2" exclude="${3:-}" config="$SBD_CONFIG"
+    local listen="$1" network="$2" exclude="${3:-}" config="$SBD_CONFIG" random value generated
     [[ -f "$config" ]] || config="$SBD_APP/presets/base.json"
     while true; do
-        sbd_entry_number_prompt '本地监听端口' 1 65535 || return $?
-        sbd_entry_port "$SBD_CONFIG_DIR" "$listen" "$SBD_REPLY" "$network" "$exclude" "$config" && return 0
+        [[ "${SBD_UI_EOF:-false}" != true ]] || return 2
+        sbd_ui_prompt '监听端口（回车随机生成）'
+        if ! IFS= read -r SBD_REPLY; then sbd_info '输入结束，已取消'; return 2; fi
+        generated=false
+        if [[ -z "$SBD_REPLY" ]]; then
+            random=$(openssl rand -hex 2) && [[ "$random" =~ ^[0-9a-fA-F]{4}$ ]] || { _error '随机端口生成失败'; return 1; }
+            SBD_REPLY=$((10000+16#$random%55536)); generated=true
+        fi
+        if ! value=$(sbd_integer "$SBD_REPLY" 1 65535); then _error '请输入 1 到 65535 的十进制整数，或回车随机生成'; continue; fi
+        SBD_REPLY="$value"
+        if sbd_entry_port "$SBD_CONFIG_DIR" "$listen" "$SBD_REPLY" "$network" "$exclude" "$config"; then
+            [[ "$generated" != true ]] || sbd_info "随机监听端口: $SBD_REPLY"
+            return 0
+        fi
     done
 }
 
@@ -618,12 +656,10 @@ sbd_entry_choose() {
 }
 
 sbd_entry_tls_prompt() {
-    local profile="$1" server="$2" choice id name trust values handshake port kind default
+    local profile="$1" server="$2" choice id name trust values kind default
     if [[ "$profile" = anyreality || "$profile" = vless_reality ]]; then
-        sbd_entry_host_prompt 'Reality SNI' || return $?; name="$SBD_REPLY"
-        sbd_entry_host_prompt 'Reality 握手目标' "$name" || return $?; handshake="$SBD_REPLY"
-        sbd_entry_number_prompt '握手目标端口' 1 65535 443 || return $?; port="$SBD_REPLY"
-        SBD_TLS_REQUEST=$(jq -n --arg name "$name" --arg server "$handshake" --argjson port "$port" '{kind:"reality",server_name:$name,handshake:{server:$server,server_port:$port}}') || return 1
+        sbd_entry_host_prompt '伪装域名' www.amd.com || return $?; name="$SBD_REPLY"
+        SBD_TLS_REQUEST=$(jq -n --arg name "$name" '{kind:"reality",server_name:$name,handshake:{server:$name,server_port:443}}') || return 1
         return 0
     fi
     sbd_ui_options '[1] 已有共享 ACME provider' '[2] 已登记 PEM 证书' '[3] 新建 P-256 自签证书'
@@ -735,9 +771,8 @@ sbd_entry_create_classic_prompt() {
         server=$(jq -r '.server' <<< "$cdn") && external=$(jq -r '.server_port' <<< "$cdn") || return 1
         options=$(jq --argjson cdn "$cdn" '. + {cdn:$cdn}' <<< "$options") || return 1
     else
-        sbd_entry_host_prompt '客户端连接地址（提供商公网域名/IP）' || return $?; server="$SBD_REPLY"
-        sbd_entry_number_prompt '客户端映射端口（对应所选 TCP/UDP 网络）' 1 65535 "$port" || return $?; external="$SBD_REPLY"
-        if [[ "$network" = both ]]; then sbd_info '此节点使用同一个对外端口，请确认提供商同时映射 TCP 和 UDP'; fi
+        sbd_entry_server_prompt || return $?; server="$SBD_REPLY"
+        external="$port"
     fi
     sbd_entry_default '节点显示名' "$profile-$port" || return $?; name="$SBD_REPLY"
     if [[ "$profile" != shadowsocks ]]; then
@@ -753,9 +788,7 @@ sbd_entry_create_classic_prompt() {
     sbd_read_required '确认创建并按需重启？输入 y 确认，其他输入取消' || return $?
     [[ "$SBD_REPLY" = y ]] || return 2
     sbd_entry_submit "$request" || return 1
-    sbd_success "节点与客户端资料已提交: $SBD_EXPORTS；未验证 NAT/CDN 回源或客户端握手"
-    sbd_ui_pause
-    sbd_export_node_menu "$SBD_NEW_ENTRY_ID" || { _error '节点已提交，但资料查看失败；未回滚已提交节点'; return 1; }
+    sbd_entry_deliver
 }
 
 sbd_entry_hy2_prompt() {
@@ -790,7 +823,7 @@ sbd_entry_hy2_prompt() {
 }
 
 sbd_entry_create_prompt() {
-    local choice profile listen port server external password name source options='{}' request network
+    local choice profile listen port server password name source options='{}' request network
     sbd_ui_begin '添加节点'
     sbd_version >/dev/null || return 1
     if [[ -f "$SBD_CONFIG" ]]; then sbd_check_config || return 1; fi
@@ -805,20 +838,17 @@ sbd_entry_create_prompt() {
     network=tcp; [[ "$profile" != hysteria2 ]] || network=udp
     sbd_entry_listen_prompt || return $?; listen="$SBD_REPLY"
     sbd_entry_port_prompt "$listen" "$network" || return $?; port="$SBD_REPLY"
-    sbd_entry_host_prompt '客户端连接地址（提供商公网域名/IP）' || return $?; server="$SBD_REPLY"
-    sbd_entry_number_prompt '客户端映射端口（不修改提供商转发）' 1 65535 "$port" || return $?; external="$SBD_REPLY"
+    sbd_entry_server_prompt || return $?; server="$SBD_REPLY"
     sbd_entry_default '节点显示名' "$profile-$port" || return $?; name="$SBD_REPLY"
     sbd_entry_password_prompt '认证密码' || return $?; password="$SBD_REPLY"
     sbd_entry_tls_prompt "$profile" "$server" || return $?; source="$SBD_TLS_REQUEST"
     if [[ "$profile" = hysteria2 ]]; then sbd_entry_hy2_prompt || return $?; options="$SBD_HY2_REQUEST"; fi
-    request=$(jq -n --arg profile "$profile" --arg name "$name" --arg listen "$listen" --argjson port "$port" --arg server "$server" --argjson external "$external" --arg password "$password" --argjson source "$source" --argjson options "$options" \
-        '$options + {profile:$profile,name:$name,listen:$listen,listen_port:$port,server:$server,server_port:$external,password:$password,tls_source:$source}') || return 1
+    request=$(jq -n --arg profile "$profile" --arg name "$name" --arg listen "$listen" --argjson port "$port" --arg server "$server" --arg password "$password" --argjson source "$source" --argjson options "$options" \
+        '$options + {profile:$profile,name:$name,listen:$listen,listen_port:$port,server:$server,server_port:$port,password:$password,tls_source:$source}') || return 1
     sbd_read_required '确认创建并按需重启？输入 y 确认，其他输入取消' || return $?
     [[ "$SBD_REPLY" = y ]] || return 2
     sbd_entry_submit "$request" || return 1
-    sbd_success "节点与客户端资料已提交: $SBD_EXPORTS；未验证 NAT 入站或客户端握手"
-    sbd_ui_pause
-    sbd_export_node_menu "$SBD_NEW_ENTRY_ID" || { _error '节点已提交，但资料查看失败；未回滚已提交节点'; return 1; }
+    sbd_entry_deliver
 }
 
 sbd_entry_actions() {
@@ -883,7 +913,7 @@ sbd_entry_change_prompt() {
             value="$SBD_REPLY" ;;
         3)
             action=external
-            sbd_entry_host_prompt '客户端连接地址' "$(jq -r '.client.server' <<< "$node")" || return $?; server="$SBD_REPLY"
+            sbd_entry_server_prompt "$(jq -r '.client.server' <<< "$node")" || return $?; server="$SBD_REPLY"
             sbd_entry_number_prompt '客户端映射端口' 1 65535 "$(jq -r '.client.server_port' <<< "$node")" || return $?
             value=$(jq -n --arg server "$server" --argjson port "$SBD_REPLY" '{server:$server,server_port:$port}') || return 1 ;;
         4)
