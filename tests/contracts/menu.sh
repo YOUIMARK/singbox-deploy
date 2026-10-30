@@ -11,6 +11,19 @@ plain_menu() {
     t_absent "$CASE_TMP/output" '--------'
     t_absent "$CASE_TMP/output" $'\033'
 }
+section_spacing() {
+    t_run 0 sbd_ui_menu '核心管理' '@安装与更新' '[1] 安装' '@服务控制' '[2] 启动' '[0] 返回'
+    t_assert '标题到首组及各组之间只留一行' python3 - "$CASE_TMP/output" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+assert '\n  核心管理\n\n  【安装与更新】\n' in text, text
+assert '\n  [1] 安装\n\n  【服务控制】\n' in text, text
+assert '\n  [2] 启动\n\n  [0] 返回\n' in text, text
+assert '\n\n\n' not in text, text
+PY
+    t_run 0 sbd_ui_menu '节点管理' '[1] 列出节点' '[0] 返回'
+    t_contains "$CASE_TMP/output" $'  节点管理\n\n  [1] 列出节点'
+}
 centered_title() {
     COLUMNS=80 t_run 0 sbd_ui_begin 'sing-box 部署管理脚本 (singbox-deploy)' true
     t_assert '标题按显示列在紧凑标题区居中' python3 - "$CASE_TMP/output" <<'PY'
@@ -100,6 +113,7 @@ pty_case() {
     t_assert '真实 PTY 验证' python3 "$ROOT/tests/support/menu_pty.py" "$ROOT" "$CASE_TMP" "$1"
 }
 t_case '非终端标题与编号完整且无 ANSI' plain_menu
+t_case '首个分组不叠加标题空行、其余分组间距不变' section_spacing
 t_case '主菜单标题居中、窄屏不增加多余缩进' centered_title
 t_case '状态用分隔符紧凑排列、窄屏按字段换行' status_rows
 t_case '80/100 列双栏及中文对齐' column_layout

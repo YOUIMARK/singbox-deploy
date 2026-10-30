@@ -153,7 +153,7 @@ sbd_time_menu() {
 sbd_observe_menu() {
     local choice action value port secret page
     while true; do
-        sbd_ui_menu '原生观测、日志与缓存' '[1] 查看设置（隐藏 secret）' '[2] 启用/修改 loopback Clash API' '[3] 禁用 API' \
+        sbd_ui_menu '日志与监控' '[1] 查看设置（隐藏 secret）' '[2] 启用/修改 loopback Clash API' '[3] 禁用 API' \
             '[4] 当前连接' '[5] 一次流量采样' '[6] 最近 100 行日志' '[7] 日志级别/关闭/回到服务日志' '[8] 启用/禁用 cache_file' '[9] DNS 缓存持久化开关' '[10] 时间诊断与原生 NTP' '[0] 返回'
         page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 10 || return 0; choice="$SBD_REPLY"

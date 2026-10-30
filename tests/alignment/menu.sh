@@ -15,11 +15,14 @@ main_numbers() {
     cp "$SBD_REGISTRY" "$CASE_TMP/registry-before" || exit 1
     COLUMNS=80 t_run 0 sbd_console <<< 0
     local number
-    for number in {0..11}; do
+    for number in {0..20}; do
         t_assert "主菜单编号 $number 只出现一次" test "$(grep -oF "[$number]" "$CASE_TMP/output" | wc -l)" = 1
     done
-    t_contains "$CASE_TMP/output" '【节点与网络】'
-    t_contains "$CASE_TMP/output" '【服务与维护】'
+    t_contains "$CASE_TMP/output" '【节点管理】'
+    t_contains "$CASE_TMP/output" '【网络设置】'
+    t_contains "$CASE_TMP/output" '【服务控制】'
+    t_contains "$CASE_TMP/output" '【配置与维护】'
+    t_contains "$CASE_TMP/output" '【核心管理】'
     t_contains "$CASE_TMP/output" '系统: '
     t_contains "$CASE_TMP/output" 'init: openrc'
     t_absent "$CASE_TMP/output" '--------'
@@ -30,18 +33,26 @@ main_numbers() {
     t_assert '主菜单编号按阅读顺序递增、组间留白且右列固定' python3 - "$CASE_TMP/output" <<'PY'
 import sys, unicodedata, re
 text = open(sys.argv[1]).read()
-assert [int(n) for n in re.findall(r'\[(\d+)\]', text)] == list(range(1, 12)) + [0]
-assert '\n\n  【节点与网络】\n' in text
-assert '\n\n  【服务与维护】\n' in text
+assert [int(n) for n in re.findall(r'\[(\d+)\]', text)] == list(range(1, 21)) + [0]
+labels = ['添加节点', '查看节点', '修改节点', '删除节点', '节点链接',
+          'DNS 设置', '分流设置', '证书管理', '隧道管理',
+          '重启服务', '停止服务', '查看状态', '查看日志', '启用自启', '关闭自启',
+          '检查配置', '日志与监控', '脚本维护', 'sing-box 核心管理', '卸载脚本']
+for number, label in enumerate(labels, 1):
+    assert f'[{number}] {label}' in text
+for old in ('部署状态', '独立 DNS', '分享与客户端资料', '维护与显式协调', '原生观测'):
+    assert old not in text
+assert '\n\n  【节点管理】\n' in text
+assert '\n\n  【服务控制】\n' in text
 assert '\n\n  [0] 退出\n' in text
 assert '核心: ' in next(line for line in text.splitlines() if '  |  服务:' in line)
-for item in ('[2]', '[4]', '[7]', '[9]', '[11]'):
+for item in ('[2]', '[4]', '[7]', '[9]', '[11]', '[13]', '[15]', '[17]', '[20]'):
     line = next(line for line in text.splitlines() if item in line)
     prefix = line[:line.index(item)]
     width = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix)
     assert width == 34, (item, width, line)
 PY
-    t_run 0 sbd_dispatch 10
+    t_run 0 sbd_dispatch 12
     t_contains "$CASE_TMP/output" "$SBD_CONFIG"
     t_contains "$CASE_TMP/output" "$SBD_EXPORTS"
     t_contains "$CASE_TMP/output" "$SBD_LOG"
@@ -62,7 +73,7 @@ unknown_brief() {
     t_run 0 sbd_console <<< 0
     t_contains "$CASE_TMP/output" '托管节点: 未知'
     t_contains "$CASE_TMP/output" '状态摘要读取不完整'
-    t_contains "$CASE_TMP/output" '[11] 维护与显式协调'
+    t_contains "$CASE_TMP/output" '[18] 脚本维护'
 }
 pending_brief() {
     menu_fixture
@@ -95,15 +106,20 @@ selectors_literal() {
 numbered_navigation() {
     menu_fixture
     local number title
-    local -a titles=('节点管理' '分享与客户端资料' '规则集与路由' '独立 DNS 管理' 'Endpoints 与 Cloudflared' '核心管理' 'TLS 与证书' '原生观测、日志与缓存')
-    for number in {1..8}; do
-        title="${titles[number-1]}"
+    while IFS='|' read -r number title; do
         t_run 0 sbd_console <<< "$(printf '%s\n0\n0\n' "$number")"
         t_contains "$CASE_TMP/output" "  $title"
         t_assert '输入编号确实进入相应子菜单' test "$(grep -Fc "  $title" "$CASE_TMP/output")" = 1
-    done
-    t_run 0 sbd_console <<< $'11\n0\n0'
-    t_contains "$CASE_TMP/output" '  维护与显式协调'
+    done <<'MENUS'
+5|节点链接
+6|DNS 设置
+7|分流设置
+8|证书管理
+9|隧道管理
+17|日志与监控
+18|脚本维护
+19|核心管理
+MENUS
 }
 host_unknown() {
     menu_fixture
@@ -115,7 +131,7 @@ host_unknown() {
     t_absent "$CASE_TMP/output" '[成功]'
     t_run 0 sbd_console <<< 0
     t_contains "$CASE_TMP/output" '状态摘要读取不完整'
-    t_contains "$CASE_TMP/output" '[11] 维护与显式协调'
+    t_contains "$CASE_TMP/output" '[18] 脚本维护'
 }
 t_case '主菜单顺序编号、分组留白、状态分隔且详细状态只读' main_numbers
 t_case '精简摘要保留未知状态和失败返回码' unknown_brief

@@ -10,15 +10,20 @@ profile_edit_flow() {
     for profile in shadowsocks vmess_ws vless_ws vless_reality hysteria2 anytls anyreality; do
         t_entry_add "$profile"
         case "$profile" in shadowsocks|vmess_ws|vless_ws) hidden=6 ;; *) hidden=8 ;; esac
-        t_run 0 sbd_entry_change_prompt <<< "$(printf '1\n%s\n1\nmenu-%s\ny\n' "$hidden" "$profile")"
+        t_run 0 sbd_dispatch 3 <<< "$(printf '1\n7\n%s\n1\nmenu-%s\ny\n' "$hidden" "$profile")"
         t_contains "$CASE_TMP/output" '选择显示的编号'
+        t_contains "$CASE_TMP/output" '修改节点'
+        t_absent "$CASE_TMP/output" '[7] 删除节点'
         t_assert '真实菜单只重问操作后提交选定节点' jq -e --arg name "menu-$profile" '.nodes[0].name==$name' "$SBD_REGISTRY"
-        t_run 0 sbd_apply sbd_entry_change "$NODE_ID" delete ''
+        t_run 0 sbd_dispatch 4 <<< $'1\ny'
+        t_contains "$CASE_TMP/output" '将删除节点:'
+        t_absent "$CASE_TMP/output" '选择操作'
+        t_assert '首页删除入口直接选择节点并提交' jq -e '.nodes|length==0' "$SBD_REGISTRY"
     done
 }
 classic_delivery() {
     t_seed
-    t_run 0 sbd_entry_create_prompt <<< $'4\n1\n1\nfixture-secret\n127.0.0.1\n19504\nexample.com\n29504\nSS交付\ny\n1\n0'
+    t_run 0 sbd_dispatch 1 <<< $'4\n1\n1\nfixture-secret\n127.0.0.1\n19504\nexample.com\n29504\nSS交付\ny\n1\n0'
     local id link
     id=$(jq -r '.nodes[0].id' "$SBD_REGISTRY") || exit 1
     link=$(cat "$SBD_EXPORTS/$id.txt") || exit 1
@@ -36,7 +41,7 @@ creation_failure_no_delivery() {
     }
     t_run 1 sbd_entry_create_prompt <<< $'4\n1\n1\nfixture-secret\n127.0.0.1\n19504\nexample.com\n29504\n失败节点\ny\n1\n0'
     t_assert '到达提交失败边界' test -f "$CASE_TMP/failed"
-    t_absent "$CASE_TMP/output" '当前节点资料'
+    t_absent "$CASE_TMP/output" '当前节点链接'
     t_absent "$CASE_TMP/output" '[成功]'
     t_unchanged
 }
@@ -69,7 +74,7 @@ summary_with_live_records() {
     id=$(jq -r '.nodes[0].id' "$SBD_REGISTRY") || exit 1
     t_assert '状态摘要不泄露链接或凭据' test -s "$SBD_EXPORTS/$id.txt"
     t_absent "$CASE_TMP/output" "$(cat "$SBD_EXPORTS/$id.txt")"
-    t_run 0 sbd_dispatch 10
+    t_run 0 sbd_dispatch 12
     t_contains "$CASE_TMP/output" "$SBD_LOG"
     t_contains "$CASE_TMP/output" "$SBD_CONFIG"
     t_entry_unchanged
@@ -87,10 +92,39 @@ fixed_identity_contract() {
     t_contains "$CASE_TMP/output" 'ID 已存在'
     t_entry_unchanged
 }
-t_case '七档真实编辑菜单拒绝隐藏编号后只重问操作' profile_edit_flow
+delete_cancellation() {
+    t_seed
+    t_entry_add shadowsocks
+    t_entry_add vless_ws
+    t_entry_save
+    t_run 2 sbd_dispatch 4 <<< $'2\nn'
+    t_contains "$CASE_TMP/output" '将删除节点:'
+    t_entry_unchanged
+    t_run 2 sbd_dispatch 4 <<< 2
+    t_contains "$CASE_TMP/output" '输入结束'
+    t_entry_unchanged
+    t_run 2 sbd_dispatch 4 < /dev/null
+    t_entry_unchanged
+}
+delete_state_failure() {
+    t_seed
+    t_entry_add shadowsocks
+    t_entry_save
+    mv() {
+        if [[ "${!#}" = "$SBD_STATE" && ! -e "$CASE_TMP/failed" ]]; then : > "$CASE_TMP/failed"; return 1; fi
+        command mv "$@"
+    }
+    t_run 1 sbd_dispatch 4 <<< $'1\ny'
+    t_assert '首页删除确实走到 state 提交边界' test -f "$CASE_TMP/failed"
+    t_absent "$CASE_TMP/output" '[成功]'
+    t_entry_unchanged
+}
+t_case '首页修改与删除入口走七档真实事务、修改拒绝隐藏删除编号' profile_edit_flow
 t_case 'Shadowsocks 创建后立即查看该节点真实 URI' classic_delivery
 t_case '创建事务失败不进入交付菜单、不假报成功' creation_failure_no_delivery
 t_case '提交后资料读取失败明确区分，不撤销已提交节点' view_failure_keeps_commit
 t_case '主菜单精简摘要、详细状态保留实际路径且不写事实' summary_with_live_records
 t_case '预先确定的创建 ID 不污染配置或覆盖已有节点' fixed_identity_contract
+t_case '首页删除取消和必填 EOF 保留全部节点与分享' delete_cancellation
+t_case '首页删除 state 失败恢复配置登记与全部旧链接' delete_state_failure
 t_finish

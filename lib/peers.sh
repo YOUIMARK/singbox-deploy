@@ -274,7 +274,7 @@ sbd_peer_magic_prompt() {
 sbd_peers_menu() {
     local choice area action tag value kind rc page
     while true; do
-        sbd_ui_menu 'Endpoints 与 Cloudflared' '[1] 查看概要（不显示密钥）' '[2] 向导添加 WireGuard' '[3] 向导添加 Tailscale' '[4] 向导添加 Cloudflared' \
+        sbd_ui_menu '隧道管理' '[1] 查看概要（不显示密钥）' '[2] 向导添加 WireGuard' '[3] 向导添加 Tailscale' '[4] 向导添加 Cloudflared' \
             '[5] 原生 JSON 添加' '[6] 原生 JSON 替换托管对象' '[7] 删除托管对象（保留认证/Taildrop 数据）' '[8] MagicDNS 关联' '[9] Tailscale 登录说明与日志设置' '[0] 返回'
         page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 9 || return 0; choice="$SBD_REPLY"

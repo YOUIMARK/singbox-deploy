@@ -284,7 +284,7 @@ sbd_tls_remove_prompt() {
 sbd_tls_menu() {
     local choice rc page
     while true; do
-        sbd_ui_menu 'TLS 与证书' '[1] 列出资料（不显示凭据）' '[2] 新建 DNS-01 ACME provider' \
+        sbd_ui_menu '证书管理' '[1] 列出资料（不显示凭据）' '[2] 新建 DNS-01 ACME provider' \
             '[3] 导入外部 PEM' '[4] 生成 P-256 自签证书' '[5] 删除未引用资料' '[0] 返回'
         page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 5 || return 0; choice="$SBD_REPLY"

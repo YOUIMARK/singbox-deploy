@@ -43,7 +43,7 @@ sbd_reset() {
 
 sbd_adopt_menu() {
     local choice area id position count tag facts node defaults name server port profile tls name_sni short trust host origin up down
-    sbd_ui_menu '接管与漂移协调' '[1] 接管/协调配置中的策略对象' '[2] 接管单用户协议节点' '[3] 协调已登记节点（采用当前 inbound）' '[0] 返回'
+    sbd_ui_menu '接管或同步配置' '[1] 接管或同步规则、DNS 与隧道配置' '[2] 接管已有节点（单用户）' '[3] 同步已登记节点（采用当前 inbound）' '[0] 返回'
     sbd_read_integer '请选择' 0 3 || return $?; choice="$SBD_REPLY"
     [[ "$choice" != 0 ]] || return 2
     [[ -f "$SBD_CONFIG" ]] || { _error '没有当前配置可接管'; return 1; }
@@ -109,7 +109,7 @@ sbd_adopt_menu() {
 sbd_maintenance_menu() {
     local choice category kind page
     while true; do
-        sbd_ui_menu '维护与显式协调' '[1] 检查配置' '[2] 接管/漂移协调' '[3] 按托管类别 reset' '[4] 恢复最近事务' '[5] 更新管理器' '[6] 卸载' '[0] 返回'
+        sbd_ui_menu '脚本维护' '[1] 检查配置' '[2] 接管或同步现有配置' '[3] 清理脚本管理的配置' '[4] 恢复上次更改' '[5] 更新脚本' '[6] 卸载脚本' '[0] 返回'
         page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 6 || return 0; choice="$SBD_REPLY"
         case "$choice" in
@@ -220,17 +220,26 @@ sbd_status() {
 
 sbd_dispatch() {
     case "$1" in
-        1) sbd_entries_menu ;;
-        2) sbd_export_menu ;;
-        3) sbd_rules_menu ;;
-        4) sbd_resolver_menu ;;
-        5) sbd_peers_menu ;;
-        6) sbd_engine_menu ;;
-        7) sbd_tls_menu ;;
-        8) sbd_observe_menu ;;
-        9) sbd_check_config && sbd_success 'Schema 与核心检查通过；未验证网络连通' ;;
-        10) sbd_status ;;
-        11) sbd_maintenance_menu ;;
+        1) sbd_entry_create_prompt ;;
+        2) sbd_entries_list ;;
+        3) sbd_entry_change_prompt edit ;;
+        4) sbd_entry_change_prompt delete ;;
+        5) sbd_export_menu ;;
+        6) sbd_resolver_menu ;;
+        7) sbd_rules_menu ;;
+        8) sbd_tls_menu ;;
+        9) sbd_peers_menu ;;
+        10) sbd_engine_control restart ;;
+        11) sbd_engine_control stop ;;
+        12) sbd_status ;;
+        13) sbd_observe_logs ;;
+        14) sbd_engine_control enable ;;
+        15) sbd_engine_control disable ;;
+        16) sbd_check_config && sbd_success 'Schema 与核心检查通过；未验证网络连通' ;;
+        17) sbd_observe_menu ;;
+        18) sbd_maintenance_menu ;;
+        19) sbd_engine_menu ;;
+        20) sbd_uninstall_menu ;;
         *) _error '无效菜单编号'; return 1 ;;
     esac
 }
@@ -240,10 +249,13 @@ sbd_console() {
     while true; do
         sbd_ui_begin 'sing-box 部署管理脚本 (singbox-deploy)' true || return 1
         sbd_status brief || _error '状态摘要读取不完整；仍可选择检查或维护，不将未知状态当作停止'
-        sbd_ui_options '@节点与网络' '[1] 节点管理' '[2] 分享与客户端资料' '[3] 规则集与路由' '[4] 独立 DNS' '[5] Endpoints 与 Cloudflared' \
-            '@服务与维护' '[6] 核心管理' '[7] TLS 与证书' '[8] 观测、日志与缓存' '[9] 检查现有配置' '[10] 部署状态' '[11] 维护与显式协调' '[0] 退出'
+        sbd_ui_options '@节点管理' '[1] 添加节点' '[2] 查看节点' '[3] 修改节点' '[4] 删除节点' '[5] 节点链接' \
+            '@网络设置' '[6] DNS 设置' '[7] 分流设置' '[8] 证书管理' '[9] 隧道管理' \
+            '@服务控制' '[10] 重启服务' '[11] 停止服务' '[12] 查看状态' '[13] 查看日志' '[14] 启用自启' '[15] 关闭自启' \
+            '@配置与维护' '[16] 检查配置' '[17] 日志与监控' '[18] 脚本维护' \
+            '@核心管理' '[19] sing-box 核心管理' '[20] 卸载脚本' '[0] 退出'
         page="$SBD_UI_PAGE"
-        sbd_read_integer '请选择' 0 11 || return 0
+        sbd_read_integer '请选择' 0 20 || return 0
         choice="$SBD_REPLY"
         [[ "$choice" != 0 ]] || return 0
         if sbd_dispatch "$choice"; then

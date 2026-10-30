@@ -89,7 +89,10 @@ sbd_ui_rows() {
     done
 }
 
-sbd_ui_section() { printf '\n  '; sbd_ui_tint 36 "【$1】"; printf '\n'; }
+sbd_ui_section() {
+    [[ "${2:-true}" != true ]] || printf '\n'
+    printf '  '; sbd_ui_tint 36 "【$1】"; printf '\n'
+}
 
 sbd_ui_status_row() {
     local cols field line='' candidate width
@@ -123,6 +126,10 @@ sbd_ui_options() {
 sbd_ui_menu() {
     local title="$1"; shift
     sbd_ui_begin "$title"
+    if [[ "${1:-}" = @* ]]; then
+        sbd_ui_section "${1#@}" false
+        shift
+    fi
     sbd_ui_options "$@"
 }
 

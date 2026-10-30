@@ -5,31 +5,40 @@
 
 empty_menu() {
     t_fresh
-    t_run 0 sbd_dispatch 8 <<< 0
-    t_contains "$CASE_TMP/output" '原生观测'
-    t_run 0 sbd_dispatch 11 <<< 0
-    t_contains "$CASE_TMP/output" '维护与显式协调'
-    t_run 0 sbd_dispatch 6 <<< 0
+    t_run 0 sbd_dispatch 17 <<< 0
+    t_contains "$CASE_TMP/output" '日志与监控'
+    t_run 0 sbd_dispatch 18 <<< 0
+    t_contains "$CASE_TMP/output" '脚本维护'
+    t_run 0 sbd_dispatch 19 <<< 0
     t_contains "$CASE_TMP/output" '核心管理'
-    t_run 0 sbd_dispatch 2 <<< 0
-    t_contains "$CASE_TMP/output" '客户端资料'
-    t_run 0 sbd_dispatch 7 <<< 0
-    t_contains "$CASE_TMP/output" 'TLS 与证书'
-    t_run 0 sbd_dispatch 1 <<< 0
-    t_contains "$CASE_TMP/output" '节点管理'
-    t_run 0 sbd_dispatch 3 <<< 0
-    t_contains "$CASE_TMP/output" '规则集与路由'
-    t_run 0 sbd_dispatch 4 <<< 0
-    t_contains "$CASE_TMP/output" '独立 DNS'
     t_run 0 sbd_dispatch 5 <<< 0
-    t_contains "$CASE_TMP/output" 'Endpoints 与 Cloudflared'
+    t_contains "$CASE_TMP/output" '节点链接'
+    t_run 0 sbd_dispatch 8 <<< 0
+    t_contains "$CASE_TMP/output" '证书管理'
+    t_run 0 sbd_dispatch 2
+    t_contains "$CASE_TMP/output" '暂无节点'
+    t_run 0 sbd_dispatch 7 <<< 0
+    t_contains "$CASE_TMP/output" '分流设置'
+    t_run 0 sbd_dispatch 6 <<< 0
+    t_contains "$CASE_TMP/output" 'DNS 设置'
+    t_run 0 sbd_dispatch 9 <<< 0
+    t_contains "$CASE_TMP/output" '隧道管理'
+    t_run 2 sbd_dispatch 1 < /dev/null
+    t_contains "$CASE_TMP/output" '添加节点'
+    t_run 1 sbd_dispatch 3 < /dev/null
+    t_contains "$CASE_TMP/output" '暂无可选择资料'
+    t_run 1 sbd_dispatch 4 < /dev/null
+    t_contains "$CASE_TMP/output" '暂无可选择资料'
+    t_run 2 sbd_dispatch 20 <<< $'1\nn'
+    t_absent "$CASE_TMP/output" '[成功]'
+    t_assert '卸载预览取消保留部署文件' test -f "$SBD_APP/manifest.txt"
 }
 check_menu() {
     t_seed
-    t_run 0 sbd_dispatch 9
+    t_run 0 sbd_dispatch 16
     t_contains "$CASE_TMP/output" '未验证网络连通'
     printf '{broken' > "$SBD_CONFIG" || exit 1
-    t_run 1 sbd_dispatch 9
+    t_run 1 sbd_dispatch 16
     t_absent "$CASE_TMP/output" '[成功]'
 }
 cancel_menu() {
@@ -105,7 +114,7 @@ status_unknown() {
     t_absent "$CASE_TMP/output" '[成功]'
     t_run 0 sbd_console <<< 0
     t_contains "$CASE_TMP/output" '状态摘要读取不完整'
-    t_contains "$CASE_TMP/output" '[11] 维护与显式协调'
+    t_contains "$CASE_TMP/output" '[18] 脚本维护'
     printf '{bad' > "$SBD_REGISTRY" || exit 1
     t_run 1 sbd_status
     t_contains "$CASE_TMP/output" '托管节点: 未知'
@@ -134,6 +143,19 @@ status_log_path() {
     t_contains "$CASE_TMP/output" "$SBD_ROOT/custom.log"
     t_absent "$CASE_TMP/output" '日志命令:'
 }
+direct_logs() {
+    t_seed
+    sbd_backend() { printf 'openrc\n'; }
+    printf 'homepage-native-log\n' > "$SBD_LOG" || exit 1
+    t_run 0 sbd_dispatch 13
+    t_contains "$CASE_TMP/output" homepage-native-log
+    t_contains "$CASE_TMP/output" "$SBD_LOG"
+    t_absent "$CASE_TMP/output" '请选择'
+    rm -- "$SBD_LOG" || exit 1
+    t_run 1 sbd_dispatch 13
+    t_contains "$CASE_TMP/output" '日志文件尚不存在'
+    t_absent "$CASE_TMP/output" '[成功]'
+}
 t_case '菜单编号分派到已交付模块' empty_menu
 t_case '检查菜单不假报成功' check_menu
 t_case '菜单退出与 EOF 无副作用' cancel_menu
@@ -143,4 +165,5 @@ t_case '主菜单真实读取服务/自启及节点数，不创建配置' status
 t_case '服务/自启/登记读取失败显示未知而非假停止' status_unknown
 t_case '状态摘要区分待恢复/待收尾，不自动改事务现场' status_pending
 t_case '状态摘要按实际 log.output 显示路径与禁用事实' status_log_path
+t_case '首页查看日志直接读取真实文件、缺失不假报成功' direct_logs
 t_finish

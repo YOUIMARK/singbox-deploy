@@ -94,20 +94,20 @@ try:
         wait_for('请选择')
         assert '配置路径:' not in text() and '日志文件:' not in text()
         assert '核心: 未安装' in text()
-        for number in range(12):
+        for number in range(21):
             assert f'[{number}]' in text(), number
         lines = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()).splitlines()
-        assert [int(n) for n in re.findall(r'\[(\d+)\]', '\n'.join(lines))] == list(range(1, 12)) + [0]
-        assert '【节点与网络】' in text() and '【服务与维护】' in text()
+        assert [int(n) for n in re.findall(r'\[(\d+)\]', '\n'.join(lines))] == list(range(1, 21)) + [0]
+        assert '【节点管理】' in text() and '【服务控制】' in text()
         assert 'init: openrc' in text() and '  |  服务:' in text()
         assert '--------' not in text()
-        for item in ('[2]', '[4]', '[7]', '[9]', '[11]'):
+        for item in ('[2]', '[4]', '[7]', '[9]', '[11]', '[13]', '[15]', '[17]', '[20]'):
             line = next(line for line in lines if item in line)
             prefix = line[:line.index(item)]
             width = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix)
             assert width == (2 if columns == 40 else 34), (item, width, line)
         start = len(text())
-        send('10\n')
+        send('12\n')
         wait_for('按回车返回菜单', start)
         assert '配置路径:' in text()[start:] and '日志文件:' in text()[start:]
         stable_page()
@@ -115,10 +115,12 @@ try:
         send('\n')
         wait_for('请选择', start)
         start = len(text())
-        send('6\n')
+        send('19\n')
         wait_for('请选择', start)
         assert text()[start:].count('核心管理') == 1
         assert '安装与更新' in text()[start:] and '服务控制' in text()[start:]
+        page = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()[start:]).replace('\r\n', '\n')
+        assert '  核心管理\n\n  【安装与更新】\n' in page, page
         start = len(text())
         send('0\n')
         wait_for('singbox-deploy', start)
@@ -128,7 +130,7 @@ try:
     elif scenario == 'failure':
         wait_for('请选择')
         start = len(text())
-        send('9\n')
+        send('16\n')
         wait_for('按回车返回菜单', start)
         assert '错误' in text()[start:] and '[成功]' not in text()[start:]
         stable_page()

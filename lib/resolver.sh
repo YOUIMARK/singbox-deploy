@@ -152,7 +152,7 @@ sbd_resolver_race_prompt() {
 sbd_resolver_menu() {
     local choice action tag value field rc values request page
     while true; do
-        sbd_ui_menu '独立 DNS 管理' '[1] 查看 DNS 与托管上游' '[2] 添加上游' '[3] JSON 替换托管上游' '[4] 删除托管上游' \
+        sbd_ui_menu 'DNS 设置' '[1] 查看 DNS 与托管上游' '[2] 添加上游' '[3] JSON 替换托管上游' '[4] 删除托管上游' \
             '[5] 默认上游/域名解析器/解析策略' '[6] DNS 分流规则' '[7] 添加原生竞速组' '[8] 删除托管竞速组' '[9] 向导重建托管上游（高级字段请用 JSON）' '[0] 返回'
         page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 9 || return 0; choice="$SBD_REPLY"

@@ -791,7 +791,7 @@ sbd_entry_hy2_prompt() {
 
 sbd_entry_create_prompt() {
     local choice profile listen port server external password name source options='{}' request network
-    sbd_ui_begin '创建节点'
+    sbd_ui_begin '添加节点'
     sbd_version >/dev/null || return 1
     if [[ -f "$SBD_CONFIG" ]]; then sbd_check_config || return 1; fi
     sbd_ui_options '[1] Hysteria2（UDP）' '[2] AnyTLS（TCP）' '[3] AnyReality（AnyTLS + Reality，TCP）' \
@@ -822,9 +822,9 @@ sbd_entry_create_prompt() {
 }
 
 sbd_entry_actions() {
-    local profile="$1"
+    local profile="$1" mode="${2:-all}"
     sbd_ui_options '[1] 修改显示名' '[2] 更换认证密码/UUID' '[3] 修改客户端连接地址/映射端口' '[4] 修改本地监听'
-    SBD_ENTRY_ACTIONS=' 0 1 2 3 4 7 '
+    SBD_ENTRY_ACTIONS=' 0 1 2 3 4 '
     case "$profile" in
         hysteria2)
             sbd_ui_options '[5] Hysteria2 带宽/混淆' '[6] 切换 TLS 来源'
@@ -834,7 +834,10 @@ sbd_entry_actions() {
         shadowsocks|vmess_ws|vless_ws) ;;
         *) _error '未知托管配置档'; return 1 ;;
     esac
-    sbd_ui_options '[7] 删除节点（保留证书/provider 资料）'
+    if [[ "$mode" != edit ]]; then
+        sbd_ui_options '[7] 删除节点（保留证书/provider 资料）'
+        SBD_ENTRY_ACTIONS+='7 '
+    fi
     case "$profile" in
         shadowsocks) sbd_ui_options '[8] Shadowsocks 算法/网络/密钥'; SBD_ENTRY_ACTIONS+='8 ' ;;
         vmess_ws|vless_ws) sbd_ui_options '[9] WS CDN 域名/回源/路径'; SBD_ENTRY_ACTIONS+='9 ' ;;
@@ -843,18 +846,30 @@ sbd_entry_actions() {
 }
 
 sbd_entry_change_prompt() {
-    local values id node choice action value profile server network tag defaults port
-    sbd_ui_begin '修改或删除节点'
+    local mode="${1:-all}" title values id node name choice action value profile server network tag defaults port
+    case "$mode" in
+        all) title='修改或删除节点' ;;
+        edit) title='修改节点' ;;
+        delete) title='删除节点' ;;
+        *) _error '未知节点菜单操作'; return 1 ;;
+    esac
+    sbd_ui_begin "$title"
     values=$(jq -c '.nodes' "$SBD_REGISTRY") || return 1
     sbd_entry_choose "$values" '选择节点' || return $?; id="$SBD_REPLY"
     node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || return 1
     profile=$(jq -r '.profile' <<< "$node") || return 1
-    sbd_entry_actions "$profile" || return 1
-    while true; do
-        sbd_read_integer '选择操作' 0 9 || return $?; choice="$SBD_REPLY"
-        [[ "$SBD_ENTRY_ACTIONS" = *" $choice "* ]] && break
-        _error '此操作不适用于当前配置档，请选择显示的编号'
-    done
+    if [[ "$mode" = delete ]]; then
+        name=$(jq -r '.name' <<< "$node") || { _error '读取节点名称失败'; return 1; }
+        sbd_info "将删除节点: $name ($id)；保留证书资料"
+        choice=7
+    else
+        sbd_entry_actions "$profile" "$mode" || return 1
+        while true; do
+            sbd_read_integer '选择操作' 0 9 || return $?; choice="$SBD_REPLY"
+            [[ "$SBD_ENTRY_ACTIONS" = *" $choice "* ]] && break
+            _error '此操作不适用于当前配置档，请选择显示的编号'
+        done
+    fi
     case "$choice" in
         0) return 2 ;;
         1) action=name; sbd_read_required '新显示名' || return $?; value="$SBD_REPLY" ;;
@@ -905,7 +920,7 @@ sbd_entry_change_prompt() {
 }
 
 sbd_entries_list() {
-    jq -r '.nodes[] | "\(.id)  \(.name)  \(.profile)  \(.client.server):\(.client.server_port)"' "$SBD_REGISTRY" || { _error '读取节点列表失败'; return 1; }
+    jq -r 'if .nodes==[] then "暂无节点，请先添加节点" else .nodes[] | "\(.id)  \(.name)  \(.profile)  \(.client.server):\(.client.server_port)" end' "$SBD_REGISTRY" || { _error '读取节点列表失败'; return 1; }
 }
 
 sbd_entries_menu() {

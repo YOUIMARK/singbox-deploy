@@ -321,7 +321,7 @@ sbd_rule_set_prompt() {
 sbd_rules_menu() {
     local choice action tag value origin rc page
     while true; do
-        sbd_ui_menu '规则集与路由' '[1] 查看规则集' '[2] 添加规则集' '[3] JSON 替换托管规则集' '[4] 人工更新 local' '[5] 删除托管规则集' '[6] 路由规则' '[7] 选择 route.final 默认出口' '[0] 返回'
+        sbd_ui_menu '分流设置' '[1] 查看规则集' '[2] 添加规则集' '[3] JSON 替换托管规则集' '[4] 人工更新 local' '[5] 删除托管规则集' '[6] 路由规则' '[7] 选择 route.final 默认出口' '[0] 返回'
         page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 7 || return 0; choice="$SBD_REPLY"
         case "$choice" in

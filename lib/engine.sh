@@ -423,6 +423,19 @@ sbd_engine_control_locked() {
     esac
 }
 
+sbd_engine_control() {
+    local message
+    case "$1" in
+        restart) message='服务已持续运行；未验证外网连通' ;;
+        stop) message='已确认服务停止' ;;
+        enable) message='已启用开机自启' ;;
+        disable) message='已关闭开机自启' ;;
+        *) _error '核心控制动作无效'; return 1 ;;
+    esac
+    sbd_write_lock sbd_engine_control_locked "$1" || { _error '服务操作未完成，请检查上方错误'; return 1; }
+    sbd_success "$message"
+}
+
 sbd_uninstall_plan() {
     python3 "$SBD_APP/support/uninstall_plan.py" plan "$SBD_ROOT" "$1" || { _error '不能生成已知自有资源清单'; return 1; }
 }
@@ -491,10 +504,10 @@ sbd_engine_menu() {
                 done
                 sbd_engine_install "$version"
                 ;;
-            3) sbd_write_lock sbd_engine_control_locked restart && sbd_success '服务已持续运行；未验证外网连通' ;;
-            4) sbd_write_lock sbd_engine_control_locked stop && sbd_success '已确认服务停止' ;;
-            5) sbd_write_lock sbd_engine_control_locked enable && sbd_success '已启用开机自启' ;;
-            6) sbd_write_lock sbd_engine_control_locked disable && sbd_success '已关闭开机自启' ;;
+            3) sbd_engine_control restart ;;
+            4) sbd_engine_control stop ;;
+            5) sbd_engine_control enable ;;
+            6) sbd_engine_control disable ;;
         esac
         rc=$?
         if [[ "$rc" != 0 && "$rc" != 2 ]]; then _error '核心操作未完成，请检查上方错误'; fi
