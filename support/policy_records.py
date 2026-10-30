@@ -243,6 +243,9 @@ def references(config):
     default_resolver = resolver_tag(route.get("default_domain_resolver"))
     require(default_resolver, servers, "默认 domain_resolver")
     require(route.get("default_http_client"), clients, "默认 HTTP client")
+    ntp = config.get("ntp", {})
+    require(ntp.get("detour"), targets, "NTP detour")
+    require(resolver_tag(ntp.get("domain_resolver")), servers, "NTP domain_resolver")
     for section in (route, dns):
         for rule in objects(section.get("rules", [])):
             require(rule.get("inbound"), inbound, "规则 inbound")

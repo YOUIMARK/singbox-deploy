@@ -13,6 +13,14 @@
     ],
     "final": "system"
   },
+  "ntp": {
+    "enabled": true,
+    "server": "time.cloudflare.com",
+    "server_port": 123,
+    "interval": "30m",
+    "write_to_system": false,
+    "domain_resolver": "system"
+  },
   "outbounds": [
     {
       "type": "direct",

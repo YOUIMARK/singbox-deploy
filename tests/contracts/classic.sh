@@ -72,7 +72,8 @@ menu_contract() {
     t_run 0 sbd_entry_change_prompt <<< $'1\n9\nnew.example.com\n39505\n\n\n/new\ny'
     t_assert '菜单修改真实 CDN 和源站路径' jq -e '.inbounds[0].transport.path=="/new"' "$SBD_CONFIG"
     t_run 0 t_classic_uri
-    t_run 1 sbd_entry_change_prompt <<< $'1\n6'
+    t_run 2 sbd_entry_change_prompt <<< $'1\n6'
+    t_contains "$CASE_TMP/output" '选择显示的编号'
 }
 required_contract() {
     t_seed

@@ -8,6 +8,7 @@ base_contract() {
     t_run 0 sbd_validate_schema "$SBD_SCHEMA" "$SBD_CONFIG"
     t_run 0 "$SBD_BINARY" check -c "$SBD_CONFIG" -D "$SBD_ROOT"
     t_assert '未创建实际协议节点' jq -e '(.inbounds // [])==[]' "$SBD_CONFIG"
+    t_assert '基础配置默认开启核心 NTP，不写系统时钟' jq -e '.ntp.enabled==true and .ntp.server=="time.cloudflare.com" and .ntp.domain_resolver=="system" and (.ntp.write_to_system // false)==false' "$SBD_CONFIG"
 }
 formatter_order() {
     t_fresh

@@ -241,11 +241,47 @@ sbd_export_rebuild() {
     mv -- "$next" "$stage/exports" || { _error '发布暂存导出失败'; return 1; }
 }
 
-sbd_export_menu() {
-    local choice
+sbd_export_node() {
+    local id="$1" kind="$2" node path metadata
+    [[ "$id" =~ ^[A-Za-z][A-Za-z0-9_.-]{0,63}$ && "$id" != schema && "$id" != links ]] || { _error '无效的节点资料 ID'; return 1; }
+    node=$(jq -ce --arg id "$id" '[.nodes[]?|select(.id==$id)]|select(length==1)|.[0]' "$SBD_REGISTRY") || { _error '该节点登记已不存在或重复，不显示其他节点资料'; return 1; }
+    metadata=$(jq -n --argjson node "$node" '{format:1,nodes:[$node]}') || return 1
+    sbd_export_metadata_check /dev/stdin <<< "$metadata" || return 1
+    case "$kind" in link) path="$SBD_EXPORTS/$id.txt" ;; json) path="$SBD_EXPORTS/$id.json" ;; *) _error '未知节点资料类型'; return 1 ;; esac
+    [[ -s "$path" ]] || { _error "该节点尚无可读取的已提交导出: $path"; return 1; }
+    printf '节点: %s (%s)\n' "$(jq -r .name <<< "$node")" "$id"
+    if [[ "$kind" = link ]]; then
+        sbd_info '以下是已提交的分享链接，含凭据；未实时重建，也不代表连通已验证'
+        cat -- "$path" || { _error '读取该节点分享链接失败'; return 1; }
+    else
+        [[ -s "$SBD_EXPORTS/schema.json" ]] || { _error '客户端 JSON 的本地 Schema 缺失'; return 1; }
+        printf '客户端 JSON: %s\n本地 Schema: %s\n' "$path" "$SBD_EXPORTS/schema.json"
+        sbd_info '客户端 JSON 含凭据，不含本地监听/TUN 设置；传输时保留同目录的 schema.json'
+    fi
+}
+
+sbd_export_node_menu() {
+    local id="$1" choice
     while true; do
-        printf '\n%s\n' '分享与客户端资料' '[1] 从元数据重建全部导出' '[2] 显示分享链接（含凭据）' '[0] 返回'
-        sbd_read_integer '请选择' 0 2 || return 0; choice="$SBD_REPLY"
+        printf '\n%s\n' '当前节点资料' '[1] 显示该节点链接（含凭据）' '[2] 显示客户端 JSON 路径' '[0] 返回'
+        if ! sbd_read_integer '请选择' 0 2; then
+            sbd_info '仅结束资料查看，已提交的节点不受影响'
+            return 0
+        fi
+        choice="$SBD_REPLY"
+        case "$choice" in
+            0) return 0 ;;
+            1) sbd_export_node "$id" link || return 1 ;;
+            2) sbd_export_node "$id" json || return 1 ;;
+        esac
+    done
+}
+
+sbd_export_menu() {
+    local choice values id
+    while true; do
+        printf '\n%s\n' '分享与客户端资料' '[1] 从元数据重建全部导出' '[2] 显示全部分享链接（含凭据）' '[3] 选择单个节点资料' '[0] 返回'
+        sbd_read_integer '请选择' 0 3 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
             1)
@@ -256,6 +292,11 @@ sbd_export_menu() {
             2)
                 [[ -f "$SBD_EXPORTS/links.txt" ]] || { _error '尚无已提交的分享清单'; return 1; }
                 cat -- "$SBD_EXPORTS/links.txt" || { _error '读取分享清单失败'; return 1; } ;;
+            3)
+                values=$(jq -c .nodes "$SBD_REGISTRY") || { _error '读取节点列表失败'; return 1; }
+                sbd_entry_choose "$values" '选择节点' || return $?
+                id="$SBD_REPLY"
+                sbd_export_node_menu "$id" || return 1 ;;
         esac
     done
 }

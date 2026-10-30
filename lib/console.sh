@@ -145,18 +145,48 @@ sbd_maintenance_menu() {
 }
 
 sbd_status() {
-    local version state
+    local version state runtime enabled count phase kind output backend rc=0
     if [[ -x "$SBD_BINARY" ]]; then
-        version=$(sbd_version) || return 1
-        printf '磁盘核心版本: %s（不等同于运行版本）\n' "$version"
+        if version=$(sbd_version); then printf '磁盘核心版本: %s（不等同于运行版本）\n' "$version"
+        else printf '磁盘核心版本: 未知（读取失败）\n'; rc=1; fi
     else
         printf '核心: 未安装\n'
     fi
+    if runtime=$(sbd_service_state); then
+        case "$runtime" in running) printf '服务: 运行中（不代表网络连通）\n' ;; stopped) printf '服务: 已停止\n' ;; *) _error '服务状态返回值无效'; printf '服务: 未知\n'; rc=1 ;; esac
+    else printf '服务: 未知（读取失败）\n'; rc=1; fi
+    if enabled=$(sbd_service_enabled); then
+        case "$enabled" in enabled) printf '开机自启: 已开启\n' ;; disabled) printf '开机自启: 已关闭\n' ;; *) _error '自启状态返回值无效'; printf '开机自启: 未知\n'; rc=1 ;; esac
+    else printf '开机自启: 未知（读取失败）\n'; rc=1; fi
     if [[ -f "$SBD_CONFIG" ]]; then printf '配置: 已存在\n'; else printf '配置: 未创建\n'; fi
-    state=$(sbd_record_read "$SBD_STATE") || return 1
-    version=$(jq -er '.manager_version | select(type=="string" and length>0)' <<< "$state") || { _error 'state 缺少管理器版本事实'; return 1; }
-    printf '管理器记录版本: %s\n' "$version"
-    printf '当前阶段: 功能实现已接入菜单；完整验收与最终自审结果以交付记录为准\n'
+    if state=$(sbd_record_read "$SBD_STATE") && version=$(jq -er '.manager_version | select(type=="string" and length>0)' <<< "$state"); then
+        printf '管理器记录版本: %s\n' "$version"
+    else _error '无法取得管理器版本事实'; printf '管理器记录版本: 未知\n'; rc=1; fi
+    if count=$(jq -er '.nodes|select(type=="array")|length' "$SBD_REGISTRY"); then printf '托管节点: %s 个\n' "$count"
+    else _error '读取托管节点数量失败'; printf '托管节点: 未知\n'; rc=1; fi
+    if [[ -e "$SBD_WORK/active" || -L "$SBD_WORK/active" ]]; then
+        if phase=$(jq -er '.phase|select(.=="pending" or .=="accepted")' "$SBD_WORK/active/journal.json") && kind=$(jq -er '.kind|select(.=="config" or .=="engine" or .=="install")' "$SBD_WORK/active/journal.json"); then
+            if [[ "$phase" = accepted ]]; then printf '事务: %s 已接受，待完成收尾\n' "$kind"; else printf '事务: %s 未完成，待恢复\n' "$kind"; fi
+            printf '事务现场: %s\n' "$SBD_WORK/active"
+        else _error '事务现场缺少可识别记录，请检查，不自动猜测'; printf '事务: 未知现场 %s\n' "$SBD_WORK/active"; rc=1; fi
+    else printf '事务: 无待处理现场\n'; fi
+    printf '配置路径: %s\n导出目录: %s\n' "$SBD_CONFIG" "$SBD_EXPORTS"
+    output=''
+    if [[ -f "$SBD_CONFIG" ]]; then
+        if ! output=$(jq -r '.log.output // empty' "$SBD_CONFIG"); then _error '无法读取日志路径配置'; rc=1; fi
+        if jq -e '.log.disabled==true' "$SBD_CONFIG" >/dev/null 2>&1; then printf '日志配置: 已禁用，以下位置仅可能有历史日志\n'; fi
+    fi
+    if [[ -n "$output" ]]; then
+        [[ "$output" = /* ]] || output="$SBD_ROOT/$output"
+        printf '日志文件: %s（log.output）\n' "$output"
+    elif backend=$(sbd_backend); then
+        case "$backend" in
+            systemd) printf '日志命令: journalctl -u %s\n' "$SBD_SERVICE" ;;
+            openrc) printf '日志文件: %s（服务输出）\n' "$SBD_LOG" ;;
+            *) _error '日志服务后端无效'; printf '日志位置: 未知\n'; rc=1 ;;
+        esac
+    else printf '日志位置: 未知（服务后端读取失败）\n'; rc=1; fi
+    [[ "$rc" = 0 ]]
 }
 
 sbd_dispatch() {
@@ -180,6 +210,7 @@ sbd_console() {
     local choice
     while true; do
         printf '\nsingbox-deploy\n'
+        sbd_status || _error '状态摘要读取不完整；仍可选择检查或维护，不将未知状态当作停止'
         printf '%s\n' '[1] 核心管理' '[2] 节点管理' '[3] 分享与客户端资料' \
             '[4] 规则集与路由' '[5] 独立 DNS' '[6] Endpoints 与 Cloudflared' \
             '[7] TLS 与证书' '[8] 观测、日志与缓存' '[9] 检查现有配置' '[10] 部署状态' '[11] 维护与显式协调' '[0] 退出'

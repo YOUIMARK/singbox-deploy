@@ -4,6 +4,26 @@ sbd_entry_text() {
     jq -er "($2) | select(type==\"string\" and length>0)" "$1" || { _error "节点资料缺少 $3"; return 1; }
 }
 
+sbd_entry_new_id() {
+    local stage="$1" id
+    id=$(jq -r '.id // empty' "$stage/request.json") || { _error '读取待创建节点 ID 失败'; return 1; }
+    if [[ -z "$id" ]]; then
+        id=$(openssl rand -hex 8) || { _error '生成稳定节点 ID 失败'; return 1; }; id="node.$id"
+    fi
+    [[ "$id" =~ ^node\.[0-9a-f]{16}$ ]] || { _error '待创建节点 ID 无效'; return 1; }
+    jq -e --arg id "$id" 'all(.nodes[];.id!=$id and .inbound_tag!=$id)' "$stage/registry.json" >/dev/null || { _error '节点 ID 已存在'; return 1; }
+    printf '%s\n' "$id"
+}
+
+sbd_entry_submit() {
+    local request="$1" id
+    id=$(openssl rand -hex 8) || { _error '生成稳定节点 ID 失败'; return 1; }; id="node.$id"
+    request=$(jq --arg id "$id" '.id=$id' <<< "$request") || { _error '构造创建请求失败'; return 1; }
+    sbd_apply sbd_entry_create "$request" || return 1
+    # 提前固定 ID，提交后只查看本次节点，不按“最后一条”猜测归属。
+    SBD_NEW_ENTRY_ID="$id"
+}
+
 sbd_entry_host() { sbd_tls_identity "$1" >/dev/null 2>&1 || { _error '地址须为 DNS 名称或不带方括号的 IP'; return 1; }; }
 
 sbd_entry_socket_available() {
@@ -319,7 +339,7 @@ sbd_entry_create_classic() {
         sbd_record_write "$stage/source-server.json" '{}' && sbd_record_write "$stage/source-client.json" '{}' &&
             sbd_record_write "$stage/source-share.json" '{}' && sbd_record_write "$stage/source-facts.json" "$source" || return 1
     fi
-    id=$(openssl rand -hex 8) || { _error '生成稳定节点 ID 失败'; return 1; }; id="node.$id"
+    id=$(sbd_entry_new_id "$stage") || return 1
     content=$(jq -n --arg profile "$profile" --arg type "$type" --arg id "$id" --arg listen "$listen" --argjson port "$port" \
         --arg credential "$credential" --arg method "$method" --arg network "$network" --argjson cdn "$cdn" --slurpfile tls "$stage/source-server.json" '
         {type:$type,tag:$id,listen:$listen,listen_port:$port} +
@@ -407,7 +427,7 @@ sbd_entry_create() {
         [[ "$(jq -r '.kind' <<< "$source")" != reality ]] || { _error '普通 TLS 配置档不能混入 Reality'; return 1; }
     fi
     sbd_entry_tls "$stage" "$source" || return 1
-    id=$(openssl rand -hex 8) || { _error '生成稳定节点 ID 失败'; return 1; }; id="node.$id"
+    id=$(sbd_entry_new_id "$stage") || return 1
     content=$(jq -n --arg id "$id" --arg type "$type" --arg listen "$listen" --argjson port "$port" --arg password "$password" \
         --slurpfile tls "$stage/source-server.json" --slurpfile request "$stage/request.json" '
         (if $type=="hysteria2" then ($request[0].server_options // {}) else {} end) +
@@ -732,8 +752,9 @@ sbd_entry_create_classic_prompt() {
         '. + {profile:$profile,name:$name,listen:$listen,listen_port:$port,server:$server,server_port:$external}' <<< "$options") || return 1
     sbd_read_required '确认创建并按需重启？输入 y 确认，其他输入取消' || return $?
     [[ "$SBD_REPLY" = y ]] || return 2
-    sbd_apply sbd_entry_create "$request" || return 1
+    sbd_entry_submit "$request" || return 1
     sbd_success "节点与客户端资料已提交: $SBD_EXPORTS；未验证 NAT/CDN 回源或客户端握手"
+    sbd_export_node_menu "$SBD_NEW_ENTRY_ID" || { _error '节点已提交，但资料查看失败；未回滚已提交节点'; return 1; }
 }
 
 sbd_entry_hy2_prompt() {
@@ -792,8 +813,30 @@ sbd_entry_create_prompt() {
         '$options + {profile:$profile,name:$name,listen:$listen,listen_port:$port,server:$server,server_port:$external,password:$password,tls_source:$source}') || return 1
     sbd_read_required '确认创建并按需重启？输入 y 确认，其他输入取消' || return $?
     [[ "$SBD_REPLY" = y ]] || return 2
-    sbd_apply sbd_entry_create "$request" || return 1
+    sbd_entry_submit "$request" || return 1
     sbd_success "节点与客户端资料已提交: $SBD_EXPORTS；未验证 NAT 入站或客户端握手"
+    sbd_export_node_menu "$SBD_NEW_ENTRY_ID" || { _error '节点已提交，但资料查看失败；未回滚已提交节点'; return 1; }
+}
+
+sbd_entry_actions() {
+    local profile="$1"
+    printf '%s\n' '[1] 修改显示名' '[2] 更换认证密码/UUID' '[3] 修改客户端连接地址/映射端口' '[4] 修改本地监听'
+    SBD_ENTRY_ACTIONS=' 0 1 2 3 4 7 '
+    case "$profile" in
+        hysteria2)
+            printf '%s\n' '[5] Hysteria2 带宽/混淆' '[6] 切换 TLS 来源'
+            SBD_ENTRY_ACTIONS+='5 6 ' ;;
+        anytls) printf '%s\n' '[6] 切换 TLS 来源'; SBD_ENTRY_ACTIONS+='6 ' ;;
+        anyreality|vless_reality) printf '%s\n' '[6] 重建 Reality 密钥及握手配置'; SBD_ENTRY_ACTIONS+='6 ' ;;
+        shadowsocks|vmess_ws|vless_ws) ;;
+        *) _error '未知托管配置档'; return 1 ;;
+    esac
+    printf '%s\n' '[7] 删除节点（保留证书/provider 资料）'
+    case "$profile" in
+        shadowsocks) printf '%s\n' '[8] Shadowsocks 算法/网络/密钥'; SBD_ENTRY_ACTIONS+='8 ' ;;
+        vmess_ws|vless_ws) printf '%s\n' '[9] WS CDN 域名/回源/路径'; SBD_ENTRY_ACTIONS+='9 ' ;;
+    esac
+    printf '%s\n' '[0] 取消'
 }
 
 sbd_entry_change_prompt() {
@@ -801,11 +844,13 @@ sbd_entry_change_prompt() {
     values=$(jq -c '.nodes' "$SBD_REGISTRY") || return 1
     sbd_entry_choose "$values" '选择节点' || return $?; id="$SBD_REPLY"
     node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || return 1
-    printf '%s\n' '[1] 修改显示名' '[2] 更换认证密码/UUID' '[3] 修改客户端连接地址/映射端口' '[4] 修改本地监听' \
-        '[5] Hysteria2 带宽/混淆' '[6] 切换 TLS 来源（Reality 会重建密钥）' '[7] 删除节点（保留证书/provider 资料）' \
-        '[8] Shadowsocks 算法/网络/密钥' '[9] WS CDN 域名/回源/路径' '[0] 取消'
-    sbd_read_integer '选择操作' 0 9 || return $?; choice="$SBD_REPLY"
     profile=$(jq -r '.profile' <<< "$node") || return 1
+    sbd_entry_actions "$profile" || return 1
+    while true; do
+        sbd_read_integer '选择操作' 0 9 || return $?; choice="$SBD_REPLY"
+        [[ "$SBD_ENTRY_ACTIONS" = *" $choice "* ]] && break
+        _error '此操作不适用于当前配置档，请选择显示的编号'
+    done
     case "$choice" in
         0) return 2 ;;
         1) action=name; sbd_read_required '新显示名' || return $?; value="$SBD_REPLY" ;;

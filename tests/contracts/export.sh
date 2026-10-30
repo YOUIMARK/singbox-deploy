@@ -77,6 +77,42 @@ certificate_and_obfs_metadata() {
         t_absent "$CASE_TMP/output" 'hysteria2://'
     done
 }
+single_node_contract() {
+    t_seed
+    t_entry_add anytls
+    local first="$NODE_ID" first_link second_link
+    first_link=$(cat "$SBD_EXPORTS/$first.txt") || exit 1
+    t_entry_add shadowsocks
+    second_link=$(cat "$SBD_EXPORTS/$NODE_ID.txt") || exit 1
+    t_entry_save
+    t_run 0 sbd_export_menu <<< $'3\n1\n1\n2\n0\n0'
+    t_contains "$CASE_TMP/output" "$first_link"
+    t_contains "$CASE_TMP/output" "$SBD_EXPORTS/$first.json"
+    t_absent "$CASE_TMP/output" "$second_link"
+    t_entry_unchanged
+    t_run 0 sbd_export_node_menu "$first" <<< 0
+    t_absent "$CASE_TMP/output" "$first_link"
+    t_run 0 sbd_export_node_menu "$first" < /dev/null
+    t_entry_unchanged
+}
+single_node_failure() {
+    t_seed
+    t_entry_add shadowsocks
+    t_entry_save
+    t_run 1 sbd_export_node ../outside link
+    t_run 1 sbd_export_node node.missing link
+    t_entry_unchanged
+    mv "$SBD_EXPORTS/$NODE_ID.txt" "$CASE_TMP/saved-link" || exit 1
+    t_run 1 sbd_export_node "$NODE_ID" link
+    t_absent "$CASE_TMP/output" 'ss://'
+    t_assert '缺文件不隐式重建或写 state' jq -e '.revision==1' "$SBD_STATE"
+    mv "$CASE_TMP/saved-link" "$SBD_EXPORTS/$NODE_ID.txt" || exit 1
+    jq '.nodes[0].client.password=null' "$SBD_REGISTRY" > "$CASE_TMP/bad" || exit 1
+    cp "$CASE_TMP/bad" "$SBD_REGISTRY" || exit 1
+    t_run 1 sbd_export_node "$NODE_ID" link
+    t_absent "$CASE_TMP/output" 'ss://'
+    t_assert '坏登记不修改已提交的链接' cmp -s "$SBD_EXPORTS/$NODE_ID.txt" "$ENTRY_SAVED/exports/$NODE_ID.txt"
+}
 t_case '统一 URI 编码、IPv6、端口规范化和扩展参数回读' uri_contract
 t_case '节点元数据缺值与重复明确失败' metadata_contract
 t_case '空登记经过真实事务清空派生输出' empty_contract
@@ -84,4 +120,6 @@ t_case '未知配置档明确失败而非伪造链接' unsupported_contract
 t_case '导出菜单取消不改原文件' menu_contract
 t_case 'AnyReality 必需元数据缺失不输出死链接' reality_required_metadata
 t_case '证书指纹和混淆缺值不伪造 Hysteria2 URI' certificate_and_obfs_metadata
+t_case '按节点选择链接/JSON，不混入其他节点且查看不写状态' single_node_contract
+t_case '单节点资料 ID/缺文件/坏元数据明确失败，不隐式重建' single_node_failure
 t_finish
