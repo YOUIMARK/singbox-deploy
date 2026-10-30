@@ -11,6 +11,7 @@ import struct
 import sys
 import termios
 import time
+import unicodedata
 
 root, case_tmp, scenario = sys.argv[1:]
 pid, fd = pty.fork()
@@ -94,6 +95,12 @@ try:
         assert '核心: 未安装' in text()
         for number in range(12):
             assert f'[{number}]' in text(), number
+        lines = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()).splitlines()
+        for item in ('服务:', '托管节点:', '管理器:', '[3]', '[5]', '[7]', '[9]', '[11]'):
+            line = next(line for line in lines if item in line)
+            prefix = line[:line.index(item)]
+            width = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix)
+            assert width == 34, (item, width, line)
         start = len(text())
         send('10\n')
         wait_for('按回车返回菜单', start)

@@ -20,7 +20,7 @@ lines = open(sys.argv[1]).read().splitlines()
 for line, item in zip(lines, ('[2]', '[4]')):
     prefix = line[:line.index(item)]
     width = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix)
-    assert width == 4 + (int(sys.argv[2]) - 6) // 2, (line, width)
+    assert width == 34, (line, width)
 PY
     done
 }
@@ -32,6 +32,30 @@ narrow_layout() {
     t_assert '中文和 ASCII 宽度' test "$(sbd_ui_width '中文 DNS')" = 8
     COLUMNS=00080 t_assert '宽度先去前导零' test "$(COLUMNS=00080 sbd_ui_columns)" = 80
     COLUMNS=invalid t_assert '无效宽度使用 80' test "$(COLUMNS=invalid sbd_ui_columns)" = 80
+}
+stable_pairs() {
+    COLUMNS=80 t_run 0 sbd_ui_rows '[1] 这是一段超过半列宽度的菜单标签不得挤在另一项上' '[2] 节点管理' '[3] DNS' '[4] TLS'
+    t_assert '长项退为单列不重排后续配对' test "$(wc -l < "$CASE_TMP/output")" = 3
+    t_assert '原配对中的右项独占一行' test "$(sed -n '2p' "$CASE_TMP/output")" = '  [2] 节点管理'
+    t_contains "$CASE_TMP/output" '[3] DNS'
+    t_assert '后续两个编号仍在同一行' grep -Eq '\[3\].*\[4\]' "$CASE_TMP/output"
+}
+byte_widths() {
+    local locale
+    for locale in C C.UTF-8; do
+        t_assert '空文本宽度为零' test "$(LC_ALL="$locale" sbd_ui_width '')" = 0
+        t_assert '截图状态标签宽度正确' test "$(LC_ALL="$locale" sbd_ui_width '开机自启: 已关闭')" = 16
+        t_assert '节点计数标签宽度正确' test "$(LC_ALL="$locale" sbd_ui_width '托管节点: 0 个')" = 14
+        t_assert '中文菜单标签宽度正确' test "$(LC_ALL="$locale" sbd_ui_width '[3] 分享与客户端资料')" = 20
+    done
+}
+width_failure() {
+    # 由真实 sbd_ui_width 调用失败边界。
+    # shellcheck disable=SC2329
+    od() { return 1; }
+    t_run 1 sbd_ui_rows '[1] 核心管理' '[2] 节点管理'
+    t_contains "$CASE_TMP/output" '读取菜单显示宽度失败'
+    t_absent "$CASE_TMP/output" '[2] 节点管理'
 }
 literal_labels() {
     # 此处刻意传入 shell 字面文本，验证渲染不求值。
@@ -57,6 +81,9 @@ pty_case() {
 t_case '非终端标题与编号完整且无 ANSI' plain_menu
 t_case '80/100 列双栏及中文对齐' column_layout
 t_case '窄屏与长标签回退单列' narrow_layout
+t_case '长项回退不改变后续编号配对' stable_pairs
+t_case 'C/UTF-8 下截图中的中文标签按字节正确计宽' byte_widths
+t_case '计宽工具失败明确返回错误、不继续错位渲染' width_failure
 t_case '菜单标签不解释格式符或反斜杠' literal_labels
 t_case '管道输入不清屏不暂停不吞编号' pipe_does_not_pause
 t_case '真实终端着色、清屏、删除警示' pty_case colors

@@ -24,6 +24,15 @@ main_numbers() {
     t_absent "$CASE_TMP/output" "$SBD_EXPORTS"
     t_absent "$CASE_TMP/output" "$SBD_LOG"
     t_absent "$CASE_TMP/output" '事务: 无待处理现场'
+    t_assert '状态与各组菜单的右列共用同一起点' python3 - "$CASE_TMP/output" <<'PY'
+import sys, unicodedata
+text = open(sys.argv[1]).read().splitlines()
+for item in ('服务:', '托管节点:', '管理器:', '[3]', '[5]', '[7]', '[9]', '[11]'):
+    line = next(line for line in text if item in line)
+    prefix = line[:line.index(item)]
+    width = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix)
+    assert width == 34, (item, width, line)
+PY
     t_run 0 sbd_dispatch 10
     t_contains "$CASE_TMP/output" "$SBD_CONFIG"
     t_contains "$CASE_TMP/output" "$SBD_EXPORTS"

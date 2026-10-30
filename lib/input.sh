@@ -26,14 +26,13 @@ sbd_ui_columns() {
 }
 
 sbd_ui_width() {
-    # 静态菜单标签使用 ASCII/中文；按 UTF-8 首字节计列，不把续字节或颜色算入宽度。
-    local LC_ALL=C text="$1" byte width=0
-    while [[ -n "$text" ]]; do
-        printf -v byte '%d' "'${text:0:1}"
+    # 直接读取 UTF-8 字节，避开 musl 下 printf 将单个高位字节解释成字符的问题。
+    local octets byte width=0
+    octets=$(printf '%s' "$1" | LC_ALL=C od -An -tu1 -v) || { _error '读取菜单显示宽度失败'; return 1; }
+    for byte in $octets; do
         if (( byte < 128 )); then width=$((width+1))
         elif (( byte >= 224 )); then width=$((width+2))
         elif (( byte >= 192 )); then width=$((width+1)); fi
-        text="${text:1}"
     done
     printf '%s\n' "$width"
 }
@@ -70,18 +69,24 @@ sbd_ui_item() {
 }
 
 sbd_ui_rows() {
-    local cols left right width pad
+    local cols left right width right_width pad span=32
     cols=$(sbd_ui_columns)
     (( cols <= 100 )) || cols=100
     while (( $# > 0 )); do
         left="$1"; shift
         right="${1:-}"
-        width=$(sbd_ui_width "$left")
-        if (( cols >= 76 && $# > 0 && width <= (cols-6)/2 )) && (( $(sbd_ui_width "$right") <= (cols-6)/2 )); then
+        (( $# == 0 )) || shift
+        width=$(sbd_ui_width "$left") || return 1
+        right_width=$(sbd_ui_width "$right") || return 1
+        # 所有页面共用固定右列起点；长项单列显示，但不打乱后续项目的配对。
+        if [[ -n "$right" ]] && (( cols >= 76 && width <= span-2 && right_width <= cols-span-4 )); then
             printf '  '; sbd_ui_item "$left"
-            pad=$(( (cols-6)/2-width+2 )); printf '%*s' "$pad" ''
-            sbd_ui_item "$right"; printf '\n'; shift
-        else printf '  '; sbd_ui_item "$left"; printf '\n'; fi
+            pad=$(( span-width )); printf '%*s' "$pad" ''
+            sbd_ui_item "$right"; printf '\n'
+        else
+            printf '  '; sbd_ui_item "$left"; printf '\n'
+            if [[ -n "$right" ]]; then printf '  '; sbd_ui_item "$right"; printf '\n'; fi
+        fi
     done
 }
 
