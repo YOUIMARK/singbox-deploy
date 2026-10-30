@@ -1,0 +1,13 @@
+{
+  "inbounds": [
+    {
+      "type": "shadowsocks",
+      "tag": "invalid-key",
+      "listen": "127.0.0.1",
+      "listen_port": 18443,
+      "method": "2022-blake3-aes-256-gcm",
+      "password": "!"
+    }
+  ],
+  "outbounds": [{"type": "direct", "tag": "direct"}]
+}

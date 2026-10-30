@@ -1,0 +1,11 @@
+{
+  "profile": "shadowsocks",
+  "name": "SS 测试 /#",
+  "listen": "127.0.0.1",
+  "listen_port": 19504,
+  "server": "2001:db8::10",
+  "server_port": 29504,
+  "method": "aes-256-gcm",
+  "password": "ss@:/?# &+中文=",
+  "network": "both"
+}

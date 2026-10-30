@@ -1,0 +1,8 @@
+{
+  "type":"cloudflared",
+  "tag":"cf-fixture",
+  "token":"eyJhIjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAiLCJ0IjoiODk5OTU0YTEtODZjNC00ZGI3LWI3YTMtOGI2ZjE5NmE4OTBlIiwicyI6IkFBRUNBd1FGQmdjSUNRb0xEQTBPRHhBUkVoTVVGUllYR0JrYUd4d2RIaDg9In0=",
+  "protocol":"quic",
+  "control_dialer":{"domain_resolver":"system"},
+  "tunnel_dialer":{"domain_resolver":"system"}
+}

@@ -1,0 +1,16 @@
+{
+  "type":"wireguard",
+  "tag":"wg-fixture",
+  "system":false,
+  "address":["10.0.0.2/32","fd00::2/128"],
+  "private_key":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "mtu":1408,
+  "peers":[{
+    "address":"192.0.2.1",
+    "port":51820,
+    "public_key":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    "allowed_ips":["0.0.0.0/0","::/0"],
+    "reserved":[1,2,255],
+    "persistent_keepalive_interval":25
+  }]
+}

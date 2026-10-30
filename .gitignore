@@ -5,6 +5,7 @@ Thumbs.db
 *.swo
 *~
 .vscode/
+.vs/
 .idea/
 
 # 开发工具
@@ -24,6 +25,7 @@ references/
 # 临时文件
 __pycache__/
 *.pyc
+.test-tools/
 
 # 机密/本地环境
 .env

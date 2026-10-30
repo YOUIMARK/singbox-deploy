@@ -1,0 +1,17 @@
+{
+  "profile": "anyreality",
+  "name": "AnyReality 测试 /#",
+  "listen": "127.0.0.1",
+  "listen_port": 19503,
+  "server": "2001:db8::10",
+  "server_port": 29503,
+  "password": "reality@:/?# &+中文=",
+  "tls_source": {
+    "kind": "reality",
+    "server_name": "example.com",
+    "handshake": {
+      "server": "example.com",
+      "server_port": 443
+    }
+  }
+}

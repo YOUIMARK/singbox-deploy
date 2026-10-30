@@ -1,0 +1,10 @@
+{
+  "type":"tailscale",
+  "tag":"ts-fixture",
+  "hostname":"singbox-fixture",
+  "domain_resolver":"system",
+  "system_interface":false,
+  "ssh_server":false,
+  "accept_routes":false,
+  "advertise_exit_node":false
+}

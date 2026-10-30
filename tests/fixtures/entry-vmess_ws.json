@@ -1,0 +1,10 @@
+{
+  "profile": "vmess_ws",
+  "name": "VMess CDN 测试 /#",
+  "listen": "127.0.0.1",
+  "listen_port": 19505,
+  "server": "2001:db8::10",
+  "server_port": 443,
+  "uuid": "899954a1-86c4-4db7-b7a3-8b6f196a890e",
+  "cdn": {"host":"cdn.example.com","origin_port":29505,"path":"/ws/a b+中文"}
+}

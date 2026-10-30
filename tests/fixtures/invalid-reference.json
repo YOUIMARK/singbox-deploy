@@ -1,0 +1,1 @@
+{"log":{"level":"warn"},"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"missing-outbound"}}

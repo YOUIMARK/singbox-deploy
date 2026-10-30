@@ -1,0 +1,26 @@
+{
+  "$schema": "./schema.json",
+  "log": {
+    "level": "warn",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "local",
+        "tag": "system"
+      }
+    ],
+    "final": "system"
+  },
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "final": "direct",
+    "default_domain_resolver": "system"
+  }
+}

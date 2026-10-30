@@ -1,0 +1,14 @@
+{
+  "profile": "anytls",
+  "name": "AnyTLS 测试 /#",
+  "listen": "127.0.0.1",
+  "listen_port": 19501,
+  "server": "2001:db8::10",
+  "server_port": 29501,
+  "password": "p@ss:/?# &+中文=",
+  "tls_source": {
+    "kind": "self_signed",
+    "server_name": "node.example.com",
+    "trust": "pin"
+  }
+}

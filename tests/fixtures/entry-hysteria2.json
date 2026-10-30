@@ -1,0 +1,14 @@
+{
+  "profile": "hysteria2",
+  "name": "Hy2 测试 /#",
+  "listen": "127.0.0.1",
+  "listen_port": 19502,
+  "server": "192.0.2.10",
+  "server_port": 29502,
+  "password": "hy2@:/?# &+中文=",
+  "tls_source": {
+    "kind": "self_signed",
+    "server_name": "node.example.com",
+    "trust": "certificate"
+  }
+}
