@@ -149,7 +149,7 @@ sbd_maintenance_menu() {
 
 sbd_status() {
     local version state runtime enabled count phase kind output backend rc=0
-    local report line core='' service='' startup='' nodes='' config='' manager='' transaction=''
+    local report line system init core='' service='' startup='' nodes='' config='' manager='' transaction=''
     if [[ "${1:-}" = brief ]]; then
         report=$(sbd_status) || rc=$?
         while IFS= read -r line; do
@@ -164,7 +164,11 @@ sbd_status() {
                 '事务: '*) transaction="$line" ;;
             esac
         done <<< "$report"
-        sbd_ui_rows "$core" "$service" "$startup" "$nodes" "$config" "$manager"
+        if ! system=$(sbd_system_label); then system=未知; rc=1; fi
+        if ! init=$(sbd_backend); then init=未知; rc=1; fi
+        sbd_ui_status_row "系统: $system" "init: $init" || return 1
+        sbd_ui_status_row "$core" "$service" "$nodes" || return 1
+        sbd_ui_status_row "$startup" "$config" "$manager" || return 1
         if [[ "$transaction" != '事务: 无待处理现场' ]]; then
             printf '  '; sbd_ui_tint '1;31' "$transaction"; printf '\n'
         fi
@@ -216,12 +220,12 @@ sbd_status() {
 
 sbd_dispatch() {
     case "$1" in
-        1) sbd_engine_menu ;;
-        2) sbd_entries_menu ;;
-        3) sbd_export_menu ;;
-        4) sbd_rules_menu ;;
-        5) sbd_resolver_menu ;;
-        6) sbd_peers_menu ;;
+        1) sbd_entries_menu ;;
+        2) sbd_export_menu ;;
+        3) sbd_rules_menu ;;
+        4) sbd_resolver_menu ;;
+        5) sbd_peers_menu ;;
+        6) sbd_engine_menu ;;
         7) sbd_tls_menu ;;
         8) sbd_observe_menu ;;
         9) sbd_check_config && sbd_success 'Schema 与核心检查通过；未验证网络连通' ;;
@@ -234,10 +238,10 @@ sbd_dispatch() {
 sbd_console() {
     local choice page rc
     while true; do
-        sbd_ui_begin 'singbox-deploy · sd'
+        sbd_ui_begin 'sing-box 部署管理脚本 (singbox-deploy)' true || return 1
         sbd_status brief || _error '状态摘要读取不完整；仍可选择检查或维护，不将未知状态当作停止'
-        sbd_ui_options '@节点与网络' '[2] 节点管理' '[3] 分享与客户端资料' '[4] 规则集与路由' '[5] 独立 DNS' '[6] Endpoints 与 Cloudflared' \
-            '@服务与维护' '[1] 核心管理' '[7] TLS 与证书' '[8] 观测、日志与缓存' '[9] 检查现有配置' '[10] 部署状态' '[11] 维护与显式协调' '[0] 退出'
+        sbd_ui_options '@节点与网络' '[1] 节点管理' '[2] 分享与客户端资料' '[3] 规则集与路由' '[4] 独立 DNS' '[5] Endpoints 与 Cloudflared' \
+            '@服务与维护' '[6] 核心管理' '[7] TLS 与证书' '[8] 观测、日志与缓存' '[9] 检查现有配置' '[10] 部署状态' '[11] 维护与显式协调' '[0] 退出'
         page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 11 || return 0
         choice="$SBD_REPLY"

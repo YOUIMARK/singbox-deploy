@@ -7,7 +7,7 @@ case "$1" in
         sbd_ui_menu '终端菜单' '[1] 核心管理' '[2] 删除节点' '[0] 返回'
         sbd_ui_pause
         ;;
-    navigation|failure)
+    navigation|navigation_narrow|failure)
         t_fresh
         SBD_BINARY="$CASE_TMP/missing-core"
         sbd_service_state() { printf 'stopped\n'; }

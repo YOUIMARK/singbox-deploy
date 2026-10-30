@@ -45,6 +45,15 @@ sbd_os() (
     esac
 )
 
+sbd_system_label() (
+    local file="${1:-/etc/os-release}"
+    [[ -r "$file" ]] || { _error '无法读取系统名称'; return 1; }
+    unset PRETTY_NAME
+    . "$file" || { _error '无法解析系统名称'; return 1; }
+    [[ -n "${PRETTY_NAME:-}" ]] || { _error 'os-release 缺少 PRETTY_NAME'; return 1; }
+    printf '%s\n' "$PRETTY_NAME"
+)
+
 sbd_arch() {
     case "${1:-$(uname -m)}" in
         x86_64|amd64) printf 'amd64\n' ;;

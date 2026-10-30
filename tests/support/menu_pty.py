@@ -14,9 +14,10 @@ import time
 import unicodedata
 
 root, case_tmp, scenario = sys.argv[1:]
+columns = 40 if scenario == 'navigation_narrow' else 80
 pid, fd = pty.fork()
 if pid == 0:
-    os.environ.update(TERM='xterm-256color', COLUMNS='80', CASE_TMP=case_tmp)
+    os.environ.update(TERM='xterm-256color', COLUMNS=str(columns), CASE_TMP=case_tmp)
     os.environ.pop('NO_COLOR', None)
     if scenario == 'no_color':
         os.environ['NO_COLOR'] = '1'
@@ -24,7 +25,7 @@ if pid == 0:
         os.environ['TERM'] = 'dumb'
     os.execvp('bash', ['bash', root + '/tests/support/menu_driver.sh', scenario])
 
-fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 80, 0, 0))
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 30, columns, 0, 0))
 output = bytearray()
 finished = False
 
@@ -89,18 +90,22 @@ try:
         else:
             drain(0.3)
             assert '\x1b' not in text() and '按回车' not in text()
-    elif scenario == 'navigation':
+    elif scenario in ('navigation', 'navigation_narrow'):
         wait_for('请选择')
         assert '配置路径:' not in text() and '日志文件:' not in text()
         assert '核心: 未安装' in text()
         for number in range(12):
             assert f'[{number}]' in text(), number
         lines = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()).splitlines()
-        for item in ('服务:', '托管节点:', '管理器:', '[3]', '[5]', '[7]', '[9]', '[11]'):
+        assert [int(n) for n in re.findall(r'\[(\d+)\]', '\n'.join(lines))] == list(range(1, 12)) + [0]
+        assert '【节点与网络】' in text() and '【服务与维护】' in text()
+        assert 'init: openrc' in text() and '  |  服务:' in text()
+        assert '--------' not in text()
+        for item in ('[2]', '[4]', '[7]', '[9]', '[11]'):
             line = next(line for line in lines if item in line)
             prefix = line[:line.index(item)]
             width = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix)
-            assert width == 34, (item, width, line)
+            assert width == (2 if columns == 40 else 34), (item, width, line)
         start = len(text())
         send('10\n')
         wait_for('按回车返回菜单', start)
@@ -110,7 +115,7 @@ try:
         send('\n')
         wait_for('请选择', start)
         start = len(text())
-        send('1\n')
+        send('6\n')
         wait_for('请选择', start)
         assert text()[start:].count('核心管理') == 1
         assert '安装与更新' in text()[start:] and '服务控制' in text()[start:]

@@ -18,17 +18,25 @@ main_numbers() {
     for number in {0..11}; do
         t_assert "主菜单编号 $number 只出现一次" test "$(grep -oF "[$number]" "$CASE_TMP/output" | wc -l)" = 1
     done
-    t_contains "$CASE_TMP/output" '节点与网络'
-    t_contains "$CASE_TMP/output" '服务与维护'
+    t_contains "$CASE_TMP/output" '【节点与网络】'
+    t_contains "$CASE_TMP/output" '【服务与维护】'
+    t_contains "$CASE_TMP/output" '系统: '
+    t_contains "$CASE_TMP/output" 'init: openrc'
+    t_absent "$CASE_TMP/output" '--------'
     t_absent "$CASE_TMP/output" "$SBD_CONFIG"
     t_absent "$CASE_TMP/output" "$SBD_EXPORTS"
     t_absent "$CASE_TMP/output" "$SBD_LOG"
     t_absent "$CASE_TMP/output" '事务: 无待处理现场'
-    t_assert '状态与各组菜单的右列共用同一起点' python3 - "$CASE_TMP/output" <<'PY'
-import sys, unicodedata
-text = open(sys.argv[1]).read().splitlines()
-for item in ('服务:', '托管节点:', '管理器:', '[3]', '[5]', '[7]', '[9]', '[11]'):
-    line = next(line for line in text if item in line)
+    t_assert '主菜单编号按阅读顺序递增、组间留白且右列固定' python3 - "$CASE_TMP/output" <<'PY'
+import sys, unicodedata, re
+text = open(sys.argv[1]).read()
+assert [int(n) for n in re.findall(r'\[(\d+)\]', text)] == list(range(1, 12)) + [0]
+assert '\n\n  【节点与网络】\n' in text
+assert '\n\n  【服务与维护】\n' in text
+assert '\n\n  [0] 退出\n' in text
+assert '核心: ' in next(line for line in text.splitlines() if '  |  服务:' in line)
+for item in ('[2]', '[4]', '[7]', '[9]', '[11]'):
+    line = next(line for line in text.splitlines() if item in line)
     prefix = line[:line.index(item)]
     width = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix)
     assert width == 34, (item, width, line)
@@ -84,8 +92,35 @@ selectors_literal() {
     t_assert '策略选择返回原值' test "$SBD_REPLY" = system
     t_contains "$CASE_TMP/output" '[1] system'
 }
-t_case '主菜单保留全部编号、详细状态承载路径、只读不改事实' main_numbers
+numbered_navigation() {
+    menu_fixture
+    local number title
+    local -a titles=('节点管理' '分享与客户端资料' '规则集与路由' '独立 DNS 管理' 'Endpoints 与 Cloudflared' '核心管理' 'TLS 与证书' '原生观测、日志与缓存')
+    for number in {1..8}; do
+        title="${titles[number-1]}"
+        t_run 0 sbd_console <<< "$(printf '%s\n0\n0\n' "$number")"
+        t_contains "$CASE_TMP/output" "  $title"
+        t_assert '输入编号确实进入相应子菜单' test "$(grep -Fc "  $title" "$CASE_TMP/output")" = 1
+    done
+    t_run 0 sbd_console <<< $'11\n0\n0'
+    t_contains "$CASE_TMP/output" '  维护与显式协调'
+}
+host_unknown() {
+    menu_fixture
+    sbd_system_label() { _error '注入系统名称读取失败'; return 1; }
+    sbd_backend() { _error '注入 init 检测失败'; return 1; }
+    t_run 1 sbd_status brief
+    t_contains "$CASE_TMP/output" '系统: 未知'
+    t_contains "$CASE_TMP/output" 'init: 未知'
+    t_absent "$CASE_TMP/output" '[成功]'
+    t_run 0 sbd_console <<< 0
+    t_contains "$CASE_TMP/output" '状态摘要读取不完整'
+    t_contains "$CASE_TMP/output" '[11] 维护与显式协调'
+}
+t_case '主菜单顺序编号、分组留白、状态分隔且详细状态只读' main_numbers
 t_case '精简摘要保留未知状态和失败返回码' unknown_brief
 t_case '精简摘要不隐藏待恢复、待收尾或未知现场' pending_brief
 t_case '动态选择列表样式统一且保持标签和稳定 ID' selectors_literal
+t_case '按首页新编号真实进入全部子菜单、旧子菜单编号不变' numbered_navigation
+t_case '系统与 init 读取失败显示未知、仍可进入维护' host_unknown
 t_finish

@@ -37,19 +37,18 @@ sbd_ui_width() {
     printf '%s\n' "$width"
 }
 
-sbd_ui_line() {
-    local cols i
-    cols=$(sbd_ui_columns); (( cols <= 76 )) || cols=76
-    printf '  '
-    for ((i=0; i<cols-4; i++)); do printf '%s' '-'; done
-    printf '\n'
-}
-
 sbd_ui_begin() {
+    local cols width inner pad=2
     if sbd_ui_terminal; then printf '\033[H\033[2J'; fi
     SBD_UI_PAGE=$(( ${SBD_UI_PAGE:-0} + 1 ))
-    printf '\n  '; sbd_ui_tint '1;36' "$1"; printf '\n'
-    sbd_ui_line
+    if [[ "${2:-false}" = true ]]; then
+        cols=$(sbd_ui_columns)
+        width=$(sbd_ui_width "$1") || return 1
+        inner=$((width+8)); (( inner >= 40 )) || inner=40
+        (( inner <= cols-4 )) || inner=$((cols-4))
+        if (( inner > width )); then pad=$((2+(inner-width)/2)); fi
+    fi
+    printf '\n%*s' "$pad" ''; sbd_ui_tint '1;36' "$1"; printf '\n\n'
 }
 
 sbd_ui_pause() {
@@ -90,7 +89,22 @@ sbd_ui_rows() {
     done
 }
 
-sbd_ui_section() { printf '\n  '; sbd_ui_tint 36 "$1"; printf '\n'; }
+sbd_ui_section() { printf '\n  '; sbd_ui_tint 36 "【$1】"; printf '\n'; }
+
+sbd_ui_status_row() {
+    local cols field line='' candidate width
+    cols=$(sbd_ui_columns)
+    for field in "$@"; do
+        candidate="$field"
+        [[ -z "$line" ]] || candidate="$line  |  $field"
+        width=$(sbd_ui_width "$candidate") || return 1
+        if [[ -n "$line" ]] && (( width > cols-4 )); then
+            printf '  %s\n' "$line"
+            line="$field"
+        else line="$candidate"; fi
+    done
+    [[ -z "$line" ]] || printf '  %s\n' "$line"
+}
 
 sbd_ui_options() {
     local item
@@ -100,7 +114,7 @@ sbd_ui_options() {
             (( ${#rows[@]} == 0 )) || sbd_ui_rows "${rows[@]}"
             rows=()
             if [[ "$item" = @* ]]; then sbd_ui_section "${item#@}"
-            else sbd_ui_line; sbd_ui_rows "$item"; fi
+            else printf '\n'; sbd_ui_rows "$item"; fi
         else rows+=("$item"); fi
     done
     (( ${#rows[@]} == 0 )) || sbd_ui_rows "${rows[@]}"

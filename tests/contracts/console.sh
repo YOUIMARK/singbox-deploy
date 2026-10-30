@@ -9,19 +9,19 @@ empty_menu() {
     t_contains "$CASE_TMP/output" '原生观测'
     t_run 0 sbd_dispatch 11 <<< 0
     t_contains "$CASE_TMP/output" '维护与显式协调'
-    t_run 0 sbd_dispatch 1 <<< 0
+    t_run 0 sbd_dispatch 6 <<< 0
     t_contains "$CASE_TMP/output" '核心管理'
-    t_run 0 sbd_dispatch 3 <<< 0
+    t_run 0 sbd_dispatch 2 <<< 0
     t_contains "$CASE_TMP/output" '客户端资料'
     t_run 0 sbd_dispatch 7 <<< 0
     t_contains "$CASE_TMP/output" 'TLS 与证书'
-    t_run 0 sbd_dispatch 2 <<< 0
+    t_run 0 sbd_dispatch 1 <<< 0
     t_contains "$CASE_TMP/output" '节点管理'
-    t_run 0 sbd_dispatch 4 <<< 0
+    t_run 0 sbd_dispatch 3 <<< 0
     t_contains "$CASE_TMP/output" '规则集与路由'
-    t_run 0 sbd_dispatch 5 <<< 0
+    t_run 0 sbd_dispatch 4 <<< 0
     t_contains "$CASE_TMP/output" '独立 DNS'
-    t_run 0 sbd_dispatch 6 <<< 0
+    t_run 0 sbd_dispatch 5 <<< 0
     t_contains "$CASE_TMP/output" 'Endpoints 与 Cloudflared'
 }
 check_menu() {

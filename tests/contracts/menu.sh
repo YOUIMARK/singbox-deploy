@@ -7,7 +7,28 @@ plain_menu() {
     t_contains "$CASE_TMP/output" '[1] 安装'
     t_contains "$CASE_TMP/output" '[2] 指定版本'
     t_contains "$CASE_TMP/output" '[0] 返回'
+    t_contains "$CASE_TMP/output" '【安装与更新】'
+    t_absent "$CASE_TMP/output" '--------'
     t_absent "$CASE_TMP/output" $'\033'
+}
+centered_title() {
+    COLUMNS=80 t_run 0 sbd_ui_begin 'sing-box 部署管理脚本 (singbox-deploy)' true
+    t_assert '标题按显示列在紧凑标题区居中' python3 - "$CASE_TMP/output" <<'PY'
+import sys
+lines = open(sys.argv[1]).read().splitlines()
+assert lines == ['', '      sing-box 部署管理脚本 (singbox-deploy)', ''], lines
+PY
+    COLUMNS=40 t_run 0 sbd_ui_begin 'sing-box 部署管理脚本 (singbox-deploy)' true
+    t_contains "$CASE_TMP/output" '  sing-box 部署管理脚本 (singbox-deploy)'
+}
+status_rows() {
+    COLUMNS=80 t_run 0 sbd_ui_status_row '核心: 未安装' '服务: 已停止' '托管节点: 0 个'
+    t_contains "$CASE_TMP/output" '  核心: 未安装  |  服务: 已停止  |  托管节点: 0 个'
+    COLUMNS=40 t_run 0 sbd_ui_status_row '核心: 未安装' '服务: 已停止' '托管节点: 0 个'
+    t_assert '窄屏状态按完整字段换行' test "$(wc -l < "$CASE_TMP/output")" = 2
+    t_contains "$CASE_TMP/output" '  核心: 未安装  |  服务: 已停止'
+    t_contains "$CASE_TMP/output" '  托管节点: 0 个'
+    t_assert '换行不留下悬空分隔符' test "$(tail -n 1 "$CASE_TMP/output")" = '  托管节点: 0 个'
 }
 column_layout() {
     local cols
@@ -79,6 +100,8 @@ pty_case() {
     t_assert '真实 PTY 验证' python3 "$ROOT/tests/support/menu_pty.py" "$ROOT" "$CASE_TMP" "$1"
 }
 t_case '非终端标题与编号完整且无 ANSI' plain_menu
+t_case '主菜单标题居中、窄屏不增加多余缩进' centered_title
+t_case '状态用分隔符紧凑排列、窄屏按字段换行' status_rows
 t_case '80/100 列双栏及中文对齐' column_layout
 t_case '窄屏与长标签回退单列' narrow_layout
 t_case '长项回退不改变后续编号配对' stable_pairs
@@ -90,6 +113,7 @@ t_case '真实终端着色、清屏、删除警示' pty_case colors
 t_case 'NO_COLOR 关闭颜色但保留清屏' pty_case no_color
 t_case 'TERM=dumb 不清屏不暂停' pty_case dumb
 t_case '详细状态等回车后重绘、子菜单返回不额外暂停' pty_case navigation
+t_case '窄屏真实终端状态换行与连续编号导航' pty_case navigation_narrow
 t_case '失败信息保持至回车、未假报成功' pty_case failure
 t_case '暂停处 EOF 后退出且不循环重绘' pty_case eof
 t_finish
