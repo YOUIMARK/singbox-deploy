@@ -610,7 +610,7 @@ sbd_entry_choose() {
     while (( index < count )); do
         name=$(jq -r --argjson index "$index" '.[$index] | (.id // .tag) as $id | (.name // .server_name // $id) as $name |
             if $name==$id then $name else "\($name) (\($id))" end' <<< "$values") || return 1
-        printf '[%s] %s\n' "$((index+1))" "$name"
+        sbd_ui_rows "[$((index+1))] $name"
         index=$((index+1))
     done
     sbd_read_integer "$label" 1 "$count" || return $?
@@ -626,7 +626,7 @@ sbd_entry_tls_prompt() {
         SBD_TLS_REQUEST=$(jq -n --arg name "$name" --arg server "$handshake" --argjson port "$port" '{kind:"reality",server_name:$name,handshake:{server:$server,server_port:$port}}') || return 1
         return 0
     fi
-    printf '%s\n' '[1] 已有共享 ACME provider' '[2] 已登记 PEM 证书' '[3] 新建 P-256 自签证书'
+    sbd_ui_options '[1] 已有共享 ACME provider' '[2] 已登记 PEM 证书' '[3] 新建 P-256 自签证书'
     sbd_read_integer 'TLS 来源' 1 3 || return $?; choice="$SBD_REPLY"
     case "$choice" in
         1)
@@ -649,7 +649,7 @@ sbd_entry_tls_prompt() {
             kind=self_signed ;;
     esac
     default=1; [[ "$kind" != self_signed ]] || default=2
-    printf '%s\n' '[1] 系统 CA（自签不可用）' '[2] 公钥 pin' '[3] 携带证书信任'
+    sbd_ui_options '[1] 系统 CA（自签不可用）' '[2] 公钥 pin' '[3] 携带证书信任'
     while true; do
         sbd_entry_number_prompt '客户端信任方式' 1 3 "$default" || return $?
         [[ "$kind" != self_signed || "$SBD_REPLY" != 1 ]] && break
@@ -675,10 +675,10 @@ sbd_entry_uuid_prompt() {
 
 sbd_entry_ss_prompt() {
     local network method password choice
-    printf '%s\n' '[1] TCP+UDP（默认）' '[2] 仅 TCP' '[3] 仅 UDP'
+    sbd_ui_options '[1] TCP+UDP（默认）' '[2] 仅 TCP' '[3] 仅 UDP'
     sbd_entry_number_prompt 'Shadowsocks 监听网络' 1 3 1 || return $?
     case "$SBD_REPLY" in 1) network=both ;; 2) network=tcp ;; 3) network=udp ;; esac
-    printf '%s\n' '[1] aes-256-gcm' '[2] 2022-blake3-aes-256-gcm' '[3] 2022-blake3-chacha20-poly1305'
+    sbd_ui_options '[1] aes-256-gcm' '[2] 2022-blake3-aes-256-gcm' '[3] 2022-blake3-chacha20-poly1305'
     sbd_read_integer '选择算法' 1 3 || return $?; choice="$SBD_REPLY"
     case "$choice" in 1) method=aes-256-gcm ;; 2) method=2022-blake3-aes-256-gcm ;; 3) method=2022-blake3-chacha20-poly1305 ;; esac
     sbd_entry_ss_password_prompt "$method" || return $?; password="$SBD_REPLY"
@@ -754,26 +754,27 @@ sbd_entry_create_classic_prompt() {
     [[ "$SBD_REPLY" = y ]] || return 2
     sbd_entry_submit "$request" || return 1
     sbd_success "节点与客户端资料已提交: $SBD_EXPORTS；未验证 NAT/CDN 回源或客户端握手"
+    sbd_ui_pause
     sbd_export_node_menu "$SBD_NEW_ENTRY_ID" || { _error '节点已提交，但资料查看失败；未回滚已提交节点'; return 1; }
 }
 
 sbd_entry_hy2_prompt() {
     local choice up down obfs='null' server='{}' client='{}' password low high maximum
-    printf '%s\n' '[1] 客户端 BBR（默认）' '[2] 客户端 Hysteria CC，分别填写上/下行 Mbps'
+    sbd_ui_options '[1] 客户端 BBR（默认）' '[2] 客户端 Hysteria CC，分别填写上/下行 Mbps'
     sbd_entry_number_prompt '客户端拥塞策略' 1 2 1 || return $?; choice="$SBD_REPLY"
     if [[ "$choice" = 2 ]]; then
         sbd_entry_number_prompt '客户端上传 Mbps（客户端→服务器）' 1 999999999 || return $?; up="$SBD_REPLY"
         sbd_entry_number_prompt '客户端下载 Mbps（服务器→客户端）' 1 999999999 || return $?; down="$SBD_REPLY"
         client=$(jq -n --argjson up "$up" --argjson down "$down" '{up_mbps:$up,down_mbps:$down}') || return 1
     fi
-    printf '%s\n' '[1] 不设置服务端带宽上限（默认）' '[2] 分别填写服务端上/下行上限'
+    sbd_ui_options '[1] 不设置服务端带宽上限（默认）' '[2] 分别填写服务端上/下行上限'
     sbd_entry_number_prompt '服务端带宽设置' 1 2 1 || return $?; choice="$SBD_REPLY"
     if [[ "$choice" = 2 ]]; then
         sbd_entry_number_prompt '服务端上传 Mbps（服务器→客户端）' 1 999999999 || return $?; up="$SBD_REPLY"
         sbd_entry_number_prompt '服务端下载 Mbps（客户端→服务器）' 1 999999999 || return $?; down="$SBD_REPLY"
         server=$(jq -n --argjson up "$up" --argjson down "$down" '{up_mbps:$up,down_mbps:$down}') || return 1
     fi
-    printf '%s\n' '[1] 不启用混淆（默认）' '[2] Salamander' '[3] Gecko（自定义尺寸采用 URI 扩展）'
+    sbd_ui_options '[1] 不启用混淆（默认）' '[2] Salamander' '[3] Gecko（自定义尺寸采用 URI 扩展）'
     sbd_entry_number_prompt '混淆方式' 1 3 1 || return $?; choice="$SBD_REPLY"
     if [[ "$choice" != 1 ]]; then
         sbd_entry_password_prompt '混淆密码' || return $?; password="$SBD_REPLY"
@@ -790,9 +791,10 @@ sbd_entry_hy2_prompt() {
 
 sbd_entry_create_prompt() {
     local choice profile listen port server external password name source options='{}' request network
+    sbd_ui_begin '创建节点'
     sbd_version >/dev/null || return 1
     if [[ -f "$SBD_CONFIG" ]]; then sbd_check_config || return 1; fi
-    printf '%s\n' '[1] Hysteria2（UDP）' '[2] AnyTLS（TCP）' '[3] AnyReality（AnyTLS + Reality，TCP）' \
+    sbd_ui_options '[1] Hysteria2（UDP）' '[2] AnyTLS（TCP）' '[3] AnyReality（AnyTLS + Reality，TCP）' \
         '[4] Shadowsocks（三算法）' '[5] VMess+WS CDN' '[6] VLESS+Reality Vision' '[7] VLESS+WS CDN'
     sbd_read_integer '选择配置档' 1 7 || return $?; choice="$SBD_REPLY"
     case "$choice" in
@@ -815,32 +817,34 @@ sbd_entry_create_prompt() {
     [[ "$SBD_REPLY" = y ]] || return 2
     sbd_entry_submit "$request" || return 1
     sbd_success "节点与客户端资料已提交: $SBD_EXPORTS；未验证 NAT 入站或客户端握手"
+    sbd_ui_pause
     sbd_export_node_menu "$SBD_NEW_ENTRY_ID" || { _error '节点已提交，但资料查看失败；未回滚已提交节点'; return 1; }
 }
 
 sbd_entry_actions() {
     local profile="$1"
-    printf '%s\n' '[1] 修改显示名' '[2] 更换认证密码/UUID' '[3] 修改客户端连接地址/映射端口' '[4] 修改本地监听'
+    sbd_ui_options '[1] 修改显示名' '[2] 更换认证密码/UUID' '[3] 修改客户端连接地址/映射端口' '[4] 修改本地监听'
     SBD_ENTRY_ACTIONS=' 0 1 2 3 4 7 '
     case "$profile" in
         hysteria2)
-            printf '%s\n' '[5] Hysteria2 带宽/混淆' '[6] 切换 TLS 来源'
+            sbd_ui_options '[5] Hysteria2 带宽/混淆' '[6] 切换 TLS 来源'
             SBD_ENTRY_ACTIONS+='5 6 ' ;;
-        anytls) printf '%s\n' '[6] 切换 TLS 来源'; SBD_ENTRY_ACTIONS+='6 ' ;;
-        anyreality|vless_reality) printf '%s\n' '[6] 重建 Reality 密钥及握手配置'; SBD_ENTRY_ACTIONS+='6 ' ;;
+        anytls) sbd_ui_options '[6] 切换 TLS 来源'; SBD_ENTRY_ACTIONS+='6 ' ;;
+        anyreality|vless_reality) sbd_ui_options '[6] 重建 Reality 密钥及握手配置'; SBD_ENTRY_ACTIONS+='6 ' ;;
         shadowsocks|vmess_ws|vless_ws) ;;
         *) _error '未知托管配置档'; return 1 ;;
     esac
-    printf '%s\n' '[7] 删除节点（保留证书/provider 资料）'
+    sbd_ui_options '[7] 删除节点（保留证书/provider 资料）'
     case "$profile" in
-        shadowsocks) printf '%s\n' '[8] Shadowsocks 算法/网络/密钥'; SBD_ENTRY_ACTIONS+='8 ' ;;
-        vmess_ws|vless_ws) printf '%s\n' '[9] WS CDN 域名/回源/路径'; SBD_ENTRY_ACTIONS+='9 ' ;;
+        shadowsocks) sbd_ui_options '[8] Shadowsocks 算法/网络/密钥'; SBD_ENTRY_ACTIONS+='8 ' ;;
+        vmess_ws|vless_ws) sbd_ui_options '[9] WS CDN 域名/回源/路径'; SBD_ENTRY_ACTIONS+='9 ' ;;
     esac
-    printf '%s\n' '[0] 取消'
+    sbd_ui_options '[0] 取消'
 }
 
 sbd_entry_change_prompt() {
     local values id node choice action value profile server network tag defaults port
+    sbd_ui_begin '修改或删除节点'
     values=$(jq -c '.nodes' "$SBD_REGISTRY") || return 1
     sbd_entry_choose "$values" '选择节点' || return $?; id="$SBD_REPLY"
     node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || return 1
@@ -897,6 +901,7 @@ sbd_entry_change_prompt() {
     [[ "$SBD_REPLY" = y ]] || return 2
     sbd_apply sbd_entry_change "$id" "$action" "$value" || return 1
     sbd_success '节点变更与分享资料已提交；未验证外网连通'
+    sbd_ui_pause
 }
 
 sbd_entries_list() {
@@ -904,9 +909,10 @@ sbd_entries_list() {
 }
 
 sbd_entries_menu() {
-    local choice rc
+    local choice rc page
     while true; do
-        printf '\n%s\n' '节点管理' '[1] 列出节点（不显示凭据）' '[2] 创建节点' '[3] 修改或删除节点' '[0] 返回'
+        sbd_ui_menu '节点管理' '[1] 列出节点（不显示凭据）' '[2] 创建节点' '[3] 修改或删除节点' '[0] 返回'
+        page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 3 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
@@ -916,6 +922,7 @@ sbd_entries_menu() {
         esac
         rc=$?
         [[ "$rc" = 0 || "$rc" = 2 ]] || return 1
+        sbd_ui_pause "$page"
     done
 }
 

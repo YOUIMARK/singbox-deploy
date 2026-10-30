@@ -186,7 +186,7 @@ sbd_peer_token_prompt() {
 
 sbd_peer_dial_prompt() {
     local choice detour='' resolver
-    printf '%s\n' '[1] 原生直接拨号（默认）' '[2] 指定现有 outbound/endpoint'
+    sbd_ui_options '[1] 原生直接拨号（默认）' '[2] 指定现有 outbound/endpoint'
     sbd_entry_number_prompt '拨号方式' 1 2 1 || return $?; choice="$SBD_REPLY"
     if [[ "$choice" = 2 ]]; then sbd_policy_target outbound || return $?; detour="$SBD_REPLY"; fi
     sbd_policy_target dns || return $?; resolver="$SBD_REPLY"
@@ -196,7 +196,7 @@ sbd_peer_dial_prompt() {
 sbd_peer_cloudflare_prompt() {
     local tag="$1" token protocol version control tunnel
     sbd_peer_token_prompt || return $?; token="$SBD_REPLY"
-    printf '%s\n' '[1] quic' '[2] http2'
+    sbd_ui_options '[1] quic' '[2] http2'
     sbd_read_integer '边缘连接协议' 1 2 || return $?; protocol=quic; [[ "$SBD_REPLY" != 2 ]] || protocol=http2
     sbd_policy_pick '["0","4","6"]' 'edge_ip_version（0 为自动）' || return $?; version="$SBD_REPLY"
     sbd_info 'control_dialer（控制面）'; sbd_peer_dial_prompt || return $?; control="$SBD_PEER_DIAL"
@@ -223,9 +223,10 @@ sbd_peer_logging() {
 }
 
 sbd_peer_login_menu() {
-    local choice level backend
+    local choice level backend page
     while true; do
-        printf '\n%s\n' 'Tailscale 登录说明与日志' '[1] 查看说明和日志位置' '[2] 显式设置 info（显示等待认证 URL）' '[3] 显式设置 warn' '[0] 返回'
+        sbd_ui_menu 'Tailscale 登录说明与日志' '[1] 查看说明和日志位置' '[2] 显式设置 info（显示等待认证 URL）' '[3] 显式设置 warn' '[0] 返回'
+        page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 3 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
@@ -234,6 +235,7 @@ sbd_peer_login_menu() {
                 sbd_info '已有 state_directory 时 auth_key 不会重新注册节点；删除配置保留该目录，配置回滚不撤销登录等外部动作'
                 backend=$(sbd_backend) || return 1
                 if [[ "$backend" = systemd ]]; then printf '日志命令: journalctl -u %s\n' "$SBD_SERVICE"; else printf '日志文件: %s\n' "$SBD_LOG"; fi
+                sbd_ui_pause "$page"
                 continue ;;
             2) level=info ;; 3) level=warn ;;
         esac
@@ -241,12 +243,13 @@ sbd_peer_login_menu() {
         sbd_policy_confirm || return $?
         sbd_apply sbd_peer_logging "$level" || return 1
         sbd_success '日志级别已提交；服务原先停止则仍停止，未声明已获取登录 URL'
+        sbd_ui_pause "$page"
     done
 }
 
 sbd_peer_magic_prompt() {
     local choice endpoint tag count position values
-    printf '%s\n' '[1] 添加 MagicDNS server 与有限域名分流' '[2] 删除托管 Tailscale DNS 及本向导关联规则' '[0] 返回'
+    sbd_ui_menu 'MagicDNS 关联' '[1] 添加 MagicDNS server 与有限域名分流' '[2] 删除托管 Tailscale DNS 及本向导关联规则' '[0] 返回'
     sbd_read_integer '请选择' 0 2 || return $?; choice="$SBD_REPLY"
     [[ "$choice" != 0 ]] || return 2
     if [[ "$choice" = 1 ]]; then
@@ -265,17 +268,19 @@ sbd_peer_magic_prompt() {
         sbd_apply sbd_peer_magic delete '' "$tag" || return 1
     fi
     sbd_success 'MagicDNS 关联已提交；未验证 Tailnet 名称解析，不改默认 DNS/路由'
+    sbd_ui_pause
 }
 
 sbd_peers_menu() {
-    local choice area action tag value kind rc
+    local choice area action tag value kind rc page
     while true; do
-        printf '\n%s\n' 'Endpoints 与 Cloudflared' '[1] 查看概要（不显示密钥）' '[2] 向导添加 WireGuard' '[3] 向导添加 Tailscale' '[4] 向导添加 Cloudflared' \
+        sbd_ui_menu 'Endpoints 与 Cloudflared' '[1] 查看概要（不显示密钥）' '[2] 向导添加 WireGuard' '[3] 向导添加 Tailscale' '[4] 向导添加 Cloudflared' \
             '[5] 原生 JSON 添加' '[6] 原生 JSON 替换托管对象' '[7] 删除托管对象（保留认证/Taildrop 数据）' '[8] MagicDNS 关联' '[9] Tailscale 登录说明与日志设置' '[0] 返回'
+        page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 9 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
-            1) sbd_peer_list || return 1; continue ;;
+            1) sbd_peer_list || return 1; sbd_ui_pause "$page"; continue ;;
             8) sbd_peer_magic_prompt; rc=$?; [[ "$rc" = 0 || "$rc" = 2 ]] || return 1; continue ;;
             9) sbd_peer_login_menu; rc=$?; [[ "$rc" = 0 || "$rc" = 2 ]] || return 1; continue ;;
         esac
@@ -294,7 +299,7 @@ sbd_peers_menu() {
                 [[ "$kind" != cloudflared ]] || area=connectors
                 if [[ "$kind" = tailscale ]]; then sbd_info '此原生 Tailscale 对象包含内置 Taildrop；使用独立状态/接收目录，数据不随删除配置清除'; fi ;;
             6|7)
-                printf '%s\n' '[1] endpoints' '[2] Cloudflared connectors'
+                sbd_ui_options '[1] endpoints' '[2] Cloudflared connectors'
                 sbd_read_integer '对象区域' 1 2 || return $?; [[ "$SBD_REPLY" != 2 ]] || area=connectors
                 sbd_policy_choose "$area" || return $?; tag="$SBD_REPLY"
                 if [[ "$choice" = 7 ]]; then action=delete; value='{}'
@@ -304,5 +309,6 @@ sbd_peers_menu() {
         sbd_policy_confirm || return $?
         sbd_apply sbd_peer_change "$area" "$action" "$tag" "$value" || return 1
         sbd_success '连接对象与管理事实已提交；未验证握手/登录/Tunnel；原先停止的服务仍停止'
+        sbd_ui_pause "$page"
     done
 }

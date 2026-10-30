@@ -130,9 +130,10 @@ sbd_time_logs() {
 }
 
 sbd_time_menu() {
-    local choice
+    local choice page
     while true; do
-        printf '\n%s\n' '时间诊断与原生 NTP' '[1] 本地只读诊断（不查询网络）' '[2] 启用/修改核心内部 NTP' '[3] 禁用核心 NTP' '[4] 最近 NTP/时间戳日志' '[0] 返回'
+        sbd_ui_menu '时间诊断与原生 NTP' '[1] 本地只读诊断（不查询网络）' '[2] 启用/修改核心内部 NTP' '[3] 禁用核心 NTP' '[4] 最近 NTP/时间戳日志' '[0] 返回'
+        page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 4 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
@@ -145,20 +146,22 @@ sbd_time_menu() {
                 sbd_success '核心 NTP 已禁用；不代表系统时间准确' ;;
             4) sbd_time_logs || return 1 ;;
         esac
+        sbd_ui_pause "$page"
     done
 }
 
 sbd_observe_menu() {
-    local choice action value port secret
+    local choice action value port secret page
     while true; do
-        printf '\n%s\n' '原生观测、日志与缓存' '[1] 查看设置（隐藏 secret）' '[2] 启用/修改 loopback Clash API' '[3] 禁用 API' \
+        sbd_ui_menu '原生观测、日志与缓存' '[1] 查看设置（隐藏 secret）' '[2] 启用/修改 loopback Clash API' '[3] 禁用 API' \
             '[4] 当前连接' '[5] 一次流量采样' '[6] 最近 100 行日志' '[7] 日志级别/关闭/回到服务日志' '[8] 启用/禁用 cache_file' '[9] DNS 缓存持久化开关' '[10] 时间诊断与原生 NTP' '[0] 返回'
+        page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 10 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
-            1) jq '{log,experimental:{clash_api:(.experimental.clash_api // {}|del(.secret)),cache_file:.experimental.cache_file}}' "$SBD_CONFIG" || { _error '读取观测配置失败'; return 1; }; continue ;;
-            4|5) action=connections; [[ "$choice" != 5 ]] || action=traffic; sbd_observe_query "$action" || return 1; continue ;;
-            6) sbd_observe_logs || return 1; continue ;;
+            1) jq '{log,experimental:{clash_api:(.experimental.clash_api // {}|del(.secret)),cache_file:.experimental.cache_file}}' "$SBD_CONFIG" || { _error '读取观测配置失败'; return 1; }; sbd_ui_pause "$page"; continue ;;
+            4|5) action=connections; [[ "$choice" != 5 ]] || action=traffic; sbd_observe_query "$action" || return 1; sbd_ui_pause "$page"; continue ;;
+            6) sbd_observe_logs || return 1; sbd_ui_pause "$page"; continue ;;
             10) sbd_time_menu; case "$?" in 0|2) ;; *) return 1 ;; esac; continue ;;
             2)
                 action=api
@@ -176,5 +179,6 @@ sbd_observe_menu() {
         sbd_policy_confirm || return $?
         sbd_apply sbd_observe_change "$action" "$value" || return 1
         sbd_success '观测配置已提交；未声称 API 可访问或缓存已写入，不删除 DB'
+        sbd_ui_pause "$page"
     done
 }

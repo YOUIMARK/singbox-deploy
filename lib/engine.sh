@@ -475,25 +475,29 @@ sbd_uninstall_menu() {
 }
 
 sbd_engine_menu() {
-    local choice version
+    local choice version page rc
     while true; do
-        printf '\n核心管理\n%s\n' '[1] 安装/更新最新稳定版' '[2] 指定稳定版' '[3] 启动/重启' '[4] 停止' '[5] 启用自启' '[6] 关闭自启' '[0] 返回'
+        sbd_ui_menu '核心管理' '@安装与更新' '[1] 安装/更新最新稳定版' '[2] 指定稳定版' '@服务控制' '[3] 启动/重启' '[4] 停止' '[5] 启用自启' '[6] 关闭自启' '[0] 返回'
+        page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 6 || return 0
         choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
-            1) sbd_engine_install latest || continue ;;
+            1) sbd_engine_install latest ;;
             2)
                 while true; do
                     sbd_read_required '稳定版本（如 1.14.4）' || return 0
                     if version=$(sbd_release_version "$SBD_REPLY"); then break; fi
                 done
-                sbd_engine_install "$version" || continue
+                sbd_engine_install "$version"
                 ;;
             3) sbd_write_lock sbd_engine_control_locked restart && sbd_success '服务已持续运行；未验证外网连通' ;;
             4) sbd_write_lock sbd_engine_control_locked stop && sbd_success '已确认服务停止' ;;
             5) sbd_write_lock sbd_engine_control_locked enable && sbd_success '已启用开机自启' ;;
             6) sbd_write_lock sbd_engine_control_locked disable && sbd_success '已关闭开机自启' ;;
         esac
+        rc=$?
+        if [[ "$rc" != 0 && "$rc" != 2 ]]; then _error '核心操作未完成，请检查上方错误'; fi
+        sbd_ui_pause "$page"
     done
 }

@@ -261,9 +261,10 @@ sbd_export_node() {
 }
 
 sbd_export_node_menu() {
-    local id="$1" choice
+    local id="$1" choice page
     while true; do
-        printf '\n%s\n' '当前节点资料' '[1] 显示该节点链接（含凭据）' '[2] 显示客户端 JSON 路径' '[0] 返回'
+        sbd_ui_menu '当前节点资料' '[1] 显示该节点链接（含凭据）' '[2] 显示客户端 JSON 路径' '[0] 返回'
+        page="$SBD_UI_PAGE"
         if ! sbd_read_integer '请选择' 0 2; then
             sbd_info '仅结束资料查看，已提交的节点不受影响'
             return 0
@@ -274,13 +275,15 @@ sbd_export_node_menu() {
             1) sbd_export_node "$id" link || return 1 ;;
             2) sbd_export_node "$id" json || return 1 ;;
         esac
+        sbd_ui_pause "$page"
     done
 }
 
 sbd_export_menu() {
-    local choice values id
+    local choice values id page
     while true; do
-        printf '\n%s\n' '分享与客户端资料' '[1] 从元数据重建全部导出' '[2] 显示全部分享链接（含凭据）' '[3] 选择单个节点资料' '[0] 返回'
+        sbd_ui_menu '分享与客户端资料' '[1] 从元数据重建全部导出' '[2] 显示全部分享链接（含凭据）' '[3] 选择单个节点资料' '[0] 返回'
+        page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 3 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
@@ -298,5 +301,6 @@ sbd_export_menu() {
                 id="$SBD_REPLY"
                 sbd_export_node_menu "$id" || return 1 ;;
         esac
+        sbd_ui_pause "$page"
     done
 }

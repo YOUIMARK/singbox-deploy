@@ -156,7 +156,7 @@ sbd_policy_pick() {
     (( count > 0 )) || { _error '暂无可选择对象'; return 1; }
     for ((i=0; i<count; i++)); do
         text=$(jq -r --argjson i "$i" '.[$i] | if type=="string" then . else (.id // .tag) end' <<< "$values") || return 1
-        printf '[%s] %s\n' "$((i+1))" "$text"
+        sbd_ui_rows "[$((i+1))] $text"
     done
     sbd_read_integer "$label" 1 "$count" || return $?
     SBD_REPLY=$(jq -r --argjson i "$((SBD_REPLY-1))" '.[$i] | if type=="string" then . else (.id // .tag) end' <<< "$values") || return 1
@@ -199,7 +199,7 @@ sbd_policy_duration_prompt() {
 
 sbd_policy_match_prompt() {
     local choice field value
-    printf '%s\n' '[1] 完整域名' '[2] 域名后缀' '[3] 域名关键词' '[4] 目标 IP/CIDR' '[5] rule_set' '[6] inbound' '[7] 目标端口' '[8] 无条件匹配'
+    sbd_ui_options '[1] 完整域名' '[2] 域名后缀' '[3] 域名关键词' '[4] 目标 IP/CIDR' '[5] rule_set' '[6] inbound' '[7] 目标端口' '[8] 无条件匹配'
     sbd_read_integer '选择匹配条件' 1 8 || return $?; choice="$SBD_REPLY"
     case "$choice" in
         1|2|3)
@@ -225,7 +225,7 @@ sbd_policy_match_prompt() {
 sbd_route_rule_prompt() {
     local action value server choice
     sbd_policy_match_prompt || return $?; value="$SBD_MATCH"
-    printf '%s\n' '[1] route' '[2] reject' '[3] sniff' '[4] resolve' '[5] hijack-dns'
+    sbd_ui_options '[1] route' '[2] reject' '[3] sniff' '[4] resolve' '[5] hijack-dns'
     sbd_read_integer '选择原生 action' 1 5 || return $?; choice="$SBD_REPLY"
     case "$choice" in
         1) action=route; sbd_policy_target outbound || return $?; server="$SBD_REPLY"; value=$(jq --arg server "$server" '. + {outbound:$server}' <<< "$value") || return 1 ;;
@@ -238,14 +238,17 @@ sbd_route_rule_prompt() {
 }
 
 sbd_policy_rules_menu() {
-    local area="$1" choice action id value position count rc
+    local area="$1" choice action id value position count rc page title
+    title='路由规则'; [[ "$area" != dns_rules ]] || title='DNS 分流规则'
     while true; do
-        printf '\n%s\n' "$area" '[1] 查看原生规则与托管位置' '[2] 向导添加' '[3] JSON 添加' '[4] JSON 替换托管规则' '[5] 删除托管规则' '[6] 调整托管规则顺序' '[7] 向导重建托管规则（高级字段请用 JSON）' '[0] 返回'
+        sbd_ui_menu "$title" '[1] 查看原生规则与托管位置' '[2] 向导添加' '[3] JSON 添加' '[4] JSON 替换托管规则' '[5] 删除托管规则' '[6] 调整托管规则顺序' '[7] 向导重建托管规则（高级字段请用 JSON）' '[0] 返回'
+        page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 7 || return 0; choice="$SBD_REPLY"
         [[ "$choice" != 0 ]] || return 0
         if [[ "$choice" = 1 ]]; then
             if [[ "$area" = route_rules ]]; then jq '.route.rules // []' "$SBD_CONFIG"; else jq '.dns.rules // []' "$SBD_CONFIG"; fi || { _error '读取规则失败'; return 1; }
             jq --arg area "$area" '.policy[$area] // [] | map({id,position:(.index+1),group})' "$SBD_REGISTRY" || return 1
+            sbd_ui_pause "$page"
             continue
         fi
         [[ -f "$SBD_CONFIG" ]] || { _error '请先创建配置'; return 1; }
@@ -273,12 +276,13 @@ sbd_policy_rules_menu() {
         sbd_policy_confirm || return $?
         sbd_apply sbd_policy_rule "$area" "$action" "$id" "$value" "$position" || return 1
         sbd_success '规则及管理事实已提交；未验证实际分流命中'
+        sbd_ui_pause "$page"
     done
 }
 
 sbd_rule_set_prompt() {
     local choice tag url format origin value path interval client resolver target
-    printf '%s\n' '[1] 导入本地文件（JSON 编译或 SRS 解析）' '[2] 下载为 local（人工更新）' '[3] remote（核心首次运行下载及后续更新）' '[4] 原生 JSON 文件'
+    sbd_ui_options '[1] 导入本地文件（JSON 编译或 SRS 解析）' '[2] 下载为 local（人工更新）' '[3] remote（核心首次运行下载及后续更新）' '[4] 原生 JSON 文件'
     sbd_read_integer '规则集来源' 1 4 || return $?; choice="$SBD_REPLY"
     if [[ "$choice" = 4 ]]; then
         sbd_policy_json_prompt || return $?; SBD_SET_VALUE="$SBD_REPLY"
@@ -286,7 +290,7 @@ sbd_rule_set_prompt() {
         SBD_SET_ORIGIN=''; return 0
     fi
     while true; do sbd_read_required '规则集 tag' || return $?; tag="$SBD_REPLY"; sbd_tls_tag "$tag" && break; done
-    printf '%s\n' '[1] source JSON' '[2] binary SRS'
+    sbd_ui_options '[1] source JSON' '[2] binary SRS'
     sbd_read_integer '文件格式' 1 2 || return $?; format=source; [[ "$SBD_REPLY" != 2 ]] || format=binary
     if [[ "$choice" = 1 ]]; then
         while true; do
@@ -301,7 +305,7 @@ sbd_rule_set_prompt() {
     fi
     if [[ "$choice" = 3 ]]; then
         sbd_policy_duration_prompt || return $?; interval="$SBD_REPLY"
-        printf '%s\n' '[1] 原生 HTTP client 直连（默认）' '[2] 指定现有 outbound/endpoint'
+        sbd_ui_options '[1] 原生 HTTP client 直连（默认）' '[2] 指定现有 outbound/endpoint'
         sbd_entry_number_prompt '下载拨号方式' 1 2 1 || return $?; target=''
         if [[ "$SBD_REPLY" = 2 ]]; then sbd_policy_target outbound || return $?; target="$SBD_REPLY"; fi
         sbd_policy_target dns || return $?; resolver="$SBD_REPLY"
@@ -315,19 +319,20 @@ sbd_rule_set_prompt() {
 }
 
 sbd_rules_menu() {
-    local choice action tag value origin rc
+    local choice action tag value origin rc page
     while true; do
-        printf '\n%s\n' '规则集与路由' '[1] 查看规则集' '[2] 添加规则集' '[3] JSON 替换托管规则集' '[4] 人工更新 local' '[5] 删除托管规则集' '[6] 路由规则' '[7] 选择 route.final 默认出口' '[0] 返回'
+        sbd_ui_menu '规则集与路由' '[1] 查看规则集' '[2] 添加规则集' '[3] JSON 替换托管规则集' '[4] 人工更新 local' '[5] 删除托管规则集' '[6] 路由规则' '[7] 选择 route.final 默认出口' '[0] 返回'
+        page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 7 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
-            1) jq '.route.rule_set // []' "$SBD_CONFIG" || { _error '读取规则集失败'; return 1; }; continue ;;
+            1) jq '.route.rule_set // []' "$SBD_CONFIG" || { _error '读取规则集失败'; return 1; }; sbd_ui_pause "$page"; continue ;;
             6) sbd_policy_rules_menu route_rules; rc=$?; [[ "$rc" = 0 || "$rc" = 2 ]] || return 1; continue ;;
             7)
                 sbd_policy_target outbound || return $?; value="$SBD_REPLY"
                 sbd_policy_confirm || return $?
                 sbd_apply sbd_resolver_default outbound "$value" || return 1
-                sbd_success 'route.final 已提交；未验证出口连接'; continue ;;
+                sbd_success 'route.final 已提交；未验证出口连接'; sbd_ui_pause "$page"; continue ;;
             2) action=add; sbd_rule_set_prompt || return $?; tag="$SBD_SET_TAG" value="$SBD_SET_VALUE" origin="$SBD_SET_ORIGIN" ;;
             3) action=replace; sbd_policy_choose rule_sets || return $?; tag="$SBD_REPLY"; sbd_policy_json_prompt || return $?; value="$SBD_REPLY" origin='' ;;
             4|5)
@@ -337,5 +342,6 @@ sbd_rules_menu() {
         sbd_policy_confirm || return $?
         sbd_apply sbd_rule_set "$action" "$tag" "$value" "$origin" || return 1
         sbd_success '规则集配置及管理事实已提交；remote 不代表首次下载成功，未验证实际分流命中'
+        sbd_ui_pause "$page"
     done
 }

@@ -111,6 +111,8 @@ main_local_install() {
     }
     t_run 0 sbd_install_main --local --no-menu
     t_contains "$CASE_TMP/output" '管理器已安装'
+    t_contains "$CASE_TMP/output" '请在核心管理菜单中安装核心'
+    t_absent "$CASE_TMP/output" '业务模块仍未实现'
     t_assert '真实安装入口落地命令' test -L "$CASE_TMP/bin/sd"
     t_run 0 "$CASE_TMP/bin/sd" --help
     t_assert '不自动初始化业务配置' test ! -e "$CASE_TMP/root/config/config.json"

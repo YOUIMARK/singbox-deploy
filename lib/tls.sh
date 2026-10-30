@@ -200,7 +200,7 @@ sbd_tls_provider_prompt() {
         _error '邮箱格式无效'
     done
     email="$SBD_REPLY"
-    printf '%s\n' '[1] Cloudflare' '[2] AliDNS' '[3] ACME-DNS'
+    sbd_ui_options '[1] Cloudflare' '[2] AliDNS' '[3] ACME-DNS'
     sbd_read_integer 'DNS-01 provider' 1 3 || return $?; choice="$SBD_REPLY"
     case "$choice" in
         1)
@@ -263,7 +263,7 @@ sbd_tls_material_prompt() {
 
 sbd_tls_remove_prompt() {
     local values id choice kind
-    printf '%s\n' '[1] 共享 provider' '[2] PEM 证书资料'
+    sbd_ui_options '[1] 共享 provider' '[2] PEM 证书资料'
     sbd_read_integer '删除类型' 1 2 || return $?; choice="$SBD_REPLY"
     if [[ "$choice" = 1 ]]; then
         kind=provider; values=$(jq -r '(.tls.providers // [])[]' "$SBD_REGISTRY") || return 1
@@ -273,7 +273,7 @@ sbd_tls_remove_prompt() {
     [[ -n "$values" ]] || { sbd_info '暂无可删除的资料'; return 0; }
     local -a ids=()
     mapfile -t ids <<< "$values"
-    for id in "${!ids[@]}"; do printf '[%s] %s\n' "$((id+1))" "${ids[id]}"; done
+    for id in "${!ids[@]}"; do sbd_ui_rows "[$((id+1))] ${ids[id]}"; done
     sbd_read_integer '选择资料' 1 "${#ids[@]}" || return $?; id="${ids[SBD_REPLY-1]}"
     sbd_read_required '确认删除登记？输入 y 确认，其他输入取消' || return $?
     [[ "$SBD_REPLY" = y ]] || return 2
@@ -282,10 +282,11 @@ sbd_tls_remove_prompt() {
 }
 
 sbd_tls_menu() {
-    local choice rc
+    local choice rc page
     while true; do
-        printf '\n%s\n' 'TLS 与证书' '[1] 列出资料（不显示凭据）' '[2] 新建 DNS-01 ACME provider' \
+        sbd_ui_menu 'TLS 与证书' '[1] 列出资料（不显示凭据）' '[2] 新建 DNS-01 ACME provider' \
             '[3] 导入外部 PEM' '[4] 生成 P-256 自签证书' '[5] 删除未引用资料' '[0] 返回'
+        page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 5 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
@@ -297,5 +298,6 @@ sbd_tls_menu() {
         esac
         rc=$?
         [[ "$rc" = 0 || "$rc" = 2 ]] || return 1
+        sbd_ui_pause "$page"
     done
 }

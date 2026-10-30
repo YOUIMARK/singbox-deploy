@@ -89,6 +89,7 @@ t_case '服务子进程不继承写锁' no_inherited_lock
 menu_cancel() {
     t_fresh
     t_run 0 sbd_engine_menu <<< 0
+    t_assert '核心菜单标题只打印一次，不随 printf 参数重复' test "$(grep -Fc '核心管理' "$CASE_TMP/output")" = 1
     t_run 0 sbd_engine_menu < /dev/null
     t_assert '取消不装核心' test ! -e "$SBD_ENGINE/sing-box"
 }

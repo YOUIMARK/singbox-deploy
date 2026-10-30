@@ -62,12 +62,17 @@ summary_with_live_records() {
     t_run 0 sbd_console <<< 0
     t_contains "$CASE_TMP/output" '托管节点: 2 个'
     t_contains "$CASE_TMP/output" '服务: 已停止'
-    t_contains "$CASE_TMP/output" "$SBD_LOG"
+    t_absent "$CASE_TMP/output" "$SBD_LOG"
+    t_absent "$CASE_TMP/output" "$SBD_CONFIG"
     t_entry_unchanged
     local id
     id=$(jq -r '.nodes[0].id' "$SBD_REGISTRY") || exit 1
     t_assert '状态摘要不泄露链接或凭据' test -s "$SBD_EXPORTS/$id.txt"
     t_absent "$CASE_TMP/output" "$(cat "$SBD_EXPORTS/$id.txt")"
+    t_run 0 sbd_dispatch 10
+    t_contains "$CASE_TMP/output" "$SBD_LOG"
+    t_contains "$CASE_TMP/output" "$SBD_CONFIG"
+    t_entry_unchanged
 }
 fixed_identity_contract() {
     t_seed
@@ -86,6 +91,6 @@ t_case '七档真实编辑菜单拒绝隐藏编号后只重问操作' profile_ed
 t_case 'Shadowsocks 创建后立即查看该节点真实 URI' classic_delivery
 t_case '创建事务失败不进入交付菜单、不假报成功' creation_failure_no_delivery
 t_case '提交后资料读取失败明确区分，不撤销已提交节点' view_failure_keeps_commit
-t_case '主菜单按实际登记显示节点数和日志位置、不写状态' summary_with_live_records
+t_case '主菜单精简摘要、详细状态保留实际路径且不写事实' summary_with_live_records
 t_case '预先确定的创建 ID 不污染配置或覆盖已有节点' fixed_identity_contract
 t_finish

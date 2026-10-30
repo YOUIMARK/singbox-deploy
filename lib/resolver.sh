@@ -49,7 +49,7 @@ sbd_resolver_race() {
 
 sbd_resolver_server_prompt() {
     local choice type tag="${1:-}" host port path tls resolver detour value identity
-    printf '%s\n' '[1] local' '[2] UDP' '[3] TCP' '[4] TLS (DoT)' '[5] HTTPS (DoH)' '[6] QUIC (DoQ)' '[7] 原生 JSON 文件'
+    sbd_ui_options '[1] local' '[2] UDP' '[3] TCP' '[4] TLS (DoT)' '[5] HTTPS (DoH)' '[6] QUIC (DoQ)' '[7] 原生 JSON 文件'
     sbd_read_integer 'DNS 上游类型' 1 7 || return $?; choice="$SBD_REPLY"
     if [[ "$choice" = 7 ]]; then sbd_policy_json_prompt || return $?; SBD_POLICY_VALUE="$SBD_REPLY"; return 0; fi
     if [[ -z "$tag" ]]; then
@@ -81,7 +81,7 @@ sbd_resolver_server_prompt() {
             done
             value=$(jq --arg path "$path" '. + {path:$path}' <<< "$value") || return 1
         fi
-        printf '%s\n' '[1] 原生直接拨号（默认，不等于经 route.final）' '[2] 指定 outbound/endpoint'
+        sbd_ui_options '[1] 原生直接拨号（默认，不等于经 route.final）' '[2] 指定 outbound/endpoint'
         sbd_entry_number_prompt '上游连接方式' 1 2 1 || return $?
         if [[ "$SBD_REPLY" = 2 ]]; then
             sbd_policy_target outbound || return $?; detour="$SBD_REPLY"
@@ -94,7 +94,7 @@ sbd_resolver_server_prompt() {
 sbd_resolver_rule_prompt() {
     local value choice action server tag
     sbd_policy_match_prompt || return $?; value="$SBD_MATCH"
-    printf '%s\n' '[1] route 到上游' '[2] reject' '[3] evaluate 响应供后续规则匹配' '[4] respond 返回已 evaluate 响应'
+    sbd_ui_options '[1] route 到上游' '[2] reject' '[3] evaluate 响应供后续规则匹配' '[4] respond 返回已 evaluate 响应'
     sbd_read_integer '选择 DNS action' 1 4 || return $?; choice="$SBD_REPLY"
     case "$choice" in
         1|3)
@@ -119,7 +119,7 @@ sbd_resolver_rule_prompt() {
             value=$(jq --arg tag "$tag" '. + {match_response:$tag}' <<< "$value") || return 1
         fi
     elif jq -e 'has("rule_set")' <<< "$value" >/dev/null && [[ "$action" != evaluate && "$action" != respond ]]; then
-        printf '%s\n' '[1] 查询匹配（域名类规则集，默认）' '[2] evaluate 响应匹配（IP 类规则集）'
+        sbd_ui_options '[1] 查询匹配（域名类规则集，默认）' '[2] evaluate 响应匹配（IP 类规则集）'
         sbd_entry_number_prompt '规则集匹配来源' 1 2 1 || return $?
         if [[ "$SBD_REPLY" = 2 ]]; then
             sbd_policy_pick "$(jq -c '[.dns.rules[]?|select(.action=="evaluate")|.tag // empty]' "$SBD_CONFIG")" '选择前置 evaluate tag' || return $?; tag="$SBD_REPLY"
@@ -150,18 +150,19 @@ sbd_resolver_race_prompt() {
 }
 
 sbd_resolver_menu() {
-    local choice action tag value field rc values request
+    local choice action tag value field rc values request page
     while true; do
-        printf '\n%s\n' '独立 DNS 管理' '[1] 查看 DNS 与托管上游' '[2] 添加上游' '[3] JSON 替换托管上游' '[4] 删除托管上游' \
+        sbd_ui_menu '独立 DNS 管理' '[1] 查看 DNS 与托管上游' '[2] 添加上游' '[3] JSON 替换托管上游' '[4] 删除托管上游' \
             '[5] 默认上游/域名解析器/解析策略' '[6] DNS 分流规则' '[7] 添加原生竞速组' '[8] 删除托管竞速组' '[9] 向导重建托管上游（高级字段请用 JSON）' '[0] 返回'
+        page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 9 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
             1)
                 jq '.dns // {}' "$SBD_CONFIG" || { _error '读取 DNS 失败'; return 1; }
-                jq '.policy.dns_servers // [] | map({id})' "$SBD_REGISTRY" || return 1; continue ;;
+                jq '.policy.dns_servers // [] | map({id})' "$SBD_REGISTRY" || return 1; sbd_ui_pause "$page"; continue ;;
             6) sbd_policy_rules_menu dns_rules; rc=$?; [[ "$rc" = 0 || "$rc" = 2 ]] || return 1; continue ;;
-            7) sbd_resolver_race_prompt; rc=$?; [[ "$rc" = 0 || "$rc" = 2 ]] || return 1; continue ;;
+            7) sbd_resolver_race_prompt; rc=$?; [[ "$rc" = 0 || "$rc" = 2 ]] || return 1; sbd_ui_pause "$page"; continue ;;
             2)
                 action=add; sbd_resolver_server_prompt || return $?; value="$SBD_POLICY_VALUE"
                 tag=$(jq -er '.tag|select(type=="string")' <<< "$value") || { _error '上游须有原生 tag'; return 1; } ;;
@@ -171,7 +172,7 @@ sbd_resolver_menu() {
                 action=replace; sbd_policy_choose dns_servers || return $?; tag="$SBD_REPLY"
                 sbd_resolver_server_prompt "$tag" || return $?; value="$SBD_POLICY_VALUE" ;;
             5)
-                printf '%s\n' '[1] dns.final（查询默认上游）' '[2] route.default_domain_resolver（拨号域名解析器）' '[3] dns.strategy（全局解析策略）'
+                sbd_ui_options '[1] dns.final（查询默认上游）' '[2] route.default_domain_resolver（拨号域名解析器）' '[3] dns.strategy（全局解析策略）'
                 sbd_read_integer '选择默认项' 1 3 || return $?
                 case "$SBD_REPLY" in
                     1) field=final; sbd_policy_target dns || return $?; value="$SBD_REPLY" ;;
@@ -182,17 +183,18 @@ sbd_resolver_menu() {
                 esac
                 sbd_policy_confirm || return $?
                 sbd_apply sbd_resolver_default "$field" "$value" || return 1
-                sbd_success '默认项已提交；未验证实际解析结果'; continue ;;
+                sbd_success '默认项已提交；未验证实际解析结果'; sbd_ui_pause "$page"; continue ;;
             8)
                 values=$(jq -c '[.policy.dns_rules[]?.group // empty|select(startswith("race."))]|unique' "$SBD_REGISTRY") || return 1
                 sbd_policy_pick "$values" '选择竞速组' || return $?; tag="$SBD_REPLY"
                 request=$(jq -n --arg tag "$tag" '{area:"dns_rules",action:"delete_group",id:$tag}') || return 1
                 sbd_policy_confirm || return $?
                 sbd_apply sbd_policy_edit "$request" || return 1
-                sbd_success '竞速组已删除；其他规则保持不变'; continue ;;
+                sbd_success '竞速组已删除；其他规则保持不变'; sbd_ui_pause "$page"; continue ;;
         esac
         sbd_policy_confirm || return $?
         sbd_apply sbd_resolver_server "$action" "$tag" "$value" || return 1
         sbd_success 'DNS 上游与管理事实已提交；未验证上游连通或解析结果'
+        sbd_ui_pause "$page"
     done
 }

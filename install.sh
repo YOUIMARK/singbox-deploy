@@ -180,7 +180,7 @@ sbd_install_main() (
     sbd_install_publish "$SBD_INSTALL_STAGE" "$target_root" "$target_command" "$target_lock" || return 1
     sbd_install_cleanup "$SBD_INSTALL_STAGE" || return 1
     trap - EXIT
-    sbd_success '管理器已安装；本次未安装或启动核心服务，业务模块仍未实现'
+    sbd_success '管理器已安装；本次未安装或启动核心服务，请在核心管理菜单中安装核心'
     [[ "$no_menu" = 0 ]] || return 0
     exec "$target_command"
 )

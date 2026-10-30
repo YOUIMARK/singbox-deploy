@@ -43,7 +43,7 @@ sbd_reset() {
 
 sbd_adopt_menu() {
     local choice area id position count tag facts node defaults name server port profile tls name_sni short trust host origin up down
-    printf '%s\n' '[1] 接管/协调配置中的策略对象' '[2] 接管单用户协议节点' '[3] 协调已登记节点（采用当前 inbound）' '[0] 返回'
+    sbd_ui_menu '接管与漂移协调' '[1] 接管/协调配置中的策略对象' '[2] 接管单用户协议节点' '[3] 协调已登记节点（采用当前 inbound）' '[0] 返回'
     sbd_read_integer '请选择' 0 3 || return $?; choice="$SBD_REPLY"
     [[ "$choice" != 0 ]] || return 2
     [[ -f "$SBD_CONFIG" ]] || { _error '没有当前配置可接管'; return 1; }
@@ -87,7 +87,7 @@ sbd_adopt_menu() {
             sbd_policy_pick '["system","pin","certificate"]' '文件证书信任方式（provider 使用系统 CA）' || return $?; trust="$SBD_REPLY"
             facts=$(jq --arg name "$name_sni" --arg trust "$trust" '.server_name=$name|.trust=$trust' <<< "$facts") || return 1
             if [[ "$profile" = hysteria2 ]]; then
-                printf '%s\n' '[1] 客户端 BBR（默认）' '[2] 客户端 Hysteria CC'
+                sbd_ui_options '[1] 客户端 BBR（默认）' '[2] 客户端 Hysteria CC'
                 sbd_entry_number_prompt '只补填客户端拥塞策略，不改变服务端' 1 2 1 || return $?
                 tls='{}'
                 if [[ "$SBD_REPLY" = 2 ]]; then
@@ -103,12 +103,14 @@ sbd_adopt_menu() {
         sbd_apply sbd_entry_adopt "$tag" "$facts" "$id" || return 1
     fi
     sbd_success '已显式采用当前配置并提交管理事实/所需导出；未验证网络连通'
+    sbd_ui_pause
 }
 
 sbd_maintenance_menu() {
-    local choice category kind
+    local choice category kind page
     while true; do
-        printf '\n%s\n' '维护与显式协调' '[1] 检查配置' '[2] 接管/漂移协调' '[3] 按托管类别 reset' '[4] 恢复最近事务' '[5] 更新管理器' '[6] 卸载' '[0] 返回'
+        sbd_ui_menu '维护与显式协调' '[1] 检查配置' '[2] 接管/漂移协调' '[3] 按托管类别 reset' '[4] 恢复最近事务' '[5] 更新管理器' '[6] 卸载' '[0] 返回'
+        page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 6 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
@@ -141,11 +143,34 @@ sbd_maintenance_menu() {
                 sbd_success '管理器已更新，请重新运行 sd'; SBD_EXIT_MENU=true; return 0 ;;
             6) sbd_uninstall_menu; return $? ;;
         esac
+        sbd_ui_pause "$page"
     done
 }
 
 sbd_status() {
     local version state runtime enabled count phase kind output backend rc=0
+    local report line core='' service='' startup='' nodes='' config='' manager='' transaction=''
+    if [[ "${1:-}" = brief ]]; then
+        report=$(sbd_status) || rc=$?
+        while IFS= read -r line; do
+            case "$line" in
+                '核心: '*) core="$line" ;;
+                '磁盘核心版本: '*) core="核心: ${line#磁盘核心版本: }"; core="${core%%（*}" ;;
+                '服务: '*) service="${line%%（*}" ;;
+                '开机自启: '*) startup="${line%%（*}" ;;
+                '托管节点: '*) nodes="$line" ;;
+                '配置: '*) config="$line" ;;
+                '管理器记录版本: '*) manager="管理器: ${line#管理器记录版本: }" ;;
+                '事务: '*) transaction="$line" ;;
+            esac
+        done <<< "$report"
+        sbd_ui_rows "$core" "$service" "$startup" "$nodes" "$config" "$manager"
+        if [[ "$transaction" != '事务: 无待处理现场' ]]; then
+            printf '  '; sbd_ui_tint '1;31' "$transaction"; printf '\n'
+        fi
+        [[ "$rc" = 0 ]]
+        return $?
+    fi
     if [[ -x "$SBD_BINARY" ]]; then
         if version=$(sbd_version); then printf '磁盘核心版本: %s（不等同于运行版本）\n' "$version"
         else printf '磁盘核心版本: 未知（读取失败）\n'; rc=1; fi
@@ -207,17 +232,22 @@ sbd_dispatch() {
 }
 
 sbd_console() {
-    local choice
+    local choice page rc
     while true; do
-        printf '\nsingbox-deploy\n'
-        sbd_status || _error '状态摘要读取不完整；仍可选择检查或维护，不将未知状态当作停止'
-        printf '%s\n' '[1] 核心管理' '[2] 节点管理' '[3] 分享与客户端资料' \
-            '[4] 规则集与路由' '[5] 独立 DNS' '[6] Endpoints 与 Cloudflared' \
-            '[7] TLS 与证书' '[8] 观测、日志与缓存' '[9] 检查现有配置' '[10] 部署状态' '[11] 维护与显式协调' '[0] 退出'
+        sbd_ui_begin 'singbox-deploy · sd'
+        sbd_status brief || _error '状态摘要读取不完整；仍可选择检查或维护，不将未知状态当作停止'
+        sbd_ui_options '@节点与网络' '[2] 节点管理' '[3] 分享与客户端资料' '[4] 规则集与路由' '[5] 独立 DNS' '[6] Endpoints 与 Cloudflared' \
+            '@服务与维护' '[1] 核心管理' '[7] TLS 与证书' '[8] 观测、日志与缓存' '[9] 检查现有配置' '[10] 部署状态' '[11] 维护与显式协调' '[0] 退出'
+        page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 11 || return 0
         choice="$SBD_REPLY"
         [[ "$choice" != 0 ]] || return 0
-        sbd_dispatch "$choice" || continue
+        if sbd_dispatch "$choice"; then
+            sbd_ui_pause "$page"
+        else
+            rc=$?
+            [[ "$rc" = 2 ]] || sbd_ui_pause
+        fi
         [[ "${SBD_EXIT_MENU:-false}" != true ]] || return 0
     done
 }
