@@ -166,9 +166,8 @@ sbd_status() {
         done <<< "$report"
         if ! system=$(sbd_system_label); then system=未知; rc=1; fi
         if ! init=$(sbd_backend); then init=未知; rc=1; fi
-        sbd_ui_status_row "系统: $system" "init: $init" || return 1
-        sbd_ui_status_row "$core" "$service" "$nodes" || return 1
-        sbd_ui_status_row "$startup" "$config" "$manager" || return 1
+        sbd_ui_status_table "系统: $system" "init: $init" '' \
+            "$core" "$service" "$nodes" "$startup" "$config" "$manager" || return 1
         if [[ "$transaction" != '事务: 无待处理现场' ]]; then
             printf '  '; sbd_ui_tint '1;31' "$transaction"; printf '\n'
         fi
@@ -249,7 +248,7 @@ sbd_console() {
     while true; do
         sbd_ui_begin 'sing-box 部署管理脚本 (singbox-deploy)' true || return 1
         sbd_status brief || _error '状态摘要读取不完整；仍可选择检查或维护，不将未知状态当作停止'
-        sbd_ui_options '@节点管理' '[1] 添加节点' '[2] 查看节点' '[3] 修改节点' '[4] 删除节点' '[5] 节点链接' \
+        sbd_ui_options --compact '@节点管理' '[1] 添加节点' '[2] 查看节点' '[3] 修改节点' '[4] 删除节点' '[5] 节点链接' \
             '@网络设置' '[6] DNS 设置' '[7] 分流设置' '[8] 证书管理' '[9] 隧道管理' \
             '@服务控制' '[10] 重启服务' '[11] 停止服务' '[12] 查看状态' '[13] 查看日志' '[14] 启用自启' '[15] 关闭自启' \
             '@配置与维护' '[16] 检查配置' '[17] 日志与监控' '[18] 脚本维护' \

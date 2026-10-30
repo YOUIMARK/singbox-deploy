@@ -50,7 +50,7 @@ for item in ('[2]', '[4]', '[7]', '[9]', '[11]', '[13]', '[15]', '[17]', '[20]')
     line = next(line for line in text.splitlines() if item in line)
     prefix = line[:line.index(item)]
     width = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix)
-    assert width == 34, (item, width, line)
+    assert width == 26, (item, width, line)
 PY
     t_run 0 sbd_dispatch 12
     t_contains "$CASE_TMP/output" "$SBD_CONFIG"

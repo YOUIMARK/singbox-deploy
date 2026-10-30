@@ -29,7 +29,7 @@ centered_title() {
     t_assert '标题按显示列在紧凑标题区居中' python3 - "$CASE_TMP/output" <<'PY'
 import sys
 lines = open(sys.argv[1]).read().splitlines()
-assert lines == ['', '      sing-box 部署管理脚本 (singbox-deploy)', ''], lines
+assert lines == ['      sing-box 部署管理脚本 (singbox-deploy)', ''], lines
 PY
     COLUMNS=40 t_run 0 sbd_ui_begin 'sing-box 部署管理脚本 (singbox-deploy)' true
     t_contains "$CASE_TMP/output" '  sing-box 部署管理脚本 (singbox-deploy)'
@@ -43,6 +43,41 @@ status_rows() {
     t_contains "$CASE_TMP/output" '  托管节点: 0 个'
     t_assert '换行不留下悬空分隔符' test "$(tail -n 1 "$CASE_TMP/output")" = '  托管节点: 0 个'
 }
+status_table() {
+    local cols
+    for cols in 80 100; do
+        COLUMNS="$cols" t_run 0 sbd_ui_status_table \
+            '系统: Debian GNU/Linux 13 (trixie)' 'init: systemd' '' \
+            '核心: 1.14.4' '服务: 运行中' '托管节点: 10 个' \
+            '开机自启: 已开启' '配置: 已存在' '管理器: 0.1.0'
+        t_assert '三行状态分隔符按显示列对齐' python3 - "$CASE_TMP/output" "$cols" <<'PY'
+import sys, unicodedata
+lines = open(sys.argv[1]).read().splitlines()
+def width(s):
+    return sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in s)
+assert len(lines) == 3, lines
+bars = [[width(line[:i]) for i, c in enumerate(line) if c == '|'] for line in lines]
+assert bars[0][0] == bars[1][0] == bars[2][0], bars
+assert bars[1][1] == bars[2][1], bars
+assert all(width(line) <= int(sys.argv[2]) for line in lines), lines
+PY
+    done
+    COLUMNS=40 t_run 0 sbd_ui_status_table \
+        '系统: Debian GNU/Linux 13 (trixie)' 'init: systemd' '' \
+        '核心: 未安装' '服务: 未知' '托管节点: 未知' \
+        '开机自启: 已关闭' '配置: 未创建' '管理器: 0.1.0'
+    t_contains "$CASE_TMP/output" '  系统: Debian GNU/Linux 13 (trixie)'
+    t_contains "$CASE_TMP/output" '  init: systemd'
+    t_contains "$CASE_TMP/output" '托管节点: 未知'
+    t_assert '窄屏分隔符不悬空且不输出 ANSI' python3 - "$CASE_TMP/output" <<'PY'
+import sys, unicodedata
+text = open(sys.argv[1]).read()
+assert '\x1b' not in text
+for line in text.splitlines():
+    assert not line.strip().startswith('|') and not line.strip().endswith('|'), line
+    assert sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in line) <= 40, line
+PY
+}
 column_layout() {
     local cols
     for cols in 80 100; do
@@ -54,7 +89,7 @@ lines = open(sys.argv[1]).read().splitlines()
 for line, item in zip(lines, ('[2]', '[4]')):
     prefix = line[:line.index(item)]
     width = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix)
-    assert width == 34, (line, width)
+    assert width == 26, (line, width)
 PY
     done
 }
@@ -74,6 +109,62 @@ stable_pairs() {
     t_contains "$CASE_TMP/output" '[3] DNS'
     t_assert '后续两个编号仍在同一行' grep -Eq '\[3\].*\[4\]' "$CASE_TMP/output"
 }
+short_option_spacing() {
+    local cols
+    for cols in 80 100; do
+        COLUMNS="$cols" t_run 0 sbd_ui_options '[1] 添加原生竞速组' '[2] 删除竞速组' '[3] DNS' '[4] TLS'
+        t_assert '短选项右列固定且至少间隔六个显示列' python3 - "$CASE_TMP/output" <<'PY'
+import re, sys, unicodedata
+lines = open(sys.argv[1]).read().splitlines()
+assert len(lines) == 2, lines
+for line in lines:
+    items = list(re.finditer(r'\[\d+\]', line))
+    assert len(items) == 2, line
+    prefix = line[:items[1].start()]
+    assert sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix) == 26, line
+    assert len(prefix) - len(prefix.rstrip()) >= 6, line
+PY
+    done
+    COLUMNS=80 t_run 0 sbd_ui_options '[1] DNS' '[2] TLS' '[3] JSON 替换托管上游' '[4] 删除上游'
+    t_assert '长短选项混合时整组单列、不再交错布局' test "$(wc -l < "$CASE_TMP/output")" = 4
+    COLUMNS=80 t_run 0 sbd_ui_options '[1] DNS' '[2] TLS'
+    t_assert '上一组的单列状态不泄漏到下一组' test "$(wc -l < "$CASE_TMP/output")" = 1
+}
+long_submenus() {
+    local menu count argument cols
+    local -a command=()
+    while read -r menu count argument; do
+        command=("$menu")
+        [[ -z "$argument" ]] || command+=("$argument")
+        for cols in 40 80 100; do
+            COLUMNS="$cols" t_run 0 "${command[@]}" <<< 0
+            t_assert '真实长文案子菜单统一单列、编号与原文完整保留' python3 - "$CASE_TMP/output" "$count" <<'PY'
+import re, sys
+text = open(sys.argv[1]).read()
+lines = [line for line in text.splitlines() if re.search(r'\[\d+\]', line)]
+assert len(lines) == int(sys.argv[2]) + 1, lines
+assert [int(n) for n in re.findall(r'\[(\d+)\]', text)] == list(range(1, int(sys.argv[2]) + 1)) + [0], text
+assert all(re.match(r'^  \[\d+\] ', line) and len(re.findall(r'\[\d+\]', line)) == 1 for line in lines), lines
+assert '\x1b' not in text, text
+if 'DNS 设置' in text:
+    assert '[5] 默认上游/域名解析器/解析策略' in text
+    assert '[9] 向导重建托管上游（高级字段请用 JSON）' in text
+PY
+        done
+    done <<'MENUS'
+sbd_resolver_menu 9
+sbd_rules_menu 7
+sbd_tls_menu 5
+sbd_peers_menu 9
+sbd_observe_menu 10
+sbd_time_menu 4
+sbd_maintenance_menu 6
+sbd_engine_menu 6
+sbd_export_menu 3
+sbd_export_node_menu 2 fixture-node
+sbd_policy_rules_menu 7 dns_rules
+MENUS
+}
 byte_widths() {
     local locale
     for locale in C C.UTF-8; do
@@ -90,6 +181,9 @@ width_failure() {
     t_run 1 sbd_ui_rows '[1] 核心管理' '[2] 节点管理'
     t_contains "$CASE_TMP/output" '读取菜单显示宽度失败'
     t_absent "$CASE_TMP/output" '[2] 节点管理'
+    t_run 1 sbd_ui_status_table '系统: Debian' 'init: systemd' ''
+    t_contains "$CASE_TMP/output" '读取菜单显示宽度失败'
+    t_absent "$CASE_TMP/output" '系统: Debian'
 }
 literal_labels() {
     # 此处刻意传入 shell 字面文本，验证渲染不求值。
@@ -116,18 +210,24 @@ t_case '非终端标题与编号完整且无 ANSI' plain_menu
 t_case '首个分组不叠加标题空行、其余分组间距不变' section_spacing
 t_case '主菜单标题居中、窄屏不增加多余缩进' centered_title
 t_case '状态用分隔符紧凑排列、窄屏按字段换行' status_rows
+t_case 'Debian 状态分隔符跨行对齐且窄屏完整换行' status_table
 t_case '80/100 列双栏及中文对齐' column_layout
 t_case '窄屏与长标签回退单列' narrow_layout
 t_case '长项回退不改变后续编号配对' stable_pairs
+t_case '短选项双列留足间隔、长短混排统一单列' short_option_spacing
+t_case 'DNS/规则/证书/隧道/观测/维护/核心/链接真实菜单排版' long_submenus
 t_case 'C/UTF-8 下截图中的中文标签按字节正确计宽' byte_widths
 t_case '计宽工具失败明确返回错误、不继续错位渲染' width_failure
 t_case '菜单标签不解释格式符或反斜杠' literal_labels
 t_case '管道输入不清屏不暂停不吞编号' pipe_does_not_pause
-t_case '真实终端着色、清屏、删除警示' pty_case colors
+t_case '真实终端标题与所有编号使用 Xray 配色' pty_case colors
+t_case '真实终端系统/init 与状态值着色且标题置顶' pty_case status_colors
+t_case '状态表 NO_COLOR 保留对齐与原始文本' pty_case status_no_color
 t_case 'NO_COLOR 关闭颜色但保留清屏' pty_case no_color
 t_case 'TERM=dumb 不清屏不暂停' pty_case dumb
 t_case '详细状态等回车后重绘、子菜单返回不额外暂停' pty_case navigation
 t_case '窄屏真实终端状态换行与连续编号导航' pty_case navigation_narrow
+t_case '真实终端进入 DNS 后单列展示且返回保留首页双列' pty_case dns_layout
 t_case '失败信息保持至回车、未假报成功' pty_case failure
 t_case '暂停处 EOF 后退出且不循环重绘' pty_case eof
 t_finish

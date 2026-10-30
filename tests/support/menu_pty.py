@@ -19,7 +19,7 @@ pid, fd = pty.fork()
 if pid == 0:
     os.environ.update(TERM='xterm-256color', COLUMNS=str(columns), CASE_TMP=case_tmp)
     os.environ.pop('NO_COLOR', None)
-    if scenario == 'no_color':
+    if scenario in ('no_color', 'status_no_color'):
         os.environ['NO_COLOR'] = '1'
     if scenario == 'dumb':
         os.environ['TERM'] = 'dumb'
@@ -81,31 +81,55 @@ try:
             stable_page()
             assert clears() == 1
             if scenario == 'colors':
-                assert '\x1b[1;36m终端菜单' in text()
-                assert '\x1b[31m[2]' in text()
+                assert '\x1b[36m终端菜单' in text()
+                assert '\x1b[32m[2]' in text()
                 assert '\x1b[32m[1]' in text()
+                assert '\x1b[1;' not in text()
             else:
                 assert not re.search(r'\x1b\[[0-9;]*m', text())
             send('\n')
         else:
             drain(0.3)
             assert '\x1b' not in text() and '按回车' not in text()
+    elif scenario in ('status_colors', 'status_no_color'):
+        wait_for('结束预览:')
+        plain = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()).replace('\r\n', '\n')
+        assert plain.startswith('      sing-box 部署管理脚本 (singbox-deploy)\n\n'), plain
+        lines = [line for line in plain.splitlines() if '  |  ' in line][:3]
+        def width(value):
+            return sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in value)
+        bars = [[width(line[:i]) for i, c in enumerate(line) if c == '|'] for line in lines]
+        assert bars[0][0] == bars[1][0] == bars[2][0], bars
+        assert bars[1][1] == bars[2][1], bars
+        if scenario == 'status_colors':
+            for value in ('Debian GNU/Linux 13 (trixie)', 'systemd', '10 个', '0.1.0', '1.14.4'):
+                assert f'\x1b[36m{value}\x1b[0m' in text(), value
+            for value in ('未安装', '已停止', '已关闭', '未创建'):
+                assert f'\x1b[31m{value}\x1b[0m' in text(), value
+            for value in ('运行中', '已开启', '已存在'):
+                assert f'\x1b[32m{value}\x1b[0m' in text(), value
+            assert '\x1b[33m未知\x1b[0m' in text()
+            assert '\x1b[1;' not in text()
+        else:
+            assert not re.search(r'\x1b\[[0-9;]*m', text())
+        send('0\n')
     elif scenario in ('navigation', 'navigation_narrow'):
         wait_for('请选择')
         assert '配置路径:' not in text() and '日志文件:' not in text()
-        assert '核心: 未安装' in text()
+        plain = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text())
+        assert '核心: 未安装' in plain
         for number in range(21):
             assert f'[{number}]' in text(), number
         lines = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()).splitlines()
         assert [int(n) for n in re.findall(r'\[(\d+)\]', '\n'.join(lines))] == list(range(1, 21)) + [0]
         assert '【节点管理】' in text() and '【服务控制】' in text()
-        assert 'init: openrc' in text() and '  |  服务:' in text()
+        assert 'init: openrc' in plain and '  |  服务:' in plain
         assert '--------' not in text()
         for item in ('[2]', '[4]', '[7]', '[9]', '[11]', '[13]', '[15]', '[17]', '[20]'):
             line = next(line for line in lines if item in line)
             prefix = line[:line.index(item)]
             width = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix)
-            assert width == (2 if columns == 40 else 34), (item, width, line)
+            assert width == (2 if columns == 40 else 26), (item, width, line)
         start = len(text())
         send('12\n')
         wait_for('按回车返回菜单', start)
@@ -126,6 +150,23 @@ try:
         wait_for('singbox-deploy', start)
         wait_for('请选择', start)
         assert '按回车' not in text()[start:], '返回上一级不应额外暂停'
+        send('0\n')
+    elif scenario == 'dns_layout':
+        wait_for('请选择')
+        start = len(text())
+        send('6\n')
+        wait_for('请选择', start)
+        page = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()[start:]).replace('\r\n', '\n')
+        lines = [line for line in page.splitlines() if re.search(r'\[\d+\]', line)]
+        assert [int(n) for n in re.findall(r'\[(\d+)\]', page)] == list(range(1, 10)) + [0], page
+        assert all(re.match(r'^  \[\d+\] ', line) and len(re.findall(r'\[\d+\]', line)) == 1 for line in lines), lines
+        assert '[9] 向导重建托管上游（高级字段请用 JSON）' in page, page
+        start = len(text())
+        send('0\n')
+        wait_for('请选择', start)
+        page = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()[start:])
+        assert any('[1]' in line and '[2]' in line for line in page.splitlines()), page
+        assert '按回车' not in page
         send('0\n')
     elif scenario == 'failure':
         wait_for('请选择')

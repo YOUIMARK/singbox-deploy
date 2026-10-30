@@ -47,8 +47,10 @@ sbd_ui_begin() {
         inner=$((width+8)); (( inner >= 40 )) || inner=40
         (( inner <= cols-4 )) || inner=$((cols-4))
         if (( inner > width )); then pad=$((2+(inner-width)/2)); fi
+    else
+        printf '\n'
     fi
-    printf '\n%*s' "$pad" ''; sbd_ui_tint '1;36' "$1"; printf '\n\n'
+    printf '%*s' "$pad" ''; sbd_ui_tint 36 "$1"; printf '\n\n'
 }
 
 sbd_ui_pause() {
@@ -59,16 +61,15 @@ sbd_ui_pause() {
 }
 
 sbd_ui_item() {
-    local text="$1" number label color=32
+    local text="$1" number label
     if [[ "$text" =~ ^(\[[0-9]+\])[[:space:]](.*)$ ]]; then
         number="${BASH_REMATCH[1]}" label="${BASH_REMATCH[2]}"
-        case "$label" in *卸载*|*删除*|*reset*) color=31 ;; esac
-        sbd_ui_tint "$color" "$number"; printf ' %s' "$label"
+        sbd_ui_tint 32 "$number"; printf ' %s' "$label"
     else printf '%s' "$text"; fi
 }
 
 sbd_ui_rows() {
-    local cols left right width right_width pad span=32
+    local cols left right width right_width pad span=24 gap="${SBD_UI_COLUMN_GAP:-6}"
     cols=$(sbd_ui_columns)
     (( cols <= 100 )) || cols=100
     while (( $# > 0 )); do
@@ -77,8 +78,8 @@ sbd_ui_rows() {
         (( $# == 0 )) || shift
         width=$(sbd_ui_width "$left") || return 1
         right_width=$(sbd_ui_width "$right") || return 1
-        # 所有页面共用固定右列起点；长项单列显示，但不打乱后续项目的配对。
-        if [[ -n "$right" ]] && (( cols >= 76 && width <= span-2 && right_width <= cols-span-4 )); then
+        # 短项共用右列起点；长菜单整组单列，直接渲染的长项也不强挤双列。
+        if [[ "${SBD_UI_SINGLE_COLUMN:-false}" != true && -n "$right" ]] && (( cols >= 76 && width <= span-gap && right_width <= cols-span-4 )); then
             printf '  '; sbd_ui_item "$left"
             pad=$(( span-width )); printf '%*s' "$pad" ''
             sbd_ui_item "$right"; printf '\n'
@@ -94,33 +95,88 @@ sbd_ui_section() {
     printf '  '; sbd_ui_tint 36 "【$1】"; printf '\n'
 }
 
+sbd_ui_status_field() {
+    local field="$1" label value color=36
+    if [[ "$field" != *': '* ]]; then printf '%s' "$field"; return 0; fi
+    label="${field%%: *}" value="${field#*: }"
+    case "$value" in
+        *未知*) color=33 ;;
+        未安装|已停止|已关闭|未创建) color=31 ;;
+        运行中|已开启|已存在) color=32 ;;
+    esac
+    printf '%s: ' "$label"; sbd_ui_tint "$color" "$value"
+}
+
 sbd_ui_status_row() {
-    local cols field line='' candidate width
+    local cols field width index=0 used=0 previous=0 pad gap
+    local -a widths=()
     cols=$(sbd_ui_columns)
     for field in "$@"; do
-        candidate="$field"
-        [[ -z "$line" ]] || candidate="$line  |  $field"
-        width=$(sbd_ui_width "$candidate") || return 1
-        if [[ -n "$line" ]] && (( width > cols-4 )); then
-            printf '  %s\n' "$line"
-            line="$field"
-        else line="$candidate"; fi
+        width=$(sbd_ui_width "$field") || return 1
+        widths+=("$width")
     done
-    [[ -z "$line" ]] || printf '  %s\n' "$line"
+    for field in "$@"; do
+        width="${widths[index]}"
+        if [[ -n "$field" ]]; then
+            if (( used > 0 )); then
+                pad=$(( ${SBD_UI_STATUS_WIDTHS[index-1]:-0} - previous ))
+                (( pad >= 0 )) || pad=0
+                # 放不下对齐间距时先退为紧凑分隔，再按完整字段换行。
+                (( used+pad+5+width <= cols-4 )) || pad=0
+                gap=$((pad+5))
+                if (( used+gap+width > cols-4 )); then
+                    printf '\n'; used=0
+                else
+                    printf '%*s  |  ' "$pad" ''; used=$((used+gap))
+                fi
+            fi
+            (( used > 0 )) || printf '  '
+            sbd_ui_status_field "$field"
+            used=$((used+width)); previous="$width"
+        fi
+        index=$((index+1))
+    done
+    (( used == 0 )) || printf '\n'
+    return 0
+}
+
+sbd_ui_status_table() {
+    local field width column index=0
+    # 动态作用域只在本次表格内共享列宽，ANSI 着色不参与计宽。
+    local -a SBD_UI_STATUS_WIDTHS=(0 0 0)
+    for field in "$@"; do
+        column=$((index%3))
+        width=$(sbd_ui_width "$field") || return 1
+        if (( width > SBD_UI_STATUS_WIDTHS[column] )); then SBD_UI_STATUS_WIDTHS[column]="$width"; fi
+        index=$((index+1))
+    done
+    while (( $# > 0 )); do
+        sbd_ui_status_row "$1" "${2:-}" "${3:-}" || return 1
+        if (( $# <= 3 )); then break; fi
+        shift 3
+    done
 }
 
 sbd_ui_options() {
-    local item
+    local item width
+    local SBD_UI_COLUMN_GAP=6 SBD_UI_SINGLE_COLUMN=false
     local -a rows=()
+    if [[ "${1:-}" = --compact ]]; then SBD_UI_COLUMN_GAP=2; shift; fi
+    # 长说明不参与双列拼接；整组采用同一布局，避免长短项交替错落。
+    for item in "$@"; do
+        [[ "$item" != @* && "$item" != '[0] '* ]] || continue
+        width=$(sbd_ui_width "$item") || return 1
+        if (( width > 24-SBD_UI_COLUMN_GAP )); then SBD_UI_SINGLE_COLUMN=true; break; fi
+    done
     for item in "$@"; do
         if [[ "$item" = @* || "$item" = '[0] '* ]]; then
-            (( ${#rows[@]} == 0 )) || sbd_ui_rows "${rows[@]}"
+            if (( ${#rows[@]} > 0 )); then sbd_ui_rows "${rows[@]}" || return 1; fi
             rows=()
             if [[ "$item" = @* ]]; then sbd_ui_section "${item#@}"
-            else printf '\n'; sbd_ui_rows "$item"; fi
+            else printf '\n'; sbd_ui_rows "$item" || return 1; fi
         else rows+=("$item"); fi
     done
-    (( ${#rows[@]} == 0 )) || sbd_ui_rows "${rows[@]}"
+    if (( ${#rows[@]} > 0 )); then sbd_ui_rows "${rows[@]}" || return 1; fi
 }
 
 sbd_ui_menu() {
@@ -133,7 +189,7 @@ sbd_ui_menu() {
     sbd_ui_options "$@"
 }
 
-sbd_ui_prompt() { printf '\n  ' >&2; sbd_ui_tint '1;36' "$1" >&2; printf ': ' >&2; }
+sbd_ui_prompt() { printf '\n  %s: ' "$1" >&2; }
 
 sbd_integer() {
     local value="${1:-}" low="${2:-0}" high="${3:-999999999}" zeros
