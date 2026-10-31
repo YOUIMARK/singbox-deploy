@@ -177,6 +177,18 @@ cloudflare_token_edit() {
     t_absent "$CASE_TMP/output" "$new"
     t_assert 'token 已切换且保留协议与拨号对象' jq -e --arg t "$new" '.inbounds[0]|.token==$t and .protocol=="quic" and .control_dialer.domain_resolver=="system"' "$SBD_CONFIG"
 }
+tag_after_fields() {
+    t_fresh
+    t_stopped
+    local key input
+    key=$(jq -r .private_key "$ROOT/tests/fixtures/endpoint-wireguard.json") || exit 1
+    input=$(printf '2\n10.0.0.8/24\n%s\npeer.example.com\n51820\n%s\n\n0.0.0.0/0\n\ny\n0\n' "$key" "$key") || exit 1
+    t_run 0 sbd_peers_menu <<< "$input"
+    t_contains "$CASE_TMP/output" '原生 tag（默认 wireguard）'
+    t_assert 'tag 在连接参数之后询问并采用默认值' jq -e '.endpoints[0]|.tag=="wireguard" and .address=="10.0.0.8/24"' "$SBD_CONFIG"
+    t_run 0 sbd_peer_tag_free wireguard
+    t_assert '已占用的默认名自动加序号' test "$(cat "$CASE_TMP/output")" = wireguard-2
+}
 t_case 'endpoint 原生入口/出口关联和删除保护' endpoint_routes
 t_case 'endpoint preferred_by 存活引用保护' preferred_routes
 t_case 'selector 出站组引用 endpoint 不得悬空' group_reference
@@ -194,4 +206,5 @@ t_case '首次配置 WireGuard 完整向导与秘密不回显' wireguard_menu
 t_case 'Cloudflared 完整向导与秘密不回显' cloudflare_menu
 t_case 'Cloudflared 详情脱敏显示' cloudflare_detail
 t_case 'Cloudflared 切换 token 保留其他字段' cloudflare_token_edit
+t_case '连接标识在连接参数之后询问并带默认值' tag_after_fields
 t_finish

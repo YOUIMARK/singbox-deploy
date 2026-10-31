@@ -39,7 +39,8 @@ wireguard_simple() {
     local key input
     key=$(jq -r .private_key "$ROOT/tests/fixtures/endpoint-wireguard.json") || exit 1
     input=$(printf '10.0.0.2/32\n%s\npeer.example.com\n51820\n%s\n\n0.0.0.0/0,::/0\n' "$key" "$key") || exit 1
-    t_run 0 sbd_peer_wireguard_prompt simple-wg <<< "$input"
+    t_run 0 sbd_peer_wireguard_prompt <<< "$input"
+    SBD_PEER_VALUE=$(jq --arg tag simple-wg '. + {tag:$tag}' <<< "$SBD_PEER_VALUE") || exit 1
     t_assert '简单 WG 采用旧向导默认值，不丢必须的连接参数' jq -e '.mtu==1408 and .listen_port==0 and .domain_resolver=="system" and (.peers|length==1) and .peers[0].reserved==[0,0,0] and .peers[0].persistent_keepalive_interval==0 and (.peers[0]|has("pre_shared_key")|not)' <<< "$SBD_PEER_VALUE"
     local field
     for field in 'MTU' '本机 UDP 监听端口' 'peer 数量' 'peer reserved' 'persistent_keepalive_interval' '选择目标标识'; do t_absent "$CASE_TMP/output" "$field"; done
@@ -52,7 +53,7 @@ cancel_and_failure() {
     t_entry_save
     t_run 0 sbd_peers_menu <<< 0
     t_run 0 sbd_peers_menu < /dev/null
-    t_run 2 sbd_peer_wireguard_prompt cancelled < /dev/null
+    t_run 2 sbd_peer_wireguard_prompt < /dev/null
     t_run 2 sbd_time_prompt <<< ''
     t_entry_unchanged
     mv() {
@@ -70,7 +71,8 @@ multiple_dns() {
     local key input
     key=$(jq -r .private_key "$ROOT/tests/fixtures/endpoint-wireguard.json") || exit 1
     input=$(printf '10.0.0.3/32\n%s\npeer.example.com\n51820\n%s\n\n0.0.0.0/0\n' "$key" "$key") || exit 1
-    t_run 0 sbd_peer_wireguard_prompt multi-wg <<< "$input"
+    t_run 0 sbd_peer_wireguard_prompt <<< "$input"
+    SBD_PEER_VALUE=$(jq --arg tag multi-wg '. + {tag:$tag}' <<< "$SBD_PEER_VALUE") || exit 1
     t_assert 'WG 自动沿用默认 DNS' jq -e '.domain_resolver=="system"' <<< "$SBD_PEER_VALUE"
     t_absent "$CASE_TMP/output" '选择目标标识'
     jq 'del(.ntp.domain_resolver)' "$SBD_CONFIG" > "$CASE_TMP/config" || exit 1
