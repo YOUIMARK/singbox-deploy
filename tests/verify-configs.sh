@@ -4,7 +4,7 @@
 base_contract() {
     t_fresh
     cp "$ROOT/presets/base.json" "$SBD_CONFIG" || exit 1
-    t_run 0 sbd_prepare_config "$SBD_CONFIG_DIR"
+    t_run 0 sbd_prepare_config "$SBD_CONF_DIR"
     t_run 0 sbd_validate_schema "$SBD_SCHEMA" "$SBD_CONFIG"
     t_run 0 "$SBD_BINARY" check -c "$SBD_CONFIG" -D "$SBD_ROOT"
     t_assert '未创建实际协议节点' jq -e '(.inbounds // [])==[]' "$SBD_CONFIG"
@@ -13,7 +13,7 @@ base_contract() {
 formatter_order() {
     t_fresh
     cp "$ROOT/presets/base.json" "$SBD_CONFIG" || exit 1
-    t_run 0 sbd_prepare_config "$SBD_CONFIG_DIR"
+    t_run 0 sbd_prepare_config "$SBD_CONF_DIR"
     # 官方键名 $schema 在 Python 字符串中保持字面值。
     # shellcheck disable=SC2016
     t_run 0 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); order=["$schema","log","dns","ntp","certificate","certificate_providers","http_clients","network_namespaces","endpoints","inbounds","outbounds","route","services","experimental"]; sys.exit(0 if list(d)==[k for k in order if k in d] else 1)' "$SBD_CONFIG"

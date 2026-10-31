@@ -36,7 +36,7 @@ system_label() {
 }
 context_contract() {
     t_fresh
-    t_assert '单配置路径' test "$SBD_CONFIG" = "$CASE_TMP/root/config/config.json"
+    t_assert '单配置路径' test "$SBD_CONFIG" = "$CASE_TMP/root/confs/config.json"
     t_assert '命令为 sd' test "$SBD_COMMAND" = "$CASE_TMP/bin/sd"
     t_run 1 sbd_paths /
 }

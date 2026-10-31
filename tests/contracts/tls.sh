@@ -26,7 +26,7 @@ provider_contract() {
     t_assert '只登记标识不复制凭据' jq -e '.tls.providers==["cloudflare","alidns","acmedns"]' "$SBD_REGISTRY"
     t_run 0 sbd_tls_list
     t_absent "$CASE_TMP/output" fixture-secret
-    t_assert '离线 check 没有签发或创建 ACME 存储' test ! -e "$SBD_DATA/acme"
+    t_assert '离线 check 没有签发或创建 ACME 存储' test ! -e "$SBD_CERT_DIR/acme"
     t_run 1 sbd_apply sbd_tls_provider_add cloudflare other.example.com admin@example.com '{"provider":"cloudflare","api_token":"secret"}'
     t_contains "$CASE_TMP/output" '已存在'
     t_run 1 sbd_apply sbd_tls_provider_add empty example.com admin@example.com '{"provider":"cloudflare"}'
@@ -43,10 +43,10 @@ self_signed_contract() {
     openssl pkey -in "$key" -text -noout > "$CASE_TMP/key-info" || exit 1
     t_contains "$CASE_TMP/key-info" prime256v1
     t_assert '私钥权限 600' test "$(stat -c %a "$key")" = 600
-    sbd_tls_client "$SBD_DATA" "$id" pin > "$CASE_TMP/client-tls.json" || exit 1
+    sbd_tls_client "$SBD_STATE_DIR" "$id" pin > "$CASE_TMP/client-tls.json" || exit 1
     t_assert '使用 1.14 SPKI pin 且不默认 insecure' jq -e '.enabled and (.certificate_public_key_sha256|length==1) and (has("insecure")|not) and (has("certificate_sha256")|not)' "$CASE_TMP/client-tls.json"
-    t_run 1 sbd_tls_client "$SBD_DATA" "$id" system
-    sbd_tls_client "$SBD_DATA" "$id" certificate > "$CASE_TMP/trust.json" || exit 1
+    t_run 1 sbd_tls_client "$SBD_STATE_DIR" "$id" system
+    sbd_tls_client "$SBD_STATE_DIR" "$id" certificate > "$CASE_TMP/trust.json" || exit 1
     t_contains "$CASE_TMP/trust.json" 'BEGIN CERTIFICATE'
 }
 external_contract() {

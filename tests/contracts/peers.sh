@@ -8,7 +8,7 @@ cancel_contract() {
     t_run 0 sbd_peers_menu < /dev/null
     t_run 2 sbd_peers_menu <<< $'2\nwg-fixture'
     t_assert 'EOF/拒绝不创建配置' test ! -e "$SBD_CONFIG"
-    t_assert 'EOF/拒绝不创建原生认证目录' test ! -e "$SBD_DATA/tailscale"
+    t_assert 'EOF/拒绝不创建原生认证目录' test ! -e "$SBD_STATE_DIR/tailscale"
 }
 wireguard_contract() {
     t_policy_seed

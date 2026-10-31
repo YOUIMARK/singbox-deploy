@@ -29,7 +29,7 @@ bad_update() {
     printf 'bad source' > "$CASE_TMP/source.json" || exit 1
     t_run 1 sbd_apply sbd_rule_set update domains
     t_entry_unchanged
-    t_assert '更新失败只保留原有材料' test "$(find "$SBD_DATA/rule-sets" -mindepth 1 -maxdepth 1 -type d | wc -l)" = 1
+    t_assert '更新失败只保留原有材料' test "$(find "$SBD_ASSET_DIR/rule-sets" -mindepth 1 -maxdepth 1 -type d | wc -l)" = 1
     t_contains "$CASE_TMP/source.json" 'bad source'
 }
 local_download() {
@@ -55,9 +55,9 @@ remote_lazy() {
     t_run 0 sbd_apply sbd_rule_set add remote "$value"
     t_assert '4B：check/提交不主动发起远程下载' test ! -e "$CASE_TMP/requests"
     t_assert '不写种子或弃用下载字段，保留显式 HTTP client' jq -e '.route.rule_set[0]|.type=="remote" and (has("initial_path") or has("download_detour")|not) and has("http_client")' "$SBD_CONFIG"
-    t_assert '按需设置原生 cache_file' jq -e '.experimental.cache_file.enabled==true and (.experimental.cache_file.path|endswith("/data/cache.db"))' "$SBD_CONFIG"
-    t_assert '配置检查不冒充实际启动缓存' test ! -e "$SBD_DATA/cache.db"
-    t_assert 'remote 不创建本地规则材料' test ! -e "$SBD_DATA/rule-sets"
+    t_assert '按需设置原生 cache_file' jq -e '.experimental.cache_file.enabled==true and (.experimental.cache_file.path|endswith("/assets/cache.db"))' "$SBD_CONFIG"
+    t_assert '配置检查不冒充实际启动缓存' test ! -e "$SBD_ASSET_DIR/cache.db"
+    t_assert 'remote 不创建本地规则材料' test ! -e "$SBD_ASSET_DIR/rule-sets"
     t_entry_save
     t_run 1 sbd_apply sbd_rule_set update remote
     t_contains "$CASE_TMP/output" 'update_interval'
@@ -100,7 +100,7 @@ reorder_preserve() {
     t_policy_seed
     jq '.route.rules=[{protocol:"bittorrent",action:"reject"},{network:"udp",action:"route",outbound:"direct"}]' "$SBD_CONFIG" > "$CASE_TMP/custom" || exit 1
     cp "$CASE_TMP/custom" "$SBD_CONFIG" || exit 1
-    sbd_prepare_config "$SBD_CONFIG_DIR" || exit 1
+    sbd_prepare_config "$SBD_CONF_DIR" || exit 1
     jq '.route.rules' "$SBD_CONFIG" > "$CASE_TMP/custom-rules" || exit 1
     local a b
     t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"a.example","action":"reject"}' 0
@@ -218,7 +218,7 @@ state_failure() {
     t_run 1 sbd_apply t_policy_local_failure
     t_assert '到达 state 提交边界' test -f "$CASE_TMP/failed"
     t_unchanged
-    t_assert 'state 失败回收新规则文件' test -z "$(find "$SBD_DATA/rule-sets" -mindepth 1 -maxdepth 1 -type d)"
+    t_assert 'state 失败回收新规则文件' test -z "$(find "$SBD_ASSET_DIR/rule-sets" -mindepth 1 -maxdepth 1 -type d)"
 }
 kill_recovery() {
     t_policy_seed
@@ -230,7 +230,7 @@ kill_recovery() {
     unset -f mv
     t_run 0 sbd_recover
     t_unchanged
-    t_assert '强杀恢复回收新规则材料' test -z "$(find "$SBD_DATA/rule-sets" -mindepth 1 -maxdepth 1 -type d)"
+    t_assert '强杀恢复回收新规则材料' test -z "$(find "$SBD_ASSET_DIR/rule-sets" -mindepth 1 -maxdepth 1 -type d)"
 }
 native_actions() {
     t_policy_seed

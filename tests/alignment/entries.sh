@@ -51,9 +51,9 @@ PY
     while [[ ! -s "$CASE_TMP/ready" && "$n" -lt 100 ]]; do sleep 0.01; n=$((n+1)); done
     t_assert '占用进程真实就绪' test -s "$CASE_TMP/ready"
     port=$(cat "$CASE_TMP/ready") || exit 1
-    t_run 1 sbd_entry_port "$SBD_CONFIG_DIR" 127.0.0.1 "$port" tcp
+    t_run 1 sbd_entry_port "$SBD_CONF_DIR" 127.0.0.1 "$port" tcp
     t_contains "$CASE_TMP/output" '无法绑定'
-    t_run 0 sbd_entry_port "$SBD_CONFIG_DIR" 127.0.0.1 "$port" udp
+    t_run 0 sbd_entry_port "$SBD_CONF_DIR" 127.0.0.1 "$port" udp
 }
 drift_password() {
     t_seed
@@ -187,7 +187,7 @@ shared_acme() {
     spec=$(jq '.tls_source={kind:"provider",id:"shared",server_name:"hy2.example.com"}' "$ROOT/tests/fixtures/entry-hysteria2.json") || exit 1
     t_run 0 sbd_apply sbd_entry_create "$spec"
     t_assert '多个协议复用 provider，无旧 ACME 字段' jq -e 'all(.inbounds[];.tls.certificate_provider=="shared" and (.tls|has("acme")|not))' "$SBD_CONFIG"
-    t_assert '离线检查不签发' test ! -e "$SBD_DATA/acme"
+    t_assert '离线检查不签发' test ! -e "$SBD_CERT_DIR/acme"
     t_entry_save
     t_run 1 sbd_apply sbd_tls_remove provider shared
     t_entry_unchanged
@@ -217,7 +217,7 @@ state_failure() {
     t_run 1 sbd_apply sbd_entry_create "$(cat "$ROOT/tests/fixtures/entry-anytls.json")"
     t_assert '到达真实提交末尾' test -f "$CASE_TMP/failed"
     t_unchanged
-    t_assert '失败回收新证书' test -z "$(find "$SBD_DATA/certificates" -mindepth 1 -maxdepth 1 -type d)"
+    t_assert '失败回收新证书' test -z "$(find "$SBD_CERT_DIR" -mindepth 1 -maxdepth 1 -type d)"
 }
 native_schema_failure() {
     t_seed

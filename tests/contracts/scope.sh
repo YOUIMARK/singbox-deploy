@@ -24,7 +24,7 @@ removed_features() {
 }
 custom_config_preserved() {
     t_policy_seed
-    local directory="$SBD_DATA/tailscale/legacy" value
+    local directory="$SBD_STATE_DIR/tailscale/legacy" value
     mkdir -p "$directory/Taildrop" || exit 1
     printf 'legacy authentication fixture\n' > "$directory/auth.marker" || exit 1
     printf 'received file fixture\n' > "$directory/Taildrop/received.txt" || exit 1

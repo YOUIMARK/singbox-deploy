@@ -36,10 +36,10 @@ retired_settings_preserved() {
     t_policy_seed
     jq '.experimental={clash_api:{external_controller:"127.0.0.1:19090",secret:"fixture-secret"},cache_file:{enabled:false,store_dns:true}}' "$SBD_CONFIG" > "$CASE_TMP/custom" || exit 1
     cp "$CASE_TMP/custom" "$SBD_CONFIG" || exit 1
-    printf 'native cache fixture\n' > "$SBD_DATA/cache.db" || exit 1
+    printf 'native cache fixture\n' > "$SBD_ASSET_DIR/cache.db" || exit 1
     t_run 0 sbd_apply sbd_observe_change level info
     t_assert '移除面板不清除用户原生 API 与缓存配置' jq -e '.experimental.clash_api.secret=="fixture-secret" and .experimental.cache_file.store_dns' "$SBD_CONFIG"
-    t_contains "$SBD_DATA/cache.db" 'native cache fixture'
+    t_contains "$SBD_ASSET_DIR/cache.db" 'native cache fixture'
     t_run 0 sbd_observe_menu <<< 0
     t_absent "$CASE_TMP/output" 'fixture-secret'
     t_absent "$CASE_TMP/output" 'Clash API'

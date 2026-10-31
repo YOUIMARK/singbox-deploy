@@ -145,7 +145,7 @@ port_prompt() {
     t_run 0 sbd_entry_port_prompt 127.0.0.1 both <<< ''
     t_assert '随机端口不小于 10000' test "$SBD_REPLY" -ge 10000
     t_assert '随机端口不大于 65535' test "$SBD_REPLY" -le 65535
-    t_run 0 sbd_entry_port "$SBD_CONFIG_DIR" 127.0.0.1 "$SBD_REPLY" both '' "$SBD_APP/presets/base.json"
+    t_run 0 sbd_entry_port "$SBD_CONF_DIR" 127.0.0.1 "$SBD_REPLY" both '' "$SBD_APP/presets/base.json"
     t_run 2 sbd_entry_port_prompt 127.0.0.1 tcp < /dev/null
     openssl() { return 1; }
     t_run 1 sbd_entry_port_prompt 127.0.0.1 tcp <<< ''

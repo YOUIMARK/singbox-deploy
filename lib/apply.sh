@@ -9,7 +9,7 @@ sbd_resource_path() {
         exports) printf '%s\n' "$SBD_EXPORTS" ;;
         app) printf '%s\n' "$SBD_APP" ;;
         command) printf '%s\n' "$SBD_COMMAND" ;;
-        engine) printf '%s\n' "$SBD_ENGINE" ;;
+        engine) printf '%s\n' "$SBD_BIN_DIR" ;;
         service) sbd_service_file "$(sbd_backend)" ;;
         logrotate) sbd_logrotate_file ;;
         *) _error '未知事务资源'; return 1 ;;
@@ -52,8 +52,8 @@ sbd_material_resolve() {
 
 sbd_material_path() {
     local path="$1" name="${1##*/}" resolved
-    if [[ "$name" =~ ^cert\.[A-Za-z0-9]{8}$ && "$path" = "$SBD_DATA/certificates/$name" ]]; then :
-    elif [[ "$name" =~ ^set\.[A-Za-z0-9]{8}$ && "$path" = "$SBD_DATA/rule-sets/$name" ]]; then :
+    if [[ "$name" =~ ^cert\.[A-Za-z0-9]{8}$ && "$path" = "$SBD_CERT_DIR/$name" ]]; then :
+    elif [[ "$name" =~ ^set\.[A-Za-z0-9]{8}$ && "$path" = "$SBD_ASSET_DIR/rule-sets/$name" ]]; then :
     else _error '材料路径不属于本部署'; return 1; fi
     resolved=$(sbd_material_resolve "$path") || { _error '无法解析材料路径'; return 1; }
     [[ "$resolved" = "$path" ]] || { _error '材料路径包含外部链接'; return 1; }

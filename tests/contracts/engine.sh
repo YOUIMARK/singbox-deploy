@@ -91,13 +91,13 @@ menu_cancel() {
     t_run 0 sbd_engine_menu <<< 0
     t_assert '核心菜单标题只打印一次，不随 printf 参数重复' test "$(grep -Fc '核心管理' "$CASE_TMP/output")" = 1
     t_run 0 sbd_engine_menu < /dev/null
-    t_assert '取消不装核心' test ! -e "$SBD_ENGINE/sing-box"
+    t_assert '取消不装核心' test ! -e "$SBD_BIN_DIR/sing-box"
 }
 t_case '核心菜单退出与 EOF 不安装核心' menu_cancel
 control_fixture() {
     service_fixture
     cp -- "$ROOT/tests/fixtures/valid.json" "$SBD_CONFIG" || exit 1
-    sbd_prepare_config "$SBD_CONFIG_DIR" || exit 1
+    sbd_prepare_config "$SBD_CONF_DIR" || exit 1
     printf 'disabled\n' > "$CASE_TMP/enabled" || exit 1
     systemctl() {
         printf '%s\n' "$1" >> "$CASE_TMP/actions"

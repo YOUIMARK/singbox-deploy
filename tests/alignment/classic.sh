@@ -50,8 +50,8 @@ PY
     while [[ ! -s "$CASE_TMP/ready" && "$n" -lt 100 ]]; do sleep 0.01; n=$((n+1)); done
     t_assert '真实 UDP 进程就绪' test -s "$CASE_TMP/ready"
     port=$(cat "$CASE_TMP/ready") || exit 1
-    t_run 0 sbd_entry_port "$SBD_CONFIG_DIR" 127.0.0.1 "$port" tcp
-    t_run 1 sbd_entry_port "$SBD_CONFIG_DIR" 127.0.0.1 "$port" both
+    t_run 0 sbd_entry_port "$SBD_CONF_DIR" 127.0.0.1 "$port" tcp
+    t_run 1 sbd_entry_port "$SBD_CONF_DIR" 127.0.0.1 "$port" both
     t_contains "$CASE_TMP/output" '无法绑定 udp'
 }
 uuid_edits() {
@@ -60,7 +60,7 @@ uuid_edits() {
     for profile in vmess_ws vless_ws vless_reality; do
         t_entry_add "$profile"; id="$NODE_ID"
         t_run 0 sbd_apply sbd_entry_change "$id" password 69e480fd-5918-468c-b730-7c7b8fa81b8b
-        t_assert '认证修改服务端 UUID' jq -e --arg id "$id" 'any(.inbounds[]; .tag==$id and .users[0].uuid=="69e480fd-5918-468c-b730-7c7b8fa81b8b")' "$SBD_CONFIG"
+        t_assert '认证修改服务端 UUID' jq -e --arg tag "$(jq -r '.nodes[-1].inbound_tag' "$SBD_REGISTRY")" 'any(.inbounds[]; .tag==$tag and .users[0].uuid=="69e480fd-5918-468c-b730-7c7b8fa81b8b")' "$SBD_CONFIG"
         t_run 0 t_classic_uri
         t_entry_save
         t_run 1 sbd_apply sbd_entry_change "$id" password invalid

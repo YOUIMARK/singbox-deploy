@@ -6,7 +6,7 @@
 e_fixture() {
     local backend="${1:-systemd}" installed="${2:-yes}"
     t_fresh
-    SBD_BINARY="$SBD_ENGINE/sing-box"
+    SBD_BINARY="$SBD_BIN_DIR/sing-box"
     mkdir -p "$CASE_TMP/etc" "$CASE_TMP/candidate/engine" || exit 1
     cp "$SBD_TEST_BIN" "$CASE_TMP/candidate/engine/sing-box" || exit 1
     # 随包文件必须参与整组替换，不能只测可执行文件。
@@ -66,9 +66,9 @@ e_fixture() {
     sleep() { :; }
     if [[ "$installed" = yes ]]; then
         cp "$SBD_TEST_BIN" "$SBD_BINARY" || exit 1
-        printf 'old-runtime-library' > "$SBD_ENGINE/libcronet.so" || exit 1
+        printf 'old-runtime-library' > "$SBD_BIN_DIR/libcronet.so" || exit 1
         cp "$ROOT/tests/fixtures/valid.json" "$SBD_CONFIG" || exit 1
-        sbd_prepare_config "$SBD_CONFIG_DIR" || exit 1
+        sbd_prepare_config "$SBD_CONF_DIR" || exit 1
         sbd_service_render "$backend" "$CASE_TMP/etc/service" || exit 1
         if [[ "$backend" = openrc ]]; then sbd_logrotate_render "$CASE_TMP/etc/logrotate" || exit 1; fi
         cp "$SBD_CONFIG" "$CASE_TMP/old-config" || exit 1
@@ -80,7 +80,7 @@ e_fixture() {
 
 e_old() {
     t_assert '核心恢复为真实旧文件' cmp -s "$SBD_BINARY" "$SBD_TEST_BIN"
-    t_contains "$SBD_ENGINE/libcronet.so" old-runtime-library
+    t_contains "$SBD_BIN_DIR/libcronet.so" old-runtime-library
     t_assert '配置还原原字节' cmp -s "$SBD_CONFIG" "$CASE_TMP/old-config"
     t_assert 'Schema 还原原字节' cmp -s "$SBD_SCHEMA" "$CASE_TMP/old-schema"
     t_assert '服务定义还原' cmp -s "$CASE_TMP/etc/service" "$CASE_TMP/old-service"
@@ -149,7 +149,7 @@ fresh_install() {
     t_assert '首次安装不意外启动' test "$(cat "$CASE_TMP/runtime")" = stopped
     t_assert 'state 记录实际包' jq -e '.core_version=="1.14.4" and .core_asset=="sing-box-1.14.4-linux-amd64.tar.gz" and .service_backend=="systemd" and .revision==1' "$SBD_STATE"
     t_run 0 sbd_check_config
-    t_contains "$SBD_ENGINE/libcronet.so" new-runtime-library
+    t_contains "$SBD_BIN_DIR/libcronet.so" new-runtime-library
     t_assert '基线无业务节点' jq -e '(.inbounds // [])==[]' "$SBD_CONFIG"
 }
 stopped_upgrade() {
@@ -246,7 +246,7 @@ kill_recover() {
     e_fixture
     mv() { if [[ "${!#}" = "$SBD_STATE" ]]; then kill -KILL "$BASHPID"; fi; command mv "$@"; }
     t_run 137 sbd_engine_commit "$CASE_TMP/candidate"
-    t_contains "$SBD_ENGINE/libcronet.so" new-runtime-library
+    t_contains "$SBD_BIN_DIR/libcronet.so" new-runtime-library
     unset -f mv
     t_run 0 sbd_recover
     e_old
@@ -268,7 +268,7 @@ accepted_recovery() {
     t_assert '已接受阶段' jq -e '.phase=="accepted"' "$SBD_WORK/active/journal.json"
     unset -f mv
     t_run 0 sbd_recover
-    t_contains "$SBD_ENGINE/libcronet.so" new-runtime-library
+    t_contains "$SBD_BIN_DIR/libcronet.so" new-runtime-library
     t_assert '已接受 state 不回退' jq -e '.revision==1' "$SBD_STATE"
 }
 partial_bundle() {

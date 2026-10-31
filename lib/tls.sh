@@ -56,7 +56,7 @@ sbd_tls_provider_add() {
         elif .provider=="acmedns" then (.username|nonempty) and (.password|nonempty) and (.subdomain|nonempty) and (.server_url|nonempty)
         else false end' <<< "$challenge" >/dev/null 2>&1 || { _error 'DNS-01 provider 或必填凭据无效'; return 1; }
     jq -e --arg tag "$tag" 'all((.certificate_providers // [])[]; .tag!=$tag)' "$stage/config.json" >/dev/null || { _error '此 provider 标识已存在，不覆盖自定义或正在使用的配置'; return 1; }
-    content=$(jq --arg tag "$tag" --arg domain "$domain" --arg email "$email" --arg dir "$SBD_DATA/acme/$tag" --argjson challenge "$challenge" '
+    content=$(jq --arg tag "$tag" --arg domain "$domain" --arg email "$email" --arg dir "$SBD_CERT_DIR/acme/$tag" --argjson challenge "$challenge" '
         .certificate_providers = ((.certificate_providers // []) + [{type:"acme",tag:$tag,domain:[$domain],email:$email,
         data_directory:$dir,key_type:"p256",dns01_challenge:$challenge}])' "$stage/config.json") || { _error '构造 ACME provider 失败'; return 1; }
     sbd_record_write "$stage/config.json" "$content" || return 1
@@ -71,9 +71,9 @@ sbd_tls_material_add() {
         self_signed)
             # 先登记最终的独立路径，再生成材料；从不覆盖核心正在监视的旧证书。
             directory=$(mktemp -d "$stage/cert.XXXXXXXX") || { _error '创建证书候选位置失败'; return 1; }
-            id="${directory##*/}"; directory="$SBD_DATA/certificates/$id"
+            id="${directory##*/}"; directory="$SBD_CERT_DIR/$id"
             sbd_material_note created_materials "$directory" || return 1
-            if ! mkdir -p -- "$SBD_DATA/certificates" || ! chmod 700 -- "$SBD_DATA/certificates" || ! mkdir -m 700 -- "$directory"; then
+            if ! mkdir -p -- "$SBD_CERT_DIR" || ! chmod 700 -- "$SBD_CERT_DIR" || ! mkdir -m 700 -- "$directory"; then
                 _error '创建证书材料目录失败'; return 1
             fi
             cert="$directory/cert.pem" key="$directory/key.pem"

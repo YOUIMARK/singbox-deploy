@@ -59,14 +59,14 @@ shared_provider() {
     t_run 1 sbd_apply sbd_tls_remove provider shared
     t_contains "$CASE_TMP/output" '仍被引用'
     t_assert '不留下悬空 provider 引用' cmp -s "$SBD_CONFIG" "$CASE_TMP/shared-config"
-    t_assert 'check 未发起签发或写 ACME 缓存' test ! -e "$SBD_DATA/acme"
+    t_assert 'check 未发起签发或写 ACME 缓存' test ! -e "$SBD_CERT_DIR/acme"
 }
 material_failure() {
     t_seed
     openssl() { [[ "$1" != req ]] || return 1; command openssl "$@"; }
     t_run 1 sbd_apply create_and_attach
     t_unchanged
-    t_assert '生成失败回收独立材料' test -z "$(find "$SBD_DATA/certificates" -mindepth 1 -maxdepth 1 -type d)"
+    t_assert '生成失败回收独立材料' test -z "$(find "$SBD_CERT_DIR" -mindepth 1 -maxdepth 1 -type d)"
 }
 material_state_failure() {
     t_seed
@@ -77,7 +77,7 @@ material_state_failure() {
     t_run 1 sbd_apply create_and_attach
     t_assert '真实到达提交后期' test -f "$CASE_TMP/failed"
     t_unchanged
-    t_assert 'state 失败不遗留证书/私钥' test -z "$(find "$SBD_DATA/certificates" -mindepth 1 -maxdepth 1 -type d)"
+    t_assert 'state 失败不遗留证书/私钥' test -z "$(find "$SBD_CERT_DIR" -mindepth 1 -maxdepth 1 -type d)"
 }
 material_kill() {
     t_seed
@@ -90,7 +90,7 @@ material_kill() {
     unset -f mv
     t_run 0 sbd_recover
     t_unchanged
-    t_assert '强杀恢复后无新材料' test -z "$(find "$SBD_DATA/certificates" -mindepth 1 -maxdepth 1 -type d)"
+    t_assert '强杀恢复后无新材料' test -z "$(find "$SBD_CERT_DIR" -mindepth 1 -maxdepth 1 -type d)"
 }
 retirement_contract() {
     t_seed
@@ -165,7 +165,7 @@ export_write_failure() {
     t_run 1 sbd_apply export_fixture
     t_assert '真实到达导出写入' test -f "$CASE_TMP/failed"
     t_unchanged
-    t_assert '输出失败回收新证书' test -z "$(find "$SBD_DATA/certificates" -mindepth 1 -maxdepth 1 -type d)"
+    t_assert '输出失败回收新证书' test -z "$(find "$SBD_CERT_DIR" -mindepth 1 -maxdepth 1 -type d)"
 }
 export_state_failure() {
     t_seed
@@ -177,7 +177,7 @@ export_state_failure() {
     t_assert '导出发布后 state 确实失败' test -f "$CASE_TMP/failed"
     t_unchanged
     t_assert 'state 失败不留下新客户端资料' test ! -e "$SBD_EXPORTS/fixture-node.json"
-    t_assert 'state 失败回收成对新材料' test -z "$(find "$SBD_DATA/certificates" -mindepth 1 -maxdepth 1 -type d)"
+    t_assert 'state 失败回收成对新材料' test -z "$(find "$SBD_CERT_DIR" -mindepth 1 -maxdepth 1 -type d)"
 }
 export_schema_failure() {
     t_seed

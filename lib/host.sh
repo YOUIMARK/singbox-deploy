@@ -7,26 +7,29 @@ sbd_paths() {
     SBD_ROOT=$(cd -- "$root" && pwd -P) || { _error "部署目录不存在: $root"; return 1; }
     [[ "$SBD_ROOT" != / ]] || { _error '不能使用文件系统根作为部署目录'; return 1; }
     SBD_APP="$SBD_ROOT/app"
-    SBD_ENGINE="$SBD_ROOT/engine"
-    SBD_BINARY="$SBD_ENGINE/sing-box"
-    SBD_CONFIG_DIR="$SBD_ROOT/config"
-    SBD_CONFIG="$SBD_CONFIG_DIR/config.json"
-    SBD_SCHEMA="$SBD_CONFIG_DIR/schema.json"
-    SBD_DATA="$SBD_ROOT/data"
-    SBD_STATE="$SBD_DATA/state.json"
-    SBD_REGISTRY="$SBD_DATA/registry.json"
+    SBD_BIN_DIR="$SBD_ROOT/bin"
+    SBD_BINARY="$SBD_BIN_DIR/sing-box"
+    SBD_CONF_DIR="$SBD_ROOT/confs"
+    SBD_CONFIG="$SBD_CONF_DIR/config.json"
+    SBD_SCHEMA="$SBD_CONF_DIR/schema.json"
+    SBD_ASSET_DIR="$SBD_ROOT/assets"
+    SBD_CERT_DIR="$SBD_ROOT/certs"
+    SBD_LOG_DIR="$SBD_ROOT/logs"
+    SBD_STATE_DIR="$SBD_ROOT/state"
+    SBD_STATE="$SBD_STATE_DIR/state.json"
+    SBD_REGISTRY="$SBD_STATE_DIR/registry.json"
     SBD_EXPORTS="$SBD_ROOT/exports"
     SBD_WORK="$SBD_ROOT/work"
     SBD_LOCK="${2:-/run/lock/singbox-deploy.lock}"
     SBD_COMMAND="${3:-/usr/local/bin/sd}"
     SBD_SERVICE=singbox-deploy
-    SBD_LOG="$SBD_DATA/sing-box.log"
+    SBD_LOG="$SBD_LOG_DIR/sing-box.log"
     [[ "$SBD_LOCK" = /* ]] || { _error '写锁必须使用绝对路径'; return 1; }
 }
 
 sbd_directories() {
     local path
-    for path in "$SBD_ROOT/engine" "$SBD_CONFIG_DIR" "$SBD_DATA" "$SBD_EXPORTS" "$SBD_WORK"; do
+    for path in "$SBD_BIN_DIR" "$SBD_CONF_DIR" "$SBD_ASSET_DIR" "$SBD_CERT_DIR" "$SBD_LOG_DIR" "$SBD_STATE_DIR" "$SBD_EXPORTS" "$SBD_WORK"; do
         if ! mkdir -p -- "$path" || ! chmod 700 -- "$path"; then
             _error "无法准备目录: $path"; return 1
         fi

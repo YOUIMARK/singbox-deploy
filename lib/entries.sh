@@ -15,6 +15,29 @@ sbd_entry_new_id() {
     printf '%s\n' "$id"
 }
 
+sbd_entry_tag() {
+    local stage="$1" profile="$2" port="$3" config="$1/config.json" base candidate index=2
+    case "$profile" in
+        hysteria2) base="hysteria2-$port" ;;
+        anytls) base="anytls-$port" ;;
+        anyreality) base="anytls-reality-$port" ;;
+        shadowsocks) base="ss-$port" ;;
+        vmess_ws) base="vmess-ws-$port" ;;
+        vless_reality) base="vless-reality-$port" ;;
+        vless_ws) base="vless-ws-$port" ;;
+        *) _error '未知配置档，无法生成可读 tag'; return 1 ;;
+    esac
+    [[ -f "$config" ]] || config="$SBD_APP/presets/base.json"
+    # 可读 tag 也必须唯一：同端口重复创建时按 -2、-3 递增，超出上限明确失败。
+    candidate="$base"
+    while jq -e --arg tag "$candidate" 'any((.inbounds[]?,.outbounds[]?,.endpoints[]?,(.dns.servers? // [])[]);.tag==$tag)' "$config" >/dev/null 2>&1; do
+        candidate="$base-$index"
+        index=$((index+1))
+        (( index <= 99 )) || { _error '同端口可读 tag 冲突过多，请更换端口'; return 1; }
+    done
+    printf '%s\n' "$candidate"
+}
+
 sbd_entry_submit() {
     local request="$1" id
     id=$(openssl rand -hex 8) || { _error '生成稳定节点 ID 失败'; return 1; }; id="node.$id"
@@ -29,6 +52,7 @@ sbd_entry_host() { sbd_tls_identity "$1" >/dev/null 2>&1 || { _error '地址须�
 sbd_entry_deliver() {
     sbd_success "节点与客户端资料已提交: $SBD_EXPORTS"
     sbd_export_node "$SBD_NEW_ENTRY_ID" link inline || { _error '节点已提交，但资料查看失败；未回滚已提交节点'; return 1; }
+    sbd_service_after_change || sbd_info '节点已提交，但服务尚未运行；按上方提示处理后客户端才能连接'
     sbd_ui_pause
 }
 
@@ -309,7 +333,7 @@ sbd_entry_cdn() {
 }
 
 sbd_entry_create_classic() {
-    local stage="$1" profile="$2" type network name listen port server external credential method='' uuid='' cdn='{}' source id content
+    local stage="$1" profile="$2" type network name listen port server external credential method='' uuid='' cdn='{}' source id tag content
     name=$(sbd_entry_text "$stage/request.json" .name 名称) && listen=$(sbd_entry_text "$stage/request.json" .listen 监听地址) &&
         server=$(sbd_entry_text "$stage/request.json" .server 对外地址) || return 1
     if ! port=$(jq -er '.listen_port' "$stage/request.json") || ! port=$(sbd_integer "$port" 1 65535) ||
@@ -346,9 +370,10 @@ sbd_entry_create_classic() {
             sbd_record_write "$stage/source-share.json" '{}' && sbd_record_write "$stage/source-facts.json" "$source" || return 1
     fi
     id=$(sbd_entry_new_id "$stage") || return 1
-    content=$(jq -n --arg profile "$profile" --arg type "$type" --arg id "$id" --arg listen "$listen" --argjson port "$port" \
+    tag=$(sbd_entry_tag "$stage" "$profile" "$port") || return 1
+    content=$(jq -n --arg profile "$profile" --arg type "$type" --arg id "$id" --arg tag "$tag" --arg listen "$listen" --argjson port "$port" \
         --arg credential "$credential" --arg method "$method" --arg network "$network" --argjson cdn "$cdn" --slurpfile tls "$stage/source-server.json" '
-        {type:$type,tag:$id,listen:$listen,listen_port:$port} +
+        {type:$type,tag:$tag,listen:$listen,listen_port:$port} +
         (if $profile=="shadowsocks" then {method:$method,password:$credential} + (if $network!="both" then {network:$network} else {} end)
          else {users:[{name:$id,uuid:$credential}]} + (if $profile=="vmess_ws" then {users:[{name:$id,uuid:$credential,alterId:0}]} else {} end) +
           (if $profile=="vless_reality" then {users:[{name:$id,uuid:$credential,flow:"xtls-rprx-vision"}],tls:$tls[0]}
@@ -356,10 +381,10 @@ sbd_entry_create_classic() {
     sbd_record_write "$stage/new-inbound.json" "$content" || return 1
     content=$(jq --slurpfile inbound "$stage/new-inbound.json" '.inbounds=((.inbounds // [])+$inbound)' "$stage/config.json") || return 1
     sbd_record_write "$stage/config.json" "$content" || return 1
-    content=$(jq -n --arg profile "$profile" --arg type "$type" --arg id "$id" --arg name "$name" --arg server "$server" --argjson port "$external" \
+    content=$(jq -n --arg profile "$profile" --arg type "$type" --arg id "$id" --arg tag "$tag" --arg name "$name" --arg server "$server" --argjson port "$external" \
         --arg credential "$credential" --arg method "$method" --arg network "$network" --argjson cdn "$cdn" \
         --slurpfile tls "$stage/source-client.json" --slurpfile source "$stage/source-facts.json" '
-        {id:$id,name:$name,profile:$profile,inbound_tag:$id,tls_source:$source[0],share:{},client:
+        {id:$id,name:$name,profile:$profile,inbound_tag:$tag,tls_source:$source[0],share:{},client:
           ({type:$type,server:$server,server_port:$port} +
            (if $profile=="shadowsocks" then {method:$method,password:$credential} + (if $network!="both" then {network:$network} else {} end)
             else {uuid:$credential} +
@@ -412,7 +437,7 @@ sbd_entry_align_classic() {
 }
 
 sbd_entry_create() {
-    local stage="$1" spec="$2" profile type network name listen port server external password source id content
+    local stage="$1" spec="$2" profile type network name listen port server external password source id tag content
     sbd_record_write "$stage/request.json" "$spec" || return 1
     profile=$(sbd_entry_text "$stage/request.json" .profile 配置档) || return 1
     case "$profile" in
@@ -434,17 +459,18 @@ sbd_entry_create() {
     fi
     sbd_entry_tls "$stage" "$source" || return 1
     id=$(sbd_entry_new_id "$stage") || return 1
-    content=$(jq -n --arg id "$id" --arg type "$type" --arg listen "$listen" --argjson port "$port" --arg password "$password" \
+    tag=$(sbd_entry_tag "$stage" "$profile" "$port") || return 1
+    content=$(jq -n --arg id "$id" --arg tag "$tag" --arg type "$type" --arg listen "$listen" --argjson port "$port" --arg password "$password" \
         --slurpfile tls "$stage/source-server.json" --slurpfile request "$stage/request.json" '
         (if $type=="hysteria2" then ($request[0].server_options // {}) else {} end) +
-        {type:$type,tag:$id,listen:$listen,listen_port:$port,users:[{name:$id,password:$password}],tls:$tls[0]} +
+        {type:$type,tag:$tag,listen:$listen,listen_port:$port,users:[{name:$id,password:$password}],tls:$tls[0]} +
         (if $type=="hysteria2" and $request[0].obfs!=null then {obfs:$request[0].obfs} else {} end)') || return 1
     sbd_record_write "$stage/new-inbound.json" "$content" || return 1
     content=$(jq --slurpfile inbound "$stage/new-inbound.json" '.inbounds=((.inbounds // []) + $inbound)' "$stage/config.json") || return 1
     sbd_record_write "$stage/config.json" "$content" || return 1
-    content=$(jq -n --arg id "$id" --arg profile "$profile" --arg name "$name" --arg type "$type" --arg server "$server" --argjson port "$external" --arg password "$password" \
+    content=$(jq -n --arg id "$id" --arg tag "$tag" --arg profile "$profile" --arg name "$name" --arg type "$type" --arg server "$server" --argjson port "$external" --arg password "$password" \
         --slurpfile tls "$stage/source-client.json" --slurpfile source "$stage/source-facts.json" --slurpfile share "$stage/source-share.json" --slurpfile request "$stage/request.json" '
-        {id:$id,name:$name,profile:$profile,inbound_tag:$id,tls_source:$source[0],share:$share[0],client:
+        {id:$id,name:$name,profile:$profile,inbound_tag:$tag,tls_source:$source[0],share:$share[0],client:
         ((if $type=="hysteria2" then ($request[0].client_options // {}) else {} end) +
          {type:$type,server:$server,server_port:$port,password:$password,tls:$tls[0]} +
          (if $type=="hysteria2" and $request[0].obfs!=null then {obfs:$request[0].obfs} else {} end))} +
@@ -622,7 +648,7 @@ sbd_entry_port_prompt() {
         fi
         if ! value=$(sbd_integer "$SBD_REPLY" 1 65535); then _error '请输入 1 到 65535 的十进制整数，或回车随机生成'; continue; fi
         SBD_REPLY="$value"
-        if sbd_entry_port "$SBD_CONFIG_DIR" "$listen" "$SBD_REPLY" "$network" "$exclude" "$config"; then
+        if sbd_entry_port "$SBD_CONF_DIR" "$listen" "$SBD_REPLY" "$network" "$exclude" "$config"; then
             [[ "$generated" != true ]] || sbd_info "随机监听端口: $SBD_REPLY"
             return 0
         fi
@@ -949,6 +975,7 @@ sbd_entry_change_prompt() {
     [[ "$SBD_REPLY" = y ]] || return 2
     sbd_apply sbd_entry_change "$id" "$action" "$value" || return 1
     sbd_success '节点变更与分享资料已提交；未验证外网连通'
+    sbd_service_after_change || sbd_info '变更已提交，但服务尚未运行；按上方提示处理后客户端才能连接'
     sbd_ui_pause
 }
 

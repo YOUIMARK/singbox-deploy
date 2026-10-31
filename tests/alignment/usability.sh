@@ -86,7 +86,7 @@ fixed_identity_contract() {
     spec=$(jq '.id="node.0000000000000001"' "$ROOT/tests/fixtures/entry-shadowsocks.json") || exit 1
     t_run 0 sbd_apply sbd_entry_create "$spec"
     t_assert '创建请求 ID 只作内部身份，不改变配置字段' jq -e '.nodes[0].id=="node.0000000000000001"' "$SBD_REGISTRY"
-    t_assert '原生配置不混入私有 id' jq -e '.inbounds[0]|.tag=="node.0000000000000001" and (has("id")|not)' "$SBD_CONFIG"
+    t_assert '原生配置使用可读 tag 且不混入私有 id' jq -e '.inbounds[0]|(.tag|test("^ss-[0-9]+$")) and (has("id")|not)' "$SBD_CONFIG"
     t_entry_save
     spec=$(jq '.listen_port=19604' <<< "$spec") || exit 1
     t_run 1 sbd_apply sbd_entry_create "$spec"

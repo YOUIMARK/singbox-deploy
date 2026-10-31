@@ -387,7 +387,7 @@ sbd_engine_install() (
     trap 'sbd_engine_stage_remove "$stage" || exit 1' EXIT
     sbd_engine_fetch "$requested" "$stage" || return 1
     version=$(cat "$stage/version") || { _error '读取候选版本失败'; return 1; }
-    printf '将安装 sing-box %s；运行中升级会重启，原停止仍保持停止。\n' "$version"
+    printf '将安装 sing-box %s；运行中升级会重启，原本停止的会在完成后询问是否启动。\n' "$version"
     if [[ "$version" != 1.14.* ]]; then sbd_info '跨 1.14 基线：请先核对官方 changelog；不自动迁移弃用配置，候选校验失败将取消'; fi
     sbd_read_required '确认安装此稳定版本？输入 y 确认，其他输入取消' || return $?
     [[ "$SBD_REPLY" = y ]] || { sbd_info '已取消核心安装'; return 2; }
@@ -396,6 +396,7 @@ sbd_engine_install() (
     sbd_engine_commit "$stage" || rc=$?
     [[ "$rc" = 0 ]] || return 1
     sbd_success "核心 $version、匹配 Schema 与服务定义已提交；未验证外网连通"
+    sbd_service_after_change || sbd_info '核心已提交，但服务尚未运行；按上方提示处理后客户端才能连接'
 )
 
 sbd_engine_control_locked() {
@@ -436,6 +437,30 @@ sbd_engine_control() {
     sbd_success "$message"
 }
 
+# 配置提交后的后置条件：不把“配置已保存”当成“服务已生效”。
+# 运行中只说明加载方式；停止则明确告警并询问是否立即启动，避免客户端连不上却静默报成功。
+sbd_service_after_change() {
+    local state
+    state=$(sbd_service_state) || { _error '未确认服务运行态；配置已保存，但无法证明已生效'; return 1; }
+    case "$state" in
+        running)
+            sbd_info '服务运行中，新配置在提交时已重启加载'
+            ;;
+        stopped)
+            sbd_ui_message 33 注意 '配置已保存，但服务未启动，客户端目前无法连接'
+            if sbd_read_required '是否立即启动服务？输入 y 启动，其他输入跳过' && [[ "$SBD_REPLY" = y ]]; then
+                sbd_engine_control restart || { _error '服务启动失败；配置已保存但未生效'; return 1; }
+            else
+                sbd_info '服务仍未启动：可在 [10] 重启服务或 [19] 核心管理里启动'
+            fi
+            ;;
+        *)
+            _error '服务状态未知；配置已保存，但不代表已生效'
+            return 1
+            ;;
+    esac
+}
+
 sbd_uninstall_plan() {
     python3 "$SBD_APP/support/uninstall_plan.py" plan "$SBD_ROOT" "$1" || { _error '不能生成已知自有资源清单'; return 1; }
 }
@@ -451,7 +476,7 @@ sbd_uninstall_locked() {
     if [[ -e "$rotate" ]]; then grep -Fq "\"$SBD_LOG\" {" "$rotate" || { _error '不删除外来 logrotate 文件'; return 1; }; fi
     plan=$(sbd_uninstall_plan "$mode") || return 1
     [[ "$plan" = "$expected" ]] || { _error '卸载清单在确认后变化，请重新预览确认'; return 1; }
-    sbd_record_write "$SBD_DATA/uninstall.json" "$plan" || return 1
+    sbd_record_write "$SBD_STATE_DIR/uninstall.json" "$plan" || return 1
     cp "$SBD_APP/support/uninstall_plan.py" "$helper" || { _error '保留可重试卸载 helper 失败'; return 1; }
     sbd_engine_stopped || return 1
     sbd_service_set_enabled disabled || return 1
@@ -459,7 +484,7 @@ sbd_uninstall_locked() {
     if [[ -e "$rotate" ]] && ! rm -- "$rotate"; then _error '轮换文件删除失败，卸载未完成'; return 1; fi
     sbd_service_reload || return 1
     # helper 与清单保留在部署树内，部分失败时可按准确路径重试，不假报完整卸载。
-    python3 "$helper" apply "$SBD_DATA/uninstall.json" || { _error "文件卸载未完成；清单: $SBD_DATA/uninstall.json；重试: python3 $helper apply $SBD_DATA/uninstall.json"; return 1; }
+    python3 "$helper" apply "$SBD_STATE_DIR/uninstall.json" || { _error "文件卸载未完成；清单: $SBD_STATE_DIR/uninstall.json；重试: python3 $helper apply $SBD_STATE_DIR/uninstall.json"; return 1; }
     if [[ "$mode" = keep ]]; then
         content=$(jq '. + {installed:false}' "$SBD_STATE") || return 1
         sbd_record_write "$SBD_STATE" "$content" || return 1
@@ -467,7 +492,7 @@ sbd_uninstall_locked() {
         for path in "$SBD_STATE" "$SBD_REGISTRY"; do rm -f -- "$path" || { _error '自有状态文件清理失败'; return 1; }; done
     fi
     rm -f -- "$SBD_COMMAND" || { _error '快捷命令清理失败'; return 1; }
-    rm -f -- "$helper" "$SBD_DATA/uninstall.json" || { _error '卸载收尾未完成'; return 1; }
+    rm -f -- "$helper" "$SBD_STATE_DIR/uninstall.json" || { _error '卸载收尾未完成'; return 1; }
     sbd_info "未确认归属的残留及所选保留数据仍在 $SBD_ROOT；不删除部署根或其他服务"
 }
 

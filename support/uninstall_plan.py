@@ -17,34 +17,34 @@ def build(root, mode):
             files.add(str(p))
         else:
             raise ValueError("发布清单越界")
-    inventory = root / "engine/.sbd-files"
+    inventory = root / "bin/.sbd-files"
     members = inventory.read_text().splitlines() if inventory.is_file() else ["sing-box", "libcronet.so", "LICENSE"]
     for rel in members + [".sbd-files"]:
-        p = root / "engine" / rel
-        if p.resolve().is_relative_to((root / "engine").resolve()) and ".." not in Path(rel).parts:
+        p = root / "bin" / rel
+        if p.resolve().is_relative_to((root / "bin").resolve()) and ".." not in Path(rel).parts:
             files.add(str(p))
         else:
             raise ValueError("核心文件清单越界")
     if mode == "purge":
-        config = json.loads((root / "config/config.json").read_text()) if (root / "config/config.json").is_file() else {}
-        registry = json.loads((root / "data/registry.json").read_text())
-        for name in ("config/config.json", "config/schema.json", "data/cache.db", "data/sing-box.log"):
+        config = json.loads((root / "confs/config.json").read_text()) if (root / "confs/config.json").is_file() else {}
+        registry = json.loads((root / "state/registry.json").read_text())
+        for name in ("confs/config.json", "confs/schema.json", "assets/cache.db", "logs/sing-box.log"):
             files.add(str(root / name))
         for p in (root / "exports").iterdir():
             if p.name in ("links.txt", "schema.json") or any(p.name == n["id"] + suffix for n in registry.get("nodes", []) for suffix in (".json", ".txt")):
                 files.add(str(p))
         for record in registry.get("tls", {}).get("certificates", []):
             path = record.get("directory")
-            if path and Path(path).parent == root / "data/certificates":
+            if path and Path(path).parent == root / "certs":
                 trees.add(path)
         for rec in registry.get("policy", {}).get("rule_sets", []):
             path = rec.get("directory")
-            if path and Path(path).parent == root / "data/rule-sets":
+            if path and Path(path).parent == root / "assets/rule-sets":
                 trees.add(path)
         managed_providers = set(registry.get("tls", {}).get("providers", []))
         for provider in config.get("certificate_providers", []):
             path = provider.get("data_directory", "")
-            if provider.get("tag") in managed_providers and path and Path(path).parent == root / "data/acme":
+            if provider.get("tag") in managed_providers and path and Path(path).parent == root / "certs/acme":
                 trees.add(path)
         for name in ("active", "previous"):
             directory = root / "work" / name
@@ -54,7 +54,7 @@ def build(root, mode):
                     raise ValueError("未收敛事务不能卸载")
                 for key in ("created_materials", "retired_materials"):
                     for path in journal.get(key, []):
-                        if Path(path).parent in (root / "data/certificates", root / "data/rule-sets"):
+                        if Path(path).parent in (root / "certs", root / "assets/rule-sets"):
                             trees.add(path)
                 trees.add(str(directory))
     elif mode != "keep":

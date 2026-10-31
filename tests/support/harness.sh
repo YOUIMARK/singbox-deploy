@@ -82,7 +82,7 @@ t_seed() {
     t_fresh
     t_stopped
     cp -- "$ROOT/tests/fixtures/valid.json" "$SBD_CONFIG" || exit 1
-    sbd_prepare_config "$SBD_CONFIG_DIR" || exit 1
+    sbd_prepare_config "$SBD_CONF_DIR" || exit 1
     printf '旧链接\n' > "$SBD_EXPORTS/node.txt" || exit 1
     cp -- "$SBD_CONFIG" "$CASE_TMP/old-config" || exit 1
     cp -- "$SBD_SCHEMA" "$CASE_TMP/old-schema" || exit 1

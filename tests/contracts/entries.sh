@@ -8,7 +8,7 @@ menu_cancel() {
     t_run 0 sbd_entries_menu < /dev/null
     t_run 2 sbd_entry_create_prompt <<< $'2\n\n19501\nexample.com'
     t_assert '创建字段 EOF 不创建配置' test ! -e "$SBD_CONFIG"
-    t_assert '创建字段 EOF 不生成材料' test ! -e "$SBD_DATA/certificates"
+    t_assert '创建字段 EOF 不生成材料' test -z "$(find "$SBD_CERT_DIR" -mindepth 1 -maxdepth 1 -print -quit)"
 }
 field_contract() {
     t_fresh

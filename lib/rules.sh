@@ -97,9 +97,9 @@ sbd_rule_material() {
     fi
     case "$format" in source|binary) ;; *) _error '规则集格式只能是 source/binary'; return 1 ;; esac
     directory=$(mktemp -d "$stage/set.XXXXXXXX") || { _error '创建规则集候选失败'; return 1; }
-    id="${directory##*/}"; directory="$SBD_DATA/rule-sets/$id"
+    id="${directory##*/}"; directory="$SBD_ASSET_DIR/rule-sets/$id"
     sbd_material_note created_materials "$directory" || return 1
-    if ! mkdir -p -- "$SBD_DATA/rule-sets" || ! chmod 700 -- "$SBD_DATA/rule-sets" || ! mkdir -m 700 -- "$directory"; then
+    if ! mkdir -p -- "$SBD_ASSET_DIR/rule-sets" || ! chmod 700 -- "$SBD_ASSET_DIR/rule-sets" || ! mkdir -m 700 -- "$directory"; then
         _error '创建独立规则集路径失败'; return 1
     fi
     raw="$directory/source.json"; [[ "$format" != binary ]] || raw="$directory/rules.srs"
@@ -148,7 +148,7 @@ sbd_rule_set_prepare() {
                 sbd_rule_url "$(jq -r '.url' <<< "$value")" || return 1
                 # 4B：不下载种子，不声明远端已验证。显式 HTTP client 避免隐式旧默认。
                 value=$(jq --arg tag "$tag" '. + {tag:$tag} | .http_client //= {version:2}' <<< "$value") || return 1
-                content=$(jq --arg path "$SBD_DATA/cache.db" 'if .experimental.cache_file==null then .experimental.cache_file={enabled:true,path:$path} else . end' "$stage/config.json") || return 1
+                content=$(jq --arg path "$SBD_ASSET_DIR/cache.db" 'if .experimental.cache_file==null then .experimental.cache_file={enabled:true,path:$path} else . end' "$stage/config.json") || return 1
                 sbd_record_write "$stage/config.json" "$content" || return 1
                 origin='{}' ;;
             inline) value=$(jq --arg tag "$tag" '. + {tag:$tag}' <<< "$value") || return 1; origin='{}' ;;

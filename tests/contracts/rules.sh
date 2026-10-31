@@ -7,7 +7,7 @@ cancel_contract() {
     t_run 0 sbd_rules_menu <<< 0
     t_run 0 sbd_rules_menu < /dev/null
     t_assert '取消不创建配置' test ! -e "$SBD_CONFIG"
-    t_assert '取消不创建规则材料' test ! -e "$SBD_DATA/rule-sets"
+    t_assert '取消不创建规则材料' test ! -e "$SBD_ASSET_DIR/rule-sets"
 }
 local_contract() {
     t_policy_seed
@@ -37,7 +37,7 @@ invalid_contract() {
     value=$(jq -n --arg path "$CASE_TMP/bad.srs" '{type:"local",tag:"broken",format:"binary",path:$path}') || exit 1
     t_run 1 sbd_apply sbd_rule_set add broken "$value"
     t_unchanged
-    t_assert '坏 SRS 候选材料已回收' test -z "$(find "$SBD_DATA/rule-sets" -mindepth 1 -maxdepth 1 -type d)"
+    t_assert '坏 SRS 候选材料已回收' test -z "$(find "$SBD_ASSET_DIR/rule-sets" -mindepth 1 -maxdepth 1 -type d)"
     value=$(jq -n --arg path "$CASE_TMP/bad.srs" '{type:"local",tag:"broken",format:"source",path:$path}') || exit 1
     t_run 1 sbd_apply sbd_rule_set add broken "$value"
     t_unchanged
@@ -62,7 +62,7 @@ inline_contract() {
     t_assert '官方可省略 type 的 inline 仍可管理' jq -e '.route.rule_set[0]|(.type // "inline")=="inline" and .rules[0].domain_suffix=="example.com"' "$SBD_CONFIG"
     t_run 0 sbd_apply sbd_policy_rule route_rules delete "$(t_policy_id route_rules)"
     t_run 0 sbd_apply sbd_rule_set delete inline-domains
-    t_assert 'inline 不创建文件材料' test ! -e "$SBD_DATA/rule-sets"
+    t_assert 'inline 不创建文件材料' test ! -e "$SBD_ASSET_DIR/rule-sets"
 }
 menu_add_remote() {
     t_policy_seed
