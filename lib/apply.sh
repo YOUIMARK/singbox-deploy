@@ -31,12 +31,31 @@ sbd_resources() {
     esac
 }
 
+# BusyBox 的 readlink 不支持 GNU 的 -m；材料登记时目标目录尚未创建，逐级解析已存在的祖先。
+sbd_material_resolve() {
+    local path="$1" dir="$1" rest='' resolved
+    if resolved=$(readlink -f -- "$path" 2>/dev/null) && [[ -n "$resolved" ]]; then
+        printf '%s\n' "$resolved"; return 0
+    fi
+    while [[ ! -e "$dir" && ! -L "$dir" ]]; do
+        rest="/${dir##*/}$rest"
+        dir=${dir%/*}
+        [[ -n "$dir" ]] || { dir=/; break; }
+    done
+    resolved=$(cd -- "$dir" 2>/dev/null && pwd -P) || return 1
+    if [[ "$resolved" = / ]]; then
+        printf '/%s\n' "${rest#/}"
+    else
+        printf '%s%s\n' "$resolved" "$rest"
+    fi
+}
+
 sbd_material_path() {
     local path="$1" name="${1##*/}" resolved
     if [[ "$name" =~ ^cert\.[A-Za-z0-9]{8}$ && "$path" = "$SBD_DATA/certificates/$name" ]]; then :
     elif [[ "$name" =~ ^set\.[A-Za-z0-9]{8}$ && "$path" = "$SBD_DATA/rule-sets/$name" ]]; then :
     else _error '材料路径不属于本部署'; return 1; fi
-    resolved=$(readlink -m -- "$path") || { _error '无法解析材料路径'; return 1; }
+    resolved=$(sbd_material_resolve "$path") || { _error '无法解析材料路径'; return 1; }
     [[ "$resolved" = "$path" ]] || { _error '材料路径包含外部链接'; return 1; }
 }
 

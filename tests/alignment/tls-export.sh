@@ -189,6 +189,20 @@ export_schema_failure() {
     t_contains "$CASE_TMP/output" Schema
     t_unchanged
 }
+busybox_readlink() {
+    t_seed
+    # BusyBox 的 readlink 只认 -f/-n/-v；-f 还要求路径已存在，材料登记时目录尚未创建。
+    readlink() {
+        case "$1" in
+            -m) printf 'readlink: unrecognized option: m\n' >&2; return 1 ;;
+            -f) [[ -e "${!#}" ]] || return 1; command readlink "$@" ;;
+            *) command readlink "$@" ;;
+        esac
+    }
+    t_run 0 sbd_apply create_and_attach
+    t_assert '材料目录已登记' jq -e '.tls.certificates|length==1' "$SBD_REGISTRY"
+    t_assert '证书材料已生成' test -f "$(jq -r '.tls.certificates[0].certificate_path' "$SBD_REGISTRY")"
+}
 material_negative_control() {
     t_seed
     local path="$CASE_TMP/outside"
@@ -208,5 +222,6 @@ t_case '缺值和适配器失败保留旧客户端与链接' export_failure
 t_case '输出文件写失败不提交节点事实或材料' export_write_failure
 t_case '导出发布后 state 失败恢复整组旧事实' export_state_failure
 t_case '导出真实 Schema 拒绝 1.15 证书字段' export_schema_failure
+t_case 'BusyBox readlink 兼容' busybox_readlink
 t_case '证书回收路径负向对照' material_negative_control
 t_finish
