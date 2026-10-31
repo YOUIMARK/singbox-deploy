@@ -9,7 +9,7 @@ c = node["client"]
 u = urlsplit(open(sys.argv[2]).read().strip())
 q = parse_qs(u.query, keep_blank_values=True)
 assert u.hostname == c["server"] and u.port == c["server_port"]
-assert unquote(u.fragment) == node["name"] and u.path == "/"
+assert unquote(u.fragment) == node["name"] and u.path == ""
 if node["profile"] == "shadowsocks":
     assert u.scheme == "ss" and not q
     info = u.netloc.rsplit("@", 1)[0]

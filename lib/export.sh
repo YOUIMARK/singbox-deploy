@@ -41,7 +41,8 @@ print(urlencode(data, quote_via=quote, safe=""))
 PY
     ) || { _error '分享查询参数须为字符串对象，不能包含 null'; return 1; }
     fragment=$(sbd_uri_escape "$name") || { _error '分享名称编码失败'; return 1; }
-    printf '%s://%s@%s:%s/' "$scheme" "$userinfo" "$authority" "$port"
+    # 716 的 authority 之后直接接查询串；不写空路径斜杠，与主流客户端保持一致。
+    printf '%s://%s@%s:%s' "$scheme" "$userinfo" "$authority" "$port"
     [[ -z "$parameters" ]] || printf '?%s' "$parameters"
     printf '#%s\n' "$fragment"
 }

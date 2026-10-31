@@ -11,7 +11,7 @@ import sys
 from urllib.parse import urlsplit, unquote, parse_qs
 u = urlsplit(open(sys.argv[1]).read().strip())
 assert u.scheme == "anytls" and u.hostname == "2001:db8::1" and u.port == 443
-assert u.path == "/"
+assert u.path == ""
 assert unquote(u.username) == "p@ss:/?# &+中文="
 assert unquote(u.fragment) == "中文 节点/#"
 assert parse_qs(u.query) == {"sni":["cdn.example.com"],"security":["reality"],"pbk":["a+b/c="],"sid":["00"]}

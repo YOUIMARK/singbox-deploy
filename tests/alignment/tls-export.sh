@@ -38,6 +38,11 @@ native_pair_and_export() {
     t_assert '客户端无私钥/服务端路径且带公钥信任' jq -e '.outbounds[0].tls | has("certificate_public_key_sha256") and (has("key_path")|not) and (has("certificate_path")|not) and (has("insecure")|not)' "$SBD_EXPORTS/fixture-node.json"
     t_assert '客户端不擅自创建监听或 TUN' jq -e '(.inbounds // [])==[]' "$SBD_EXPORTS/fixture-node.json"
     t_contains "$SBD_EXPORTS/links.txt" '24443'
+    t_contains "$SBD_EXPORTS/fixture-node.txt" '[2001:db8::1]:24443?'
+    t_contains "$SBD_EXPORTS/fixture-node.txt" 'sni=node.example.com'
+    t_contains "$SBD_EXPORTS/fixture-node.txt" 'security=tls'
+    t_contains "$SBD_EXPORTS/fixture-node.txt" '#%E5%AF%BC%E5%87%BA%20fixture'
+    t_absent "$SBD_EXPORTS/fixture-node.txt" ':24443/?'
 }
 shared_provider() {
     t_seed
