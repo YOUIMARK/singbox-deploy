@@ -65,7 +65,7 @@ links_back() {
     t_contains "$CASE_TMP/output" '[0] 返回上一级'
     t_absent "$CASE_TMP/output" '当前节点链接'
     t_absent "$CASE_TMP/output" "$link"
-    t_assert '返回的是节点链接菜单，不越级退出' test "$(grep -c '^  节点链接$' "$CASE_TMP/output")" = 2
+    t_assert '返回的是节点链接菜单，不越级退出' test "$(grep -c '^  【节点链接】$' "$CASE_TMP/output")" = 2
     t_run 0 sbd_export_menu <<< $'3'
     t_entry_unchanged
 }

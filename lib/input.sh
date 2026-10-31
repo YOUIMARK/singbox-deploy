@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# 最近一次输出是否为字段提示：连续字段紧排，其余输出之后才空一行（对齐 xray-deploy 的紧凑向导）。
+SBD_UI_AFTER_PROMPT=false
+
 sbd_ui_terminal() { [[ -t 0 && -t 1 && "${TERM:-dumb}" != dumb ]]; }
 
 sbd_ui_tint() {
@@ -9,6 +12,7 @@ sbd_ui_tint() {
 }
 
 sbd_ui_message() {
+    SBD_UI_AFTER_PROMPT=false
     sbd_ui_tint "$1" "[$2]"
     printf ' %s\n' "$3"
 }
@@ -38,25 +42,29 @@ sbd_ui_width() {
 }
 
 sbd_ui_begin() {
-    local cols width inner pad=2
+    local cols width inner pad=2 title="$1"
+    SBD_UI_AFTER_PROMPT=false
     if sbd_ui_terminal; then printf '\033[H\033[2J'; fi
     SBD_UI_PAGE=$(( ${SBD_UI_PAGE:-0} + 1 ))
     if [[ "${2:-false}" = true ]]; then
         cols=$(sbd_ui_columns)
-        width=$(sbd_ui_width "$1") || return 1
+        width=$(sbd_ui_width "$title") || return 1
         inner=$((width+8)); (( inner >= 40 )) || inner=40
         (( inner <= cols-4 )) || inner=$((cols-4))
         if (( inner > width )); then pad=$((2+(inner-width)/2)); fi
     else
+        # 子菜单标题与分组标题同为【】标记，对齐 xray-deploy 的层级写法。
         printf '\n'
+        title="【${title}】"
     fi
-    printf '%*s' "$pad" ''; sbd_ui_tint 36 "$1"; printf '\n\n'
+    printf '%*s' "$pad" ''; sbd_ui_tint 36 "$title"; printf '\n\n'
 }
 
 sbd_ui_pause() {
     sbd_ui_terminal || return 0
     [[ -z "${1:-}" || "$1" = "${SBD_UI_PAGE:-0}" ]] || return 0
-    printf '\n  '; sbd_ui_tint 90 '按回车返回菜单…'; printf ' '
+    SBD_UI_AFTER_PROMPT=false
+    printf '\n  '; sbd_ui_tint 33 '按回车返回菜单…'; printf ' '
     if ! IFS= read -r; then SBD_UI_EOF=true; fi
 }
 
@@ -70,6 +78,7 @@ sbd_ui_item() {
 
 sbd_ui_rows() {
     local cols left right width right_width pad span=24 gap="${SBD_UI_COLUMN_GAP:-6}"
+    SBD_UI_AFTER_PROMPT=false
     cols=$(sbd_ui_columns)
     (( cols <= 100 )) || cols=100
     while (( $# > 0 )); do
@@ -91,18 +100,20 @@ sbd_ui_rows() {
 }
 
 sbd_ui_section() {
+    SBD_UI_AFTER_PROMPT=false
     [[ "${2:-true}" != true ]] || printf '\n'
     printf '  '; sbd_ui_tint 36 "【$1】"; printf '\n'
 }
 
 sbd_ui_status_field() {
     local field="$1" label value color=36
+    SBD_UI_AFTER_PROMPT=false
     if [[ "$field" != *': '* ]]; then printf '%s' "$field"; return 0; fi
     label="${field%%: *}" value="${field#*: }"
     case "$value" in
         *未知*) color=33 ;;
-        未安装|已停止|已关闭|未创建) color=31 ;;
-        运行中|已开启|已存在) color=32 ;;
+        *未安装*|*已停止*|*已关闭*|*未创建*|*未设置*) color=31 ;;
+        *运行中*|*已开启*|*已存在*) color=32 ;;
     esac
     printf '%s: ' "$label"; sbd_ui_tint "$color" "$value"
 }
@@ -161,6 +172,7 @@ sbd_ui_options() {
     local item width
     local SBD_UI_COLUMN_GAP=6 SBD_UI_SINGLE_COLUMN=false
     local -a rows=()
+    SBD_UI_AFTER_PROMPT=false
     if [[ "${1:-}" = --compact ]]; then SBD_UI_COLUMN_GAP=2; shift; fi
     # 长说明不参与双列拼接；整组采用同一布局，避免长短项交替错落。
     for item in "$@"; do
@@ -189,7 +201,20 @@ sbd_ui_menu() {
     sbd_ui_options "$@"
 }
 
-sbd_ui_prompt() { printf '\n  %s: ' "$1" >&2; }
+sbd_ui_prompt() {
+    # 首个字段与上文隔一行，连续字段紧排；对齐 xray-deploy 的紧凑向导。
+    [[ "${SBD_UI_AFTER_PROMPT:-false}" = true ]] || printf '\n' >&2
+    printf '  %s: ' "$1" >&2
+    SBD_UI_AFTER_PROMPT=true
+}
+
+# 读取一行到 SBD_REPLY：字段提示紧排后行尾换行由终端回显提供，重定向输入没有回显，需补一个换行。
+sbd_ui_read_line() {
+    local rc=0
+    IFS= read -r SBD_REPLY || rc=$?
+    [[ -t 0 ]] || printf '\n' >&2
+    return "$rc"
+}
 
 sbd_integer() {
     local value="${1:-}" low="${2:-0}" high="${3:-999999999}" zeros
@@ -208,7 +233,7 @@ sbd_read_required() {
     SBD_REPLY=''
     while true; do
         sbd_ui_prompt "$label"
-        if ! IFS= read -r SBD_REPLY; then
+        if ! sbd_ui_read_line; then
             sbd_info '输入结束，已取消'
             return 2
         fi
@@ -243,7 +268,7 @@ sbd_read_optional() {
         IFS= read -rs SBD_REPLY || rc=$?
         printf '\n' >&2
     else
-        IFS= read -r SBD_REPLY || rc=$?
+        sbd_ui_read_line || rc=$?
     fi
     [[ "$rc" = 0 ]] || { sbd_info '输入结束，已取消'; return 2; }
 }

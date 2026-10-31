@@ -16,13 +16,31 @@ section_spacing() {
     t_assert '标题到首组及各组之间只留一行' python3 - "$CASE_TMP/output" <<'PY'
 import sys
 text = open(sys.argv[1]).read()
-assert '\n  核心管理\n\n  【安装与更新】\n' in text, text
+assert '\n  【核心管理】\n\n  【安装与更新】\n' in text, text
 assert '\n  [1] 安装\n\n  【服务控制】\n' in text, text
 assert '\n  [2] 启动\n\n  [0] 返回\n' in text, text
 assert '\n\n\n' not in text, text
 PY
     t_run 0 sbd_ui_menu '节点管理' '[1] 列出节点' '[0] 返回'
-    t_contains "$CASE_TMP/output" $'  节点管理\n\n  [1] 列出节点'
+    t_contains "$CASE_TMP/output" $'  【节点管理】\n\n  [1] 列出节点'
+}
+compact_prompts() {
+    { sbd_ui_menu '添加节点' '[1] Hysteria2' '[0] 返回上一级'
+      sbd_read_required '监听 IP'
+      sbd_read_required '监听端口'
+    } > "$CASE_TMP/output" 2>&1 <<< $'::\n23456\n'
+    t_assert '首个字段与上文隔一行、连续字段紧排' python3 - "$CASE_TMP/output" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+assert '\n\n  监听 IP: \n  监听端口: \n' in text, text
+assert '监听 IP: \n  监听端口' in text, text
+PY
+    { sbd_info '提示一条'; sbd_read_required '继续'; } > "$CASE_TMP/output" 2>&1 <<< 'x'
+    t_assert '非提示输出之后仍空一行' python3 - "$CASE_TMP/output" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+assert '\n\n  继续: \n' in text, text
+PY
 }
 centered_title() {
     COLUMNS=80 t_run 0 sbd_ui_begin 'sing-box 部署管理脚本 (singbox-deploy)' true
@@ -211,6 +229,7 @@ pty_case() {
 t_case '非终端标题与编号完整且无 ANSI' plain_menu
 t_case '首个分组不叠加标题空行、其余分组间距不变' section_spacing
 t_case '主菜单标题居中、窄屏不增加多余缩进' centered_title
+t_case '子菜单标题用【】、向导字段提示紧排' compact_prompts
 t_case '状态用分隔符紧凑排列、窄屏按字段换行' status_rows
 t_case 'Debian 状态分隔符跨行对齐且窄屏完整换行' status_table
 t_case '80/100 列双栏及中文对齐' column_layout

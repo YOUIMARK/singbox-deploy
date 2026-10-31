@@ -108,8 +108,8 @@ numbered_navigation() {
     local number title
     while IFS='|' read -r number title; do
         t_run 0 sbd_console <<< "$(printf '%s\n0\n0\n' "$number")"
-        t_contains "$CASE_TMP/output" "  $title"
-        t_assert '输入编号确实进入相应子菜单' test "$(grep -Fc "  $title" "$CASE_TMP/output")" = 1
+        t_contains "$CASE_TMP/output" "  【$title】"
+        t_assert '输入编号确实进入相应子菜单' test "$(grep -Fc "  【$title】" "$CASE_TMP/output")" = 1
     done <<'MENUS'
 5|节点链接
 6|DNS 设置
@@ -118,7 +118,7 @@ numbered_navigation() {
 9|隧道管理
 17|日志与监控
 18|脚本维护
-19|核心管理
+19|sing-box 核心管理
 MENUS
 }
 host_unknown() {

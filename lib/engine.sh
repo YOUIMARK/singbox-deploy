@@ -490,7 +490,7 @@ sbd_uninstall_menu() {
 sbd_engine_menu() {
     local choice version page rc
     while true; do
-        sbd_ui_menu '核心管理' '@安装与更新' '[1] 安装/更新最新稳定版' '[2] 指定稳定版' '@服务控制' '[3] 启动/重启' '[4] 停止' '[5] 启用自启' '[6] 关闭自启' '[0] 返回'
+        sbd_ui_menu 'sing-box 核心管理' '@安装与更新' '[1] 安装/更新最新稳定版' '[2] 指定稳定版' '@服务控制' '[3] 启动/重启' '[4] 停止' '[5] 启用自启' '[6] 关闭自启' '[0] 返回'
         page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 6 || return 0
         choice="$SBD_REPLY"

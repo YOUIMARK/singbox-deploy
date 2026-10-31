@@ -216,7 +216,8 @@ sbd_resolver_switch() {
 sbd_resolver_summary() {
     local config="$SBD_CONFIG" report address strategy
     if [[ ! -f "$config" ]]; then
-        printf '  当前 DNS: 未创建配置\n  解析策略: 未设置\n'
+        printf '  '; sbd_ui_status_field '当前 DNS: 未创建配置'; printf '\n'
+        printf '  '; sbd_ui_status_field '解析策略: 未设置'; printf '\n'
         return 0
     fi
     report=$(python3 "$SBD_APP/support/dns_settings.py" summary "$config") || return 1

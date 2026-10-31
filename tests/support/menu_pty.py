@@ -81,9 +81,10 @@ try:
             stable_page()
             assert clears() == 1
             if scenario == 'colors':
-                assert '\x1b[36m终端菜单' in text()
+                assert '\x1b[36m【终端菜单】' in text()
                 assert '\x1b[32m[2]' in text()
                 assert '\x1b[32m[1]' in text()
+                assert '\x1b[33m按回车返回菜单…' in text()
                 assert '\x1b[1;' not in text()
             else:
                 assert not re.search(r'\x1b\[[0-9;]*m', text())
@@ -144,7 +145,7 @@ try:
         assert text()[start:].count('核心管理') == 1
         assert '安装与更新' in text()[start:] and '服务控制' in text()[start:]
         page = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()[start:]).replace('\r\n', '\n')
-        assert '  核心管理\n\n  【安装与更新】\n' in page, page
+        assert '  【sing-box 核心管理】\n\n  【安装与更新】\n' in page, page
         start = len(text())
         send('0\n')
         wait_for('singbox-deploy', start)
@@ -161,6 +162,8 @@ try:
         assert [int(n) for n in re.findall(r'\[(\d+)\]', page)] == list(range(1, 10)) + [0], page
         assert all(re.match(r'^  \[\d+\] ', line) and len(re.findall(r'\[\d+\]', line)) == 1 for line in lines), lines
         assert '[9] 高级设置' in page and '当前 DNS:' in page, page
+        assert '\x1b[31m未创建配置\x1b[0m' in text()[start:], text()[start:]
+        assert '\x1b[31m未设置\x1b[0m' in text()[start:], text()[start:]
         assert 'JSON 替换托管上游' not in page and 'TLS SNI' not in page, page
         start = len(text())
         send('0\n')

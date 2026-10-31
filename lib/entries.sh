@@ -599,7 +599,7 @@ sbd_entry_server_prompt() {
         sbd_info '检测到的是出口 IP；若提供商指定其他入站域名/IP，请手动填写'
         while true; do
             sbd_ui_prompt "客户端连接地址（回车用公网 IP $default）"
-            if ! IFS= read -r SBD_REPLY; then sbd_info '输入结束，已取消'; return 2; fi
+            if ! sbd_ui_read_line; then sbd_info '输入结束，已取消'; return 2; fi
             SBD_REPLY="${SBD_REPLY:-$default}"
             sbd_entry_host "$SBD_REPLY" && return 0
         done
@@ -614,7 +614,7 @@ sbd_entry_port_prompt() {
     while true; do
         [[ "${SBD_UI_EOF:-false}" != true ]] || return 2
         sbd_ui_prompt '监听端口（回车随机生成）'
-        if ! IFS= read -r SBD_REPLY; then sbd_info '输入结束，已取消'; return 2; fi
+        if ! sbd_ui_read_line; then sbd_info '输入结束，已取消'; return 2; fi
         generated=false
         if [[ -z "$SBD_REPLY" ]]; then
             random=$(openssl rand -hex 2) && [[ "$random" =~ ^[0-9a-fA-F]{4}$ ]] || { _error '随机端口生成失败'; return 1; }
