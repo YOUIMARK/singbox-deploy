@@ -94,7 +94,7 @@ sbd_resolver_menu() {
             6)
                 sbd_info '支持 local、IP 或完整 DNS URL；多个地址用英文逗号分隔，自动竞速；留空取消'
                 while true; do
-                    sbd_read_optional 'DNS 地址' || return 0; address="$SBD_REPLY"
+                    sbd_read_optional 'DNS 地址（留空取消）' || return 0; address="$SBD_REPLY"
                     [[ -n "$address" ]] || break
                     if python3 "$SBD_APP/support/dns_settings.py" parse "$address" >/dev/null; then break; fi
                 done

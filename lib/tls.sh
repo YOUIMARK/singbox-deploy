@@ -210,7 +210,7 @@ sbd_tls_provider_prompt() {
         2)
             sbd_read_required 'AliDNS access_key_id' || return $?; token="$SBD_REPLY"
             sbd_read_secret 'AliDNS access_key_secret' || return $?; key="$SBD_REPLY"
-            sbd_read_optional 'AliDNS region_id' || return $?; region="$SBD_REPLY"
+            sbd_read_optional 'AliDNS region_id（可留空）' || return $?; region="$SBD_REPLY"
             sbd_read_optional 'AliDNS security_token（使用 STS 时填写，不回显）' true || return $?; optional="$SBD_REPLY"
             challenge=$(jq -n --arg id "$token" --arg key "$key" --arg region "$region" --arg optional "$optional" '{provider:"alidns",access_key_id:$id,access_key_secret:$key} + (if $region!="" then {region_id:$region} else {} end) + (if $optional!="" then {security_token:$optional} else {} end)') || return 1 ;;
         3)

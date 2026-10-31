@@ -264,7 +264,8 @@ sbd_read_secret() {
 sbd_read_optional() {
     local secret="${2:-false}" rc=0
     [[ "${SBD_UI_EOF:-false}" != true ]] || return 2
-    sbd_ui_prompt "$1（可留空）"
+    # 是否可留空由调用方的提示语说明（默认值、留空随机等），这里不再追加通用后缀。
+    sbd_ui_prompt "$1"
     SBD_REPLY=''
     if [[ "$secret" = true ]]; then
         IFS= read -rs SBD_REPLY || rc=$?
