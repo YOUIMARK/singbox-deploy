@@ -282,7 +282,7 @@ sbd_export_node_menu() {
 }
 
 sbd_export_menu() {
-    local choice values id page
+    local choice values id page rc
     while true; do
         sbd_ui_menu '节点链接' '[1] 重新生成全部节点链接与配置' '[2] 查看全部节点链接（含密码/密钥）' '[3] 查看单个节点链接与配置' '[0] 返回'
         page="$SBD_UI_PAGE"
@@ -299,7 +299,8 @@ sbd_export_menu() {
                 cat -- "$SBD_EXPORTS/links.txt" || { _error '读取分享清单失败'; return 1; } ;;
             3)
                 values=$(jq -c .nodes "$SBD_REGISTRY") || { _error '读取节点列表失败'; return 1; }
-                sbd_entry_choose "$values" '选择节点' || return $?
+                rc=0; sbd_entry_choose "$values" '选择节点' true || rc=$?
+                if [[ "$rc" = 2 ]]; then continue; elif [[ "$rc" != 0 ]]; then return "$rc"; fi
                 id="$SBD_REPLY"
                 sbd_export_node_menu "$id" || return 1 ;;
         esac

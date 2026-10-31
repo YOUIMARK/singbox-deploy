@@ -641,7 +641,7 @@ sbd_entry_password_prompt() {
 }
 
 sbd_entry_choose() {
-    local values="$1" label="$2" count index name
+    local values="$1" label="$2" back="${3:-false}" count index name low=1
     count=$(jq -er 'length' <<< "$values") || { _error '读取选择列表失败'; return 1; }
     (( count > 0 )) || { _error '暂无可选择资料，请先创建或导入'; return 1; }
     index=0
@@ -651,7 +651,9 @@ sbd_entry_choose() {
         sbd_ui_rows "[$((index+1))] $name"
         index=$((index+1))
     done
-    sbd_read_integer "$label" 1 "$count" || return $?
+    if [[ "$back" = true ]]; then sbd_ui_options '[0] 返回上一级'; low=0; fi
+    sbd_read_integer "$label" "$low" "$count" || return $?
+    [[ "$SBD_REPLY" != 0 ]] || return 2
     SBD_REPLY=$(jq -er --argjson index "$((SBD_REPLY-1))" '.[$index].id // .[$index].tag' <<< "$values") || { _error '所选资料缺少标识'; return 1; }
 }
 
@@ -825,11 +827,12 @@ sbd_entry_hy2_prompt() {
 sbd_entry_create_prompt() {
     local choice profile listen port server password name source options='{}' request network
     sbd_ui_begin '添加节点'
+    sbd_ui_options '[1] Hysteria2（UDP）' '[2] AnyTLS（TCP）' '[3] AnyReality（AnyTLS + Reality，TCP）' \
+        '[4] Shadowsocks（三算法）' '[5] VMess+WS CDN' '[6] VLESS+Reality Vision' '[7] VLESS+WS CDN' '[0] 返回上一级'
+    sbd_read_integer '选择配置档' 0 7 || return $?; choice="$SBD_REPLY"
+    [[ "$choice" != 0 ]] || return 2
     sbd_version >/dev/null || return 1
     if [[ -f "$SBD_CONFIG" ]]; then sbd_check_config || return 1; fi
-    sbd_ui_options '[1] Hysteria2（UDP）' '[2] AnyTLS（TCP）' '[3] AnyReality（AnyTLS + Reality，TCP）' \
-        '[4] Shadowsocks（三算法）' '[5] VMess+WS CDN' '[6] VLESS+Reality Vision' '[7] VLESS+WS CDN'
-    sbd_read_integer '选择配置档' 1 7 || return $?; choice="$SBD_REPLY"
     case "$choice" in
         1) profile=hysteria2 ;; 2) profile=anytls ;; 3) profile=anyreality ;;
         4) profile=shadowsocks ;; 5) profile=vmess_ws ;; 6) profile=vless_reality ;; 7) profile=vless_ws ;;
@@ -885,7 +888,7 @@ sbd_entry_change_prompt() {
     esac
     sbd_ui_begin "$title"
     values=$(jq -c '.nodes' "$SBD_REGISTRY") || return 1
-    sbd_entry_choose "$values" '选择节点' || return $?; id="$SBD_REPLY"
+    sbd_entry_choose "$values" '选择节点' true || return $?; id="$SBD_REPLY"
     node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || return 1
     profile=$(jq -r '.profile' <<< "$node") || return 1
     if [[ "$mode" = delete ]]; then

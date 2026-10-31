@@ -169,6 +169,45 @@ try:
         assert any('[1]' in line and '[2]' in line for line in page.splitlines()), page
         assert '按回车' not in page
         send('0\n')
+    elif scenario in ('back_navigation', 'back_no_core'):
+        wait_for('请选择')
+        start = len(text())
+        send('1\n')
+        wait_for('选择配置档', start)
+        page = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()[start:])
+        assert '[0] 返回上一级' in page
+        assert [int(n) for n in re.findall(r'\[(\d+)\]', page)] == list(range(1, 8)) + [0], page
+        start = len(text())
+        send('0\n')
+        wait_for('请选择', start)
+        assert 'singbox-deploy' in text()[start:] and '按回车' not in text()[start:]
+        if scenario == 'back_navigation':
+            for number in (3, 4):
+                start = len(text())
+                send(f'{number}\n')
+                wait_for('选择节点', start)
+                assert '[0]' in text()[start:]
+                start = len(text())
+                send('0\n')
+                wait_for('请选择', start)
+                assert 'singbox-deploy' in text()[start:] and '按回车' not in text()[start:]
+                assert '将删除节点' not in text()[start:]
+            start = len(text())
+            send('5\n')
+            wait_for('请选择', start)
+            start = len(text())
+            send('3\n')
+            wait_for('选择节点', start)
+            start = len(text())
+            send('0\n')
+            wait_for('请选择', start)
+            assert '节点链接' in text()[start:] and 'singbox-deploy' not in text()[start:]
+            assert '按回车' not in text()[start:] and '分享链接:' not in text()[start:]
+            start = len(text())
+            send('0\n')
+            wait_for('请选择', start)
+            assert 'singbox-deploy' in text()[start:] and '按回车' not in text()[start:]
+        send('0\n')
     elif scenario == 'ntp_simple':
         wait_for('请选择')
         start = len(text())

@@ -16,13 +16,22 @@ case "$1" in
         sbd_ui_status_row '核心: 1.14.4' '服务: 未知' '托管节点: 未知'
         sbd_read_required '结束预览' || exit 1
         ;;
-    navigation|navigation_narrow|dns_layout|failure)
+    navigation|navigation_narrow|dns_layout|failure|back_no_core)
         t_fresh
         SBD_BINARY="$CASE_TMP/missing-core"
         sbd_service_state() { printf 'stopped\n'; }
         sbd_service_enabled() { printf 'disabled\n'; }
         sbd_backend() { printf 'openrc\n'; }
         sbd_console
+        ;;
+    back_navigation)
+        t_seed
+        sbd_apply sbd_entry_create "$(cat "$ROOT/tests/fixtures/entry-shadowsocks.json")" || exit 1
+        cp "$SBD_CONFIG" "$CASE_TMP/before-config" && cp "$SBD_STATE" "$CASE_TMP/before-state" && cp "$SBD_REGISTRY" "$CASE_TMP/before-registry" || exit 1
+        sbd_service_enabled() { printf 'disabled\n'; }
+        sbd_backend() { printf 'openrc\n'; }
+        sbd_console
+        cmp -s "$SBD_CONFIG" "$CASE_TMP/before-config" && cmp -s "$SBD_STATE" "$CASE_TMP/before-state" && cmp -s "$SBD_REGISTRY" "$CASE_TMP/before-registry" || exit 1
         ;;
     create_link|dns_preset|ntp_simple)
         t_seed
