@@ -61,10 +61,12 @@ sbd_ui_begin() {
 }
 
 sbd_ui_pause() {
+    local label='按回车返回菜单…'
     sbd_ui_terminal || return 0
     [[ -z "${1:-}" || "$1" = "${SBD_UI_PAGE:-0}" ]] || return 0
+    [[ -z "${2:-}" ]] || label="$2"
     SBD_UI_AFTER_PROMPT=false
-    printf '\n  '; sbd_ui_tint 33 '按回车返回菜单…'; printf ' '
+    printf '\n  '; sbd_ui_tint 33 "$label"; printf ' '
     if ! IFS= read -r; then SBD_UI_EOF=true; fi
 }
 

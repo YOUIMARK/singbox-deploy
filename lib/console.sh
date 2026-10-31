@@ -258,7 +258,9 @@ sbd_console() {
         choice="$SBD_REPLY"
         [[ "$choice" != 0 ]] || return 0
         if sbd_dispatch "$choice"; then
-            sbd_ui_pause "$page"
+            # 卸载/更新/恢复会替换或删除当前入口，返回菜单已无意义。
+            if [[ "${SBD_EXIT_MENU:-false}" = true ]]; then sbd_ui_pause "$page" '按回车退出…'
+            else sbd_ui_pause "$page"; fi
         else
             rc=$?
             [[ "$rc" = 2 ]] || sbd_ui_pause

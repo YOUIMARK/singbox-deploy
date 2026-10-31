@@ -42,4 +42,15 @@ t_case '拒绝溢出和表达式' rejected
 t_case '字段错误只重问当前字段' retry_field
 t_case '必答 EOF 取消' eof_cancel
 t_case '秘密输入不回显与可选字段 EOF 取消' secret_and_optional
+pause_labels() {
+    NO_COLOR=1
+    sbd_ui_terminal() { return 0; }
+    SBD_UI_PAGE=7
+    t_run 0 sbd_ui_pause 7 <<< ''
+    t_contains "$CASE_TMP/output" '按回车返回菜单'
+    t_run 0 sbd_ui_pause 7 '按回车退出…' <<< ''
+    t_contains "$CASE_TMP/output" '按回车退出'
+    t_absent "$CASE_TMP/output" '返回菜单'
+}
+t_case '卸载后暂停提示退出而非返回菜单' pause_labels
 t_finish
