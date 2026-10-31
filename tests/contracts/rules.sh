@@ -89,6 +89,26 @@ menu_add_preset() {
     t_contains "$CASE_TMP/output" '规则集 geosite-cn 已添加'
     t_assert '预设目录写入与 s-ui 同源的规则集地址' jq -e '.route.rule_set[0] | .tag=="geosite-cn" and .url=="https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs" and (.format // "binary")=="binary" and .update_interval=="24h0m0s"' "$SBD_CONFIG"
 }
+menu_add_preset_multi() {
+    t_policy_seed
+    t_run 0 sbd_rules_menu <<< $'4\n1\n1,4\ny\n0'
+    t_contains "$CASE_TMP/output" '规则集 geosite-ads, geosite-cn 已添加'
+    t_assert '多选按编号顺序一次写入' jq -e '[.route.rule_set[].tag]==["geosite-ads","geosite-cn"]' "$SBD_CONFIG"
+    t_assert '多选逐条登记归属' jq -e '[.policy.rule_sets[].id]==["geosite-ads","geosite-cn"]' "$SBD_REGISTRY"
+    t_assert '多选共用一次核心缓存配置' jq -e '.experimental.cache_file.enabled==true and (.route.rule_set|length)==2' "$SBD_CONFIG"
+}
+menu_add_preset_range() {
+    t_policy_seed
+    t_run 0 sbd_rules_menu <<< $'4\n1\n4-5 4\ny\n0'
+    t_assert '区间与重复编号归一去重' jq -e '[.route.rule_set[].tag]==["geosite-cn","geoip-cn"]' "$SBD_CONFIG"
+}
+menu_add_preset_retry() {
+    t_policy_seed
+    t_run 0 sbd_rules_menu <<< $'4\n1\n0\n2\ny\n0'
+    t_contains "$CASE_TMP/output" '可多选，用逗号或空格分隔'
+    t_contains "$CASE_TMP/output" '规则集 geosite-private 已添加'
+    t_assert '非法编号重问后只写入合法项' jq -e '[.route.rule_set[].tag]==["geosite-private"]' "$SBD_CONFIG"
+}
 menu_delete_referenced() {
     t_policy_seed
     t_run 0 sbd_apply sbd_rule_set add inline-domains '{"tag":"inline-domains","rules":[{"domain_suffix":"example.com"}]}'
@@ -120,6 +140,9 @@ t_case '路由规则 CRUD、稳定关联和无私有配置字段' route_contract
 t_case '省略 type 的原生 inline 规则集引用与删除' inline_contract
 t_case '菜单添加远端规则集、缓存与归属登记' menu_add_remote
 t_case '菜单按预设目录添加规则集' menu_add_preset
+t_case '预设目录多选一次事务写入' menu_add_preset_multi
+t_case '预设目录区间与重复编号归一' menu_add_preset_range
+t_case '预设目录非法编号重问' menu_add_preset_retry
 t_case '菜单导入本地规则集并保留源文件' menu_add_local
 t_case '被规则引用的规则集拒绝删除，解除后真实删除' menu_delete_referenced
 t_case '补齐默认路由规则并保留自定义规则' defaults_restore

@@ -121,10 +121,10 @@ sbd_rule_material() {
     SBD_RULE_DIRECTORY="$directory"
 }
 
-sbd_rule_set() {
-    local stage="$1" action="$2" tag="$3" value="${4:-}" origin="${5:-}" request content directory='' old='' type format
-    sbd_tls_tag "$tag" || return 1
-    sbd_policy_begin "$stage" || return 1
+# 构造单条规则集变更：校验来源、补显式 HTTP client 与核心缓存；结果放在 SBD_RULE_REQUEST/SBD_RULE_OLD。
+sbd_rule_set_prepare() {
+    local stage="$1" action="$2" tag="$3" value="${4:-}" origin="${5:-}" content directory='' old='' type format
+    SBD_RULE_OLD=''
     if [[ "$action" != add ]]; then
         old=$(jq -er --arg tag "$tag" '.policy.rule_sets[]? | select(.id==$tag) | .directory // ""' "$stage/registry.json") || { _error '此规则集未托管'; return 1; }
     fi
@@ -157,10 +157,35 @@ sbd_rule_set() {
     elif [[ "$action" = delete ]]; then value='{}'; origin='{}'
     else _error '未知规则集操作'; return 1; fi
     [[ -n "$origin" ]] || origin='{}'
-    request=$(jq -n --arg action "$action" --arg id "$tag" --argjson value "$value" --arg directory "$directory" --argjson origin "$origin" \
+    SBD_RULE_REQUEST=$(jq -n --arg action "$action" --arg id "$tag" --argjson value "$value" --arg directory "$directory" --argjson origin "$origin" \
         '{area:"rule_sets",action:$action,id:$id,value:$value,directory:$directory,origin:$origin}') || return 1
-    sbd_policy_bundle "$stage" edit "$request" || return 1
-    [[ -z "$old" ]] || sbd_material_note retired_materials "$old" || return 1
+    SBD_RULE_OLD="$old"
+}
+
+sbd_rule_set() {
+    local stage="$1" action="$2" tag="$3" value="${4:-}" origin="${5:-}"
+    sbd_tls_tag "$tag" || return 1
+    sbd_policy_begin "$stage" || return 1
+    sbd_rule_set_prepare "$stage" "$action" "$tag" "$value" "$origin" || return 1
+    sbd_policy_bundle "$stage" edit "$SBD_RULE_REQUEST" || return 1
+    [[ -z "$SBD_RULE_OLD" ]] || sbd_material_note retired_materials "$SBD_RULE_OLD" || return 1
+    sbd_policy_finish "$stage"
+}
+
+# 一次事务添加多条规则集：每条仍走同一构造与登记路径，最后统一校验、格式化并只重启一次。
+sbd_rule_sets_add() {
+    local stage="$1" entries="$2" count i tag value origin
+    count=$(jq -er 'length' <<< "$entries") || { _error '规则集请求不是数组'; return 1; }
+    (( count > 0 )) || { _error '没有选择规则集'; return 1; }
+    sbd_policy_begin "$stage" || return 1
+    for ((i=0; i<count; i++)); do
+        tag=$(jq -er --argjson i "$i" '.[$i].tag' <<< "$entries") || return 1
+        sbd_tls_tag "$tag" || return 1
+        value=$(jq -ce --argjson i "$i" '.[$i].value' <<< "$entries") || { _error '规则集定义不是 JSON'; return 1; }
+        origin=$(jq -ce --argjson i "$i" '.[$i].origin // {}' <<< "$entries") || { _error '规则集来源不是 JSON'; return 1; }
+        sbd_rule_set_prepare "$stage" add "$tag" "$value" "$origin" || return 1
+        sbd_policy_bundle "$stage" edit "$SBD_RULE_REQUEST" || return 1
+    done
     sbd_policy_finish "$stage"
 }
 
@@ -176,9 +201,49 @@ sbd_rule_catalog() {
   {"tag":"geosite-youtube","title":"YouTube geosite-youtube","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/youtube.srs"},
   {"tag":"geosite-telegram","title":"Telegram geosite-telegram","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/telegram.srs"},
   {"tag":"geosite-netflix","title":"Netflix geosite-netflix","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/netflix.srs"},
+  {"tag":"geosite-ai","title":"AI 服务（非中国） geosite-ai","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ai-!cn.srs"},
   {"tag":"geosite-openai","title":"OpenAI geosite-openai","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/openai.srs"}
 ]
 JSON
+}
+
+# 解析多选编号：逗号/顿号/空白分隔，支持 3-5 区间；去重后按编号升序逐行输出。
+sbd_rule_selection() {
+    local raw="$1" count="$2" token low high n i out=''
+    local -a tokens=()
+    local -A chosen=()
+    [[ "$count" =~ ^[0-9]{1,9}$ ]] || return 1
+    raw="${raw//，/ }"; raw="${raw//、/ }"; raw="${raw//,/ }"; raw="${raw//；/ }"; raw="${raw//;/ }"
+    read -ra tokens <<< "$raw" || true
+    for token in "${tokens[@]}"; do
+        if [[ "$token" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            low=$(sbd_integer "${BASH_REMATCH[1]}" 1 "$count") || return 1
+            high=$(sbd_integer "${BASH_REMATCH[2]}" 1 "$count") || return 1
+            (( low <= high )) || return 1
+            for ((n=low; n<=high; n++)); do chosen[$n]=1; done
+        else
+            n=$(sbd_integer "$token" 1 "$count") || return 1
+            chosen[$n]=1
+        fi
+    done
+    (( ${#chosen[@]} > 0 )) || return 1
+    for ((i=1; i<=count; i++)); do
+        [[ -z "${chosen[$i]:-}" ]] || out+="$i"$'\n'
+    done
+    printf '%s' "$out"
+}
+
+# 读取可多选的编号，非法输入重问；结果写入 SBD_REPLY（升序、去重、每行一个）。
+sbd_read_selection() {
+    local label="$1" count="$2" picked
+    while true; do
+        sbd_read_required "$label" || return $?
+        if picked=$(sbd_rule_selection "$SBD_REPLY" "$count"); then
+            SBD_REPLY="$picked"
+            return 0
+        fi
+        _error "请输入 1 到 $count 的编号；可多选，用逗号或空格分隔，也支持 1-3 这样的范围"
+    done
 }
 
 sbd_rule_set_prompt() {
@@ -194,10 +259,14 @@ sbd_rule_set_prompt() {
             for ((i=0; i<count; i++)); do
                 sbd_ui_rows "[$((i+1))] $(jq -r --argjson i "$i" '.[$i].title' <<< "$catalog")" || return 1
             done
-            sbd_read_integer '选择预设规则集' 1 "$count" || return $?
-            tag=$(jq -r --argjson i "$((SBD_REPLY-1))" '.[$i].tag' <<< "$catalog") || return 1
-            url=$(jq -r --argjson i "$((SBD_REPLY-1))" '.[$i].url' <<< "$catalog") || return 1
-            format=binary ;;
+            sbd_read_selection '选择预设规则集（可多选：1,3 或 1-3）' "$count" || return $?
+            # 编号已去重升序，按编号顺序展开为 entries，交给一次事务写入。
+            SBD_SET_ENTRIES=$(jq -Rsc --argjson catalog "$catalog" '
+                split("\n") | map(select(length>0) | tonumber - 1) |
+                [ .[] as $i | $catalog[$i] | {tag:.tag,
+                    value:{type:"remote",tag:.tag,format:"binary",url:.url,update_interval:"1d"},
+                    origin:{}} ]' <<< "$SBD_REPLY") || { _error '构造预设规则集请求失败'; return 1; }
+            return 0 ;;
         2)
             while true; do
                 sbd_read_required '规则集链接（http/https）' || return $?
@@ -243,19 +312,21 @@ sbd_rule_set_prompt() {
         origin=$(jq -n --arg path "$path" --arg format "$format" '{kind:"file",value:$path,format:$format}') || return 1
         sbd_info '导入时复制并编译为 SRS；源文件不会被修改'
     fi
-    SBD_SET_TAG="$tag" SBD_SET_VALUE="$value" SBD_SET_ORIGIN="$origin"
+    SBD_SET_ENTRIES=$(jq -c -n --arg tag "$tag" --argjson value "$value" --argjson origin "$origin" \
+        '[{tag:$tag,value:$value,origin:$origin}]') || { _error '构造规则集请求失败'; return 1; }
 }
 
 sbd_rule_add_flow() {
-    local rc
+    local rc tags
     rc=0; sbd_rule_set_prompt || rc=$?
     [[ "$rc" != 2 ]] || return 2
     [[ "$rc" = 0 ]] || return 1
     rc=0; sbd_policy_confirm || rc=$?
     [[ "$rc" != 2 ]] || return 2
     [[ "$rc" = 0 ]] || return 1
-    sbd_apply sbd_rule_set add "$SBD_SET_TAG" "$SBD_SET_VALUE" "$SBD_SET_ORIGIN" || return 1
-    sbd_success "规则集 $SBD_SET_TAG 已添加；在 route.rules 中引用该 tag 后生效"
+    tags=$(jq -er 'map(.tag) | join(", ")' <<< "$SBD_SET_ENTRIES") || return 1
+    sbd_apply sbd_rule_sets_add "$SBD_SET_ENTRIES" || return 1
+    sbd_success "规则集 $tags 已添加；在 route.rules 中引用对应 tag 后生效"
 }
 
 sbd_rule_set_remove() {
