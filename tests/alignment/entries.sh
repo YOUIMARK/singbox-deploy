@@ -158,7 +158,9 @@ delete_node() {
 delete_referenced() {
     t_seed
     t_entry_add anytls
-    jq --arg tag "$NODE_ID" '.route.rules=[{inbound:[$tag],action:"route",outbound:"direct"}]' "$SBD_CONFIG" > "$CASE_TMP/ref" || exit 1
+    local tag
+    tag=$(jq -r '.nodes[0].inbound_tag' "$SBD_REGISTRY") || exit 1
+    jq --arg tag "$tag" '.route.rules=[{inbound:[$tag],action:"route",outbound:"direct"}]' "$SBD_CONFIG" > "$CASE_TMP/ref" || exit 1
     cp "$CASE_TMP/ref" "$SBD_CONFIG" || exit 1
     t_entry_save
     t_run 1 sbd_apply sbd_entry_change "$NODE_ID" delete ''
