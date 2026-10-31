@@ -67,11 +67,25 @@ PY
     done
 }
 
+sbd_peer_tag_free() {
+    local base="$1" config="$SBD_CONFIG" candidate index=2
+    [[ -f "$config" ]] || config="$SBD_APP/presets/base.json"
+    candidate="$base"
+    while jq -e --arg tag "$candidate" 'any((.inbounds[]?,.outbounds[]?,.endpoints[]?);.tag==$tag)' "$config" >/dev/null 2>&1; do
+        candidate="$base-$index"
+        index=$((index+1))
+        (( index <= 99 )) || break
+    done
+    printf '%s\n' "$candidate"
+}
+
 sbd_peer_tag_prompt() {
-    local area="${1:-connections}" config="$SBD_CONFIG" rc
+    local default="${1:-}" area="${2:-connections}" config="$SBD_CONFIG" rc
     [[ -f "$config" ]] || config="$SBD_APP/presets/base.json"
     while true; do
-        sbd_read_required '原生 tag' || return $?
+        # 默认值只给一次：重问时不再提供，避免回车反复选中已被占用的 tag。
+        if [[ -n "$default" ]]; then sbd_entry_default '原生 tag' "$default" || return $?; default=''
+        else sbd_read_required '原生 tag' || return $?; fi
         sbd_tls_tag "$SBD_REPLY" || continue
         if jq -e --arg tag "$SBD_REPLY" --arg area "$area" 'if $area=="dns" then any(.dns.servers[]?;.tag==$tag) else any((.inbounds[]?,.outbounds[]?,.endpoints[]?);.tag==$tag) end' "$config" >/dev/null; then
             _error '此 tag 已占用，请重新填写该字段'
@@ -83,7 +97,7 @@ sbd_peer_tag_prompt() {
 }
 
 sbd_peer_wireguard_prompt() {
-    local tag="$1" address private mtu=1408 listen=0 peers='[]' count=1 i host port public psk allowed reserved keepalive peer value resolver
+    local address private mtu=1408 listen=0 peers='[]' count=1 i host port public psk allowed reserved keepalive peer value resolver
     sbd_peer_prefix_prompt address || return $?; address="$SBD_REPLY"
     sbd_peer_key_prompt '已有 WireGuard 私钥' || return $?; private="$SBD_REPLY"
     resolver=''
@@ -103,8 +117,8 @@ sbd_peer_wireguard_prompt() {
             '{address:$address,port:$port,public_key:$public,allowed_ips:$allowed,reserved:$reserved,persistent_keepalive_interval:$keepalive} + (if $psk!="" then {pre_shared_key:$psk} else {} end)') || return 1
         peers=$(jq --argjson peer "$peer" '. + [$peer]' <<< "$peers") || return 1
     done
-    value=$(jq -n --arg tag "$tag" --argjson address "$address" --arg private "$private" --argjson mtu "$mtu" --argjson listen "$listen" --argjson peers "$peers" --arg resolver "$resolver" \
-        '{type:"wireguard",tag:$tag,address:$address,private_key:$private,mtu:$mtu,listen_port:$listen,system:false,peers:$peers} + (if $resolver!="" then {domain_resolver:$resolver} else {} end)') || return 1
+    value=$(jq -n --argjson address "$address" --arg private "$private" --argjson mtu "$mtu" --argjson listen "$listen" --argjson peers "$peers" --arg resolver "$resolver" \
+        '{type:"wireguard",address:$address,private_key:$private,mtu:$mtu,listen_port:$listen,system:false,peers:$peers} + (if $resolver!="" then {domain_resolver:$resolver} else {} end)') || return 1
     SBD_PEER_VALUE="$value"
 }
 
@@ -119,39 +133,69 @@ sbd_peer_token_prompt() {
 }
 
 sbd_peer_cloudflare_prompt() {
-    local tag="$1" token protocol
+    local token protocol edge=0
     sbd_peer_token_prompt || return $?; token="$SBD_REPLY"
     sbd_ui_options '[1] QUIC（默认）' '[2] HTTP/2（仅 TCP）'
     sbd_entry_number_prompt '连接协议' 1 2 1 || return $?; protocol=quic; [[ "$SBD_REPLY" != 2 ]] || protocol=http2
-    SBD_PEER_VALUE=$(jq -n --arg tag "$tag" --arg token "$token" --arg protocol "$protocol" \
-        '{type:"cloudflared",tag:$tag,token:$token,protocol:$protocol}') || return 1
+    sbd_ui_options '[1] 自动（默认）' '[2] 仅 IPv4' '[3] 仅 IPv6'
+    sbd_entry_number_prompt 'Cloudflare 边缘 IP 协议栈' 1 3 1 || return $?
+    if [[ "$SBD_REPLY" = 2 ]]; then edge=4; elif [[ "$SBD_REPLY" = 3 ]]; then edge=6; fi
+    SBD_PEER_VALUE=$(jq -n --arg token "$token" --arg protocol "$protocol" --argjson edge "$edge" \
+        '{type:"cloudflared",token:$token,protocol:$protocol} + (if $edge!=0 then {edge_ip_version:$edge} else {} end)') || return 1
     sbd_info '域名与回源目标请在 Cloudflare 控制台设置'
 }
 
+sbd_peer_cloudflare_edit() {
+    local tag="$1" token value
+    sbd_peer_token_prompt || return $?
+    token="$SBD_REPLY"
+    value=$(jq -c --arg tag "$tag" --arg token "$token" \
+        '.inbounds[]? | select(.tag==$tag and .type=="cloudflared") | .token=$token' "$SBD_CONFIG") || { _error '读取现有隧道失败'; return 1; }
+    [[ -n "$value" ]] || { _error '未找到该 Cloudflare Tunnel'; return 1; }
+    sbd_policy_confirm || return $?
+    sbd_apply sbd_peer_change connectors replace "$tag" "$value" || return 1
+    sbd_success 'Cloudflare Tunnel token 已更新'
+}
+
 sbd_peer_list() {
+    local wireguard cloudflared
     [[ -f "$SBD_CONFIG" ]] || { _error '配置尚未创建'; return 1; }
-    jq '{wireguard:[.endpoints[]?|select(.type=="wireguard")|{type,tag,address,mtu}],cloudflared:[.inbounds[]?|select(.type=="cloudflared")|{type,tag,protocol,edge_ip_version}]}' "$SBD_CONFIG" || { _error '读取连接对象失败'; return 1; }
-    jq '{endpoints:[.policy.endpoints[]?.id],connectors:[.policy.connectors[]?.id]}' "$SBD_REGISTRY" || return 1
-    sbd_info '仅显示 WireGuard 与 Cloudflare Tunnel 配置，不显示密钥或 token'
+    wireguard=$(jq -r '.endpoints[]? | select(.type=="wireguard") |
+        "  \(.tag)\n    address: \(.address|join(","))\n    mtu: \(.mtu // 1408)\n    peers: \(.peers|length)\n    listen_port: \(.listen_port // 0)"' "$SBD_CONFIG") || { _error '读取连接对象失败'; return 1; }
+    cloudflared=$(jq -r '.inbounds[]? | select(.type=="cloudflared") |
+        "  \(.tag)\n    protocol: \(.protocol // "quic")\n    edge_ip_version: \(if (.edge_ip_version // 0)==0 then "auto" else (.edge_ip_version|tostring) end)\n    grace_period: \(.grace_period // "默认")\n    control_dialer.detour: \(.control_dialer.detour // "无")\n    tunnel_dialer.detour: \(.tunnel_dialer.detour // "无")\n    token: \(if (.token|length)>12 then (.token[0:6]+"…"+.token[-4:]) else "…" end)"' "$SBD_CONFIG") || { _error '读取连接对象失败'; return 1; }
+    printf 'WireGuard endpoints:\n%s\n' "${wireguard:-  （无）}"
+    printf 'Cloudflare Tunnel:\n%s\n' "${cloudflared:-  （无）}"
+    sbd_info '仅显示 WireGuard 与 Cloudflare Tunnel 配置，不显示密钥或完整 token'
 }
 
 sbd_peers_menu() {
-    local choice area tag value rc page values
+    local choice area base tag value rc page values
     while true; do
-        sbd_ui_menu '隧道管理' '[1] 查看隧道' '[2] 添加 WireGuard' '[3] 添加 Cloudflare Tunnel' '[4] 删除隧道' '[0] 返回'
+        sbd_ui_menu '隧道管理' '[1] 查看隧道' '[2] 添加 WireGuard' '[3] 添加 Cloudflare Tunnel' \
+            '[4] 修改 Cloudflare Tunnel（切换 token）' '[5] 删除隧道' '[0] 返回'
         sbd_config_hint
         page="$SBD_UI_PAGE"
-        sbd_read_integer '请选择' 0 4 || return 0; choice="$SBD_REPLY"
+        sbd_read_integer '请选择' 0 5 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
             1) sbd_peer_list || return 1; sbd_ui_pause "$page"; continue ;;
             2|3)
                 sbd_version >/dev/null || return 1
-                sbd_peer_tag_prompt || return $?; tag="$SBD_REPLY"
                 area=endpoints
-                if [[ "$choice" = 2 ]]; then sbd_peer_wireguard_prompt "$tag"; else area=connectors; sbd_peer_cloudflare_prompt "$tag"; fi
-                rc=$?; [[ "$rc" = 0 ]] || return "$rc"; value="$SBD_PEER_VALUE" ;;
+                if [[ "$choice" = 2 ]]; then base=wireguard; sbd_peer_wireguard_prompt
+                else base=cloudflared; area=connectors; sbd_peer_cloudflare_prompt; fi
+                rc=$?; [[ "$rc" = 0 ]] || return "$rc"; value="$SBD_PEER_VALUE"
+                # 连接参数填完后再定 tag：默认取类型名，已占用时自动加序号。
+                sbd_peer_tag_prompt "$(sbd_peer_tag_free "$base")" || return $?
+                tag="$SBD_REPLY"
+                value=$(jq --arg tag "$tag" '. + {tag:$tag}' <<< "$value") || return 1 ;;
             4)
+                values=$(jq -c '[.policy.connectors[]?|select(.expected.type=="cloudflared")|{id,area:"connectors"}]' "$SBD_REGISTRY") || return 1
+                sbd_policy_pick "$values" '选择 Cloudflare Tunnel' || return $?; tag="$SBD_REPLY"
+                sbd_peer_cloudflare_edit "$tag" || return 1
+                sbd_ui_pause "$page"; continue ;;
+            5)
                 values=$(jq -c '[.policy.endpoints[]?|select(.expected.type=="wireguard")|{id,area:"endpoints"}] + [.policy.connectors[]?|select(.expected.type=="cloudflared")|{id,area:"connectors"}]' "$SBD_REGISTRY") || return 1
                 sbd_policy_pick "$values" '选择隧道' || return $?; tag="$SBD_REPLY"
                 area=$(jq -er --arg tag "$tag" '.[]|select(.id==$tag)|.area' <<< "$values") || return 1

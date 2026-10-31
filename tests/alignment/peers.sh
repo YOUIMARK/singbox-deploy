@@ -144,7 +144,7 @@ wireguard_menu() {
     t_stopped
     local key input
     key=$(jq -r .private_key "$ROOT/tests/fixtures/endpoint-wireguard.json") || exit 1
-    input=$(printf '2\nmenu-wg\n10.0.0.2/24\n%s\npeer.example.com\n51820\n%s\n\n0.0.0.0/0,::/0\ny\n0\n' "$key" "$key") || exit 1
+    input=$(printf '2\n10.0.0.2/24\n%s\npeer.example.com\n51820\n%s\n\n0.0.0.0/0,::/0\nmenu-wg\ny\n0\n' "$key" "$key") || exit 1
     t_run 0 sbd_peers_menu <<< "$input"
     t_absent "$CASE_TMP/output" "$key"
     t_assert '首次无配置时可向导创建并选择原生默认 DNS' jq -e '.endpoints[0]|.tag=="menu-wg" and .address=="10.0.0.2/24" and .domain_resolver=="cloudflare"' "$SBD_CONFIG"
@@ -153,10 +153,29 @@ cloudflare_menu() {
     t_policy_seed
     local token input
     token=$(jq -r .token "$ROOT/tests/fixtures/inbound-cloudflared.json") || exit 1
-    input=$(printf '3\nmenu-cf\n%s\n2\ny\n0\n' "$token") || exit 1
+    input=$(printf '3\n%s\n2\n2\nmenu-cf\ny\n0\n' "$token") || exit 1
     t_run 0 sbd_peers_menu <<< "$input"
     t_absent "$CASE_TMP/output" "$token"
-    t_assert 'CF 菜单选择 HTTP2，其他连接参数使用原生默认' jq -e '.inbounds[0]|.tag=="menu-cf" and .protocol=="http2" and (has("control_dialer") or has("tunnel_dialer")|not)' "$SBD_CONFIG"
+    t_assert 'CF 菜单选择 HTTP2 与 IPv4 边缘' jq -e '.inbounds[0]|.tag=="menu-cf" and .protocol=="http2" and .edge_ip_version==4 and (has("control_dialer") or has("tunnel_dialer")|not)' "$SBD_CONFIG"
+}
+cloudflare_detail() {
+    t_policy_seed
+    t_peer_add cloudflared
+    t_run 0 sbd_peer_list
+    t_absent "$CASE_TMP/output" eyJhIjoi
+    t_contains "$CASE_TMP/output" 'cf-fixture'
+    t_contains "$CASE_TMP/output" 'edge_ip_version: auto'
+    t_contains "$CASE_TMP/output" 'token:'
+}
+cloudflare_token_edit() {
+    t_policy_seed
+    t_peer_add cloudflared
+    local new input
+    new='eyJhIjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAiLCJ0IjoiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwicyI6IkFBRUNBd1FGQmdjSUNRb0xEQTBPRHhBUkVoTVVGUllYR0JrYUd4d2RIaDg9In0='
+    input=$(printf '4\n1\n%s\ny\n0\n' "$new") || exit 1
+    t_run 0 sbd_peers_menu <<< "$input"
+    t_absent "$CASE_TMP/output" "$new"
+    t_assert 'token 已切换且保留协议与拨号对象' jq -e --arg t "$new" '.inbounds[0]|.token==$t and .protocol=="quic" and .control_dialer.domain_resolver=="system"' "$SBD_CONFIG"
 }
 t_case 'endpoint 原生入口/出口关联和删除保护' endpoint_routes
 t_case 'endpoint preferred_by 存活引用保护' preferred_routes
@@ -173,4 +192,6 @@ t_case 'endpoint 服务激活失败不假报成功' activation_failure
 t_case 'connector 管理不偷偷绑定 WS 或修改分享' ws_not_rebound
 t_case '首次配置 WireGuard 完整向导与秘密不回显' wireguard_menu
 t_case 'Cloudflared 完整向导与秘密不回显' cloudflare_menu
+t_case 'Cloudflared 详情脱敏显示' cloudflare_detail
+t_case 'Cloudflared 切换 token 保留其他字段' cloudflare_token_edit
 t_finish
