@@ -289,3 +289,7 @@ sbd_unavailable() {
     _error "$1 尚未实现（等待对应模块交付）"
     return 1
 }
+
+sbd_config_hint() {
+    printf '\n  高级设置请直接编辑: %s\n' "$SBD_CONFIG"
+}

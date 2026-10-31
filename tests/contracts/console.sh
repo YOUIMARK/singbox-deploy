@@ -6,7 +6,7 @@
 empty_menu() {
     t_fresh
     t_run 0 sbd_dispatch 17 <<< 0
-    t_contains "$CASE_TMP/output" '日志与监控'
+    t_contains "$CASE_TMP/output" '日志设置'
     t_run 0 sbd_dispatch 18 <<< 0
     t_contains "$CASE_TMP/output" '脚本维护'
     t_run 0 sbd_dispatch 19 <<< 0

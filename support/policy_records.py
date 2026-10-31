@@ -5,7 +5,6 @@ import copy
 import ipaddress
 import json
 import sys
-from urllib.parse import urlsplit
 
 
 AREAS = {
@@ -151,7 +150,7 @@ def adopt(config, registry, request):
         if len(matches) != 1:
             raise ValueError("配置对象缺失、重复或没有单个 tag")
         actual = matches[0]
-        if area == "endpoints" and actual.get("type") not in ("wireguard", "tailscale"):
+        if area == "endpoints" and actual.get("type") not in ("wireguard",):
             raise ValueError("此 endpoint 不在托管范围")
         if area == "connectors" and actual.get("type") != "cloudflared":
             raise ValueError("此 inbound 不是 Cloudflared")
@@ -260,12 +259,6 @@ def references(config):
             if section is dns:
                 require(rule.get("preferred_by"), servers, "DNS preferred_by")
 
-    for value in servers.values():
-        if value.get("type") == "tailscale":
-            endpoint = value.get("endpoint")
-            if endpoint not in endpoints or endpoints[endpoint].get("type") != "tailscale":
-                raise ValueError("Tailscale DNS 仍引用不存在或类型错误的 endpoint")
-
     # 检查向导及导入所使用的原生拨号引用，避免上游域名 bootstrap 自引用。
     graph = {}
     for kind, values in (("dns", servers), ("out", targets)):
@@ -280,15 +273,11 @@ def references(config):
                 require(value.get("outbounds"), targets, "出站组成员")
                 require(value.get("default"), targets, "出站组默认成员")
                 edges.update("out:" + member for member in tags(value.get("outbounds")))
-            if kind == "dns" and value.get("type") == "tailscale":
-                edges.add("out:" + value["endpoint"])
             resolve = resolver_tag(value.get("domain_resolver"))
             require(resolve, servers, "domain_resolver")
             addresses = [value.get("server")]
             if value.get("type") == "wireguard":
                 addresses.extend(peer.get("address") for peer in value.get("peers", []))
-            if value.get("type") == "tailscale":
-                addresses.append(urlsplit(value.get("control_url") or "https://controlplane.tailscale.com").hostname)
             if any(is_domain(address) for address in addresses) and not detour:
                 resolve = resolve or default_resolver or dns.get("final")
                 if kind == "dns" and not resolve:

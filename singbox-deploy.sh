@@ -36,7 +36,7 @@ sbd_bootstrap() {
     [[ "$load_rc" = 0 ]] || return 1
     [[ "$#" -le 1 ]] || { _error '一次只接受一个入口参数'; return 1; }
     case "${1:-}" in
-        --help) printf '用法: sd [--help | --version]\n无参数进入菜单；提供节点、规则/DNS、Endpoints、观测与维护管理。\n'; return 0 ;;
+        --help) printf '用法: sd [--help | --version]\n无参数进入菜单；提供节点、DNS、分流、证书、隧道与服务管理。\n'; return 0 ;;
         --version) cat -- "$app/VERSION"; return $? ;;
     esac
     [[ "$#" = 0 ]] || { _error "未知参数: $*"; return 1; }

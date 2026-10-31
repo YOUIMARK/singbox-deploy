@@ -9,9 +9,98 @@
       {
         "type": "local",
         "tag": "system"
+      },
+      {
+        "type": "https",
+        "tag": "cloudflare",
+        "server": "cloudflare-dns.com",
+        "server_port": 443,
+        "path": "/dns-query",
+        "tls": {
+          "enabled": true,
+          "server_name": "cloudflare-dns.com"
+        },
+        "domain_resolver": "system"
+      },
+      {
+        "type": "https",
+        "tag": "quad9",
+        "server": "dns.quad9.net",
+        "server_port": 443,
+        "path": "/dns-query",
+        "tls": {
+          "enabled": true,
+          "server_name": "dns.quad9.net"
+        },
+        "domain_resolver": "system"
+      },
+      {
+        "type": "https",
+        "tag": "controld",
+        "server": "freedns.controld.com",
+        "server_port": 443,
+        "path": "/p0",
+        "tls": {
+          "enabled": true,
+          "server_name": "freedns.controld.com"
+        },
+        "domain_resolver": "system"
       }
     ],
-    "final": "system"
+    "final": "cloudflare",
+    "rules": [
+      {
+        "action": "evaluate",
+        "server": "cloudflare",
+        "tag": "sd.dns.cloudflare"
+      },
+      {
+        "action": "evaluate",
+        "server": "quad9",
+        "tag": "sd.dns.quad9"
+      },
+      {
+        "action": "evaluate",
+        "server": "controld",
+        "tag": "sd.dns.controld"
+      },
+      {
+        "action": "respond",
+        "match_response": "sd.dns.cloudflare",
+        "response_rcode": "NOERROR",
+        "race": true
+      },
+      {
+        "action": "respond",
+        "match_response": "sd.dns.quad9",
+        "response_rcode": "NOERROR",
+        "race": true
+      },
+      {
+        "action": "respond",
+        "match_response": "sd.dns.controld",
+        "response_rcode": "NOERROR",
+        "race": true
+      },
+      {
+        "action": "respond",
+        "match_response": "sd.dns.cloudflare",
+        "response_rcode": "NXDOMAIN",
+        "race": true
+      },
+      {
+        "action": "respond",
+        "match_response": "sd.dns.quad9",
+        "response_rcode": "NXDOMAIN",
+        "race": true
+      },
+      {
+        "action": "respond",
+        "match_response": "sd.dns.controld",
+        "response_rcode": "NXDOMAIN",
+        "race": true
+      }
+    ]
   },
   "ntp": {
     "enabled": true,
@@ -29,6 +118,11 @@
   ],
   "route": {
     "final": "direct",
-    "default_domain_resolver": "system"
+    "default_domain_resolver": "cloudflare",
+    "rules": [
+      {
+        "action": "resolve"
+      }
+    ]
   }
 }

@@ -6,7 +6,6 @@ cancel_contract() {
     t_fresh
     t_run 0 sbd_rules_menu <<< 0
     t_run 0 sbd_rules_menu < /dev/null
-    t_run 2 sbd_rule_set_prompt <<< $'1\ndomains\n1'
     t_assert '取消不创建配置' test ! -e "$SBD_CONFIG"
     t_assert '取消不创建规则材料' test ! -e "$SBD_DATA/rule-sets"
 }
@@ -56,18 +55,6 @@ route_contract() {
     t_run 0 sbd_apply sbd_policy_rule route_rules delete "$id"
     t_assert '规则和关联一起删除' jq -e '(.route.rules // [])==[]' "$SBD_CONFIG"
 }
-json_fields_contract() {
-    t_policy_seed
-    sbd_policy_json_prompt > "$CASE_TMP/prompt" 2>&1 <<< "$ROOT/tests/fixtures/route-policy.json" || exit 1
-    t_assert '原生 JSON 文件读取真实对象' jq -e '.action=="route" and .outbound=="direct"' <<< "$SBD_REPLY"
-    printf '{}\n{}\n' > "$CASE_TMP/multiple.json" || exit 1
-    t_run 2 sbd_policy_json_prompt <<< "$CASE_TMP/multiple.json"
-    t_run 2 sbd_policy_json_prompt < /dev/null
-    t_run 1 sbd_rule_url ftp://example.com/rules.srs
-    t_run 0 sbd_rule_url 'https://example.com/rules.srs?version=1'
-    sbd_policy_match_prompt > "$CASE_TMP/prompt" 2>&1 <<< $'4\nbad\n192.0.2.1/24' || exit 1
-    t_assert 'CIDR 错误只重问该字段' jq -e '.ip_cidr==["192.0.2.0/24"]' <<< "$SBD_MATCH"
-}
 inline_contract() {
     t_policy_seed
     t_run 0 sbd_apply sbd_rule_set add inline-domains '{"tag":"inline-domains","rules":[{"domain_suffix":"example.com"}]}'
@@ -82,6 +69,5 @@ t_case '本地源版本 1 经核心编译和原生配置校验' local_contract
 t_case '版本 5 IP 规则编译后作为 SRS 导入' binary_contract
 t_case '坏 JSON/SRS 真实失败与材料回收' invalid_contract
 t_case '路由规则 CRUD、稳定关联和无私有配置字段' route_contract
-t_case '高级 JSON、URL 与匹配字段输入契约' json_fields_contract
 t_case '省略 type 的原生 inline 规则集引用与删除' inline_contract
 t_finish

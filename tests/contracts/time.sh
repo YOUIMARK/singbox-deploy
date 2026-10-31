@@ -8,7 +8,7 @@ cancel_contract() {
     t_fresh
     t_run 0 sbd_time_menu <<< 0
     t_run 0 sbd_time_menu < /dev/null
-    t_run 0 sbd_observe_menu <<< $'10\n0\n0'
+    t_run 0 sbd_observe_menu <<< $'5\n0\n0'
     t_run 2 sbd_time_prompt <<< ''
     t_run 2 sbd_time_prompt <<< $'\nn'
     t_assert 'EOF/拒绝不初始化配置' test ! -e "$SBD_CONFIG"
@@ -27,10 +27,11 @@ default_contract() {
 }
 field_contract() {
     t_policy_seed
-    sbd_time_interval_prompt 30m > "$CASE_TMP/prompt" 2>&1 <<< $'bad\n0s\n-1m\n10m' || exit 1
-    t_assert '间隔由核心解析、错误只重问当前字段' test "$SBD_REPLY" = 10m0s
-    t_run 0 sbd_time_prompt advanced <<< $'bad/path\n127.0.0.1\nbad\n00123\nbad\n5m\ny'
-    t_assert 'IP 源不新增 bootstrap，已有 resolver 原样保留' jq -e '.ntp.server=="127.0.0.1" and .ntp.server_port==123 and .ntp.interval=="5m0s" and .ntp.domain_resolver=="system" and (.dns.servers|length==1)' "$SBD_CONFIG"
+    t_run 1 sbd_time_interval bad
+    t_run 1 sbd_time_interval 0s
+    t_run 0 sbd_time_interval 10m
+    t_run 0 sbd_time_prompt <<< $'bad/path\n127.0.0.1\ny'
+    t_assert 'IP 源不新增 bootstrap，已有 resolver 原样保留' jq -e '.ntp.server=="127.0.0.1" and .ntp.server_port==123 and .ntp.interval=="30m0s" and .ntp.domain_resolver=="system" and (.dns.servers|length==1)' "$SBD_CONFIG"
 }
 disabled_contract() {
     t_policy_seed

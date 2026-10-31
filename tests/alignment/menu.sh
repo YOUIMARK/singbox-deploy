@@ -37,7 +37,7 @@ assert [int(n) for n in re.findall(r'\[(\d+)\]', text)] == list(range(1, 21)) + 
 labels = ['添加节点', '查看节点', '修改节点', '删除节点', '节点链接',
           'DNS 设置', '分流设置', '证书管理', '隧道管理',
           '重启服务', '停止服务', '查看状态', '查看日志', '启用自启', '关闭自启',
-          '检查配置', '日志与监控', '脚本维护', 'sing-box 核心管理', '卸载脚本']
+          '检查配置', '日志设置', '脚本维护', 'sing-box 核心管理', '卸载脚本']
 for number, label in enumerate(labels, 1):
     assert f'[{number}] {label}' in text
 for old in ('部署状态', '独立 DNS', '分享与客户端资料', '维护与显式协调', '原生观测'):
@@ -116,7 +116,7 @@ numbered_navigation() {
 7|分流设置
 8|证书管理
 9|隧道管理
-17|日志与监控
+17|日志设置
 18|脚本维护
 19|sing-box 核心管理
 MENUS

@@ -20,5 +20,4 @@ presets/base.json
 support/validate_schema.py
 support/policy_records.py
 support/dns_settings.py
-support/observe_api.py
 support/uninstall_plan.py

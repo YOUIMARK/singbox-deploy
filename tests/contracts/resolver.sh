@@ -7,7 +7,6 @@ cancel_contract() {
     t_fresh
     t_run 0 sbd_resolver_menu <<< 0
     t_run 0 sbd_resolver_menu < /dev/null
-    t_run 2 sbd_resolver_server_prompt <<< $'2\nupstream\n192.0.2.53'
     t_assert 'EOF 不创建配置' test ! -e "$SBD_CONFIG"
 }
 typed_contract() {
@@ -54,44 +53,6 @@ race_contract() {
     t_run 0 sbd_apply sbd_policy_edit "$request"
     t_assert '竞速组完整删除' jq -e '(.dns.rules // [])==[]' "$SBD_CONFIG"
 }
-server_prompt_contract() {
-    t_policy_seed
-    sbd_resolver_server_prompt > "$CASE_TMP/prompt" 2>&1 <<< $'5\ndoh\nbad/path\ndns.example.com\n00443\n1\n\n\n' || exit 1
-    t_assert '上游域名错误只重问，SNI 自动沿用地址且 DoH/端口默认正常' jq -e '.type=="https" and .tag=="doh" and .server=="dns.example.com" and .server_port==443 and .domain_resolver=="system" and .tls.server_name=="dns.example.com" and .path=="/dns-query"' <<< "$SBD_POLICY_VALUE"
-    t_absent "$CASE_TMP/prompt" 'TLS SNI'
-    t_run 0 sbd_apply sbd_resolver_server add doh "$SBD_POLICY_VALUE"
-}
-tls_name_prompt_contract() {
-    t_policy_seed
-    local choice type port host
-    for host in cloudflare-dns.com 1.1.1.1; do
-        for choice in 4 5 6; do
-            case "$choice" in 4) type=tls; port=853 ;; 5) type=https; port=443 ;; 6) type=quic; port=853 ;; esac
-            # 地址/标准端口；只有域名需要 bootstrap，只有 HTTPS 需要 path。
-            {
-                printf '%s\ntest-%s\n%s\n\n' "$choice" "$type" "$host"
-                [[ "$host" != cloudflare-dns.com ]] || printf '1\n'
-                [[ "$type" != https ]] || printf '\n'
-                printf '2\n1\n'
-            } > "$CASE_TMP/input"
-            t_run 0 sbd_resolver_server_prompt < "$CASE_TMP/input"
-            t_assert 'TLS/DoH/QUIC 自动沿用服务器地址、保留系统 CA 和后续选择' jq -e --arg host "$host" --arg type "$type" --argjson port "$port" \
-                '.type==$type and .server==$host and .server_port==$port and .tls=={enabled:true,server_name:$host} and .detour=="direct" and (has("insecure")|not)' <<< "$SBD_POLICY_VALUE"
-            t_absent "$CASE_TMP/output" 'TLS SNI'
-            t_run 0 sbd_apply sbd_resolver_server add "test-$type" "$SBD_POLICY_VALUE"
-            t_run 0 sbd_apply sbd_resolver_server delete "test-$type"
-        done
-    done
-    t_run 2 sbd_resolver_server_prompt <<< $'4\ncancelled\ncloudflare-dns.com\n\n1'
-}
-custom_tls_json_contract() {
-    t_policy_seed
-    printf '%s\n' '{"type":"https","tag":"custom-doh","server":"1.1.1.1","tls":{"enabled":true,"server_name":"cloudflare-dns.com"},"path":"/dns-query"}' > "$CASE_TMP/custom.json"
-    t_run 0 sbd_resolver_server_prompt <<< "$(printf '7\n%s\n' "$CASE_TMP/custom.json")"
-    t_assert '高级 JSON 仍可单独设置与连接地址不同的证书名' jq -e '.server=="1.1.1.1" and .tls.server_name=="cloudflare-dns.com"' <<< "$SBD_POLICY_VALUE"
-    t_run 0 sbd_apply sbd_resolver_server add custom-doh "$SBD_POLICY_VALUE"
-    t_assert '实际配置保留自定义证书名且不关闭校验' jq -e '.dns.servers[]|select(.tag=="custom-doh")|.server=="1.1.1.1" and .tls.server_name=="cloudflare-dns.com" and (.tls.insecure // false)==false' "$SBD_CONFIG"
-}
 bootstrap_detour_cycle() {
     t_policy_seed
     t_policy_udp
@@ -107,8 +68,5 @@ t_case '六种新格式 DNS 上游真实 Schema/check' typed_contract
 t_case '域名 bootstrap、默认策略与循环拒绝' bootstrap_contract
 t_case 'DNS 查询分流和响应 IP 原生规则' dns_rules_contract
 t_case '原生 DNS 竞速组与整体删除' race_contract
-t_case 'DoH 字段重问和明确 bootstrap 向导' server_prompt_contract
-t_case '加密 DNS 自动沿用地址作证书校验名且输入不串位' tls_name_prompt_contract
-t_case '原生 JSON 保留独立证书名与系统 CA 校验' custom_tls_json_contract
 t_case 'DNS 经出站拨号的 bootstrap 环路拒绝提交' bootstrap_detour_cycle
 t_finish

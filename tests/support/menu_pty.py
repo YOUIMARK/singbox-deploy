@@ -161,7 +161,7 @@ try:
         lines = [line for line in page.splitlines() if re.search(r'\[\d+\]', line)]
         assert [int(n) for n in re.findall(r'\[(\d+)\]', page)] == list(range(1, 10)) + [0], page
         assert all(re.match(r'^  \[\d+\] ', line) and len(re.findall(r'\[\d+\]', line)) == 1 for line in lines), lines
-        assert '[9] 高级设置' in page and '当前 DNS:' in page, page
+        assert '[9] 恢复默认 DoH 竞速' in page and '当前 DNS:' in page, page
         assert '\x1b[31m未创建配置\x1b[0m' in text()[start:], text()[start:]
         assert '\x1b[31m未设置\x1b[0m' in text()[start:], text()[start:]
         assert 'JSON 替换托管上游' not in page and 'TLS SNI' not in page, page
@@ -217,7 +217,7 @@ try:
         send('17\n')
         wait_for('请选择', start)
         start = len(text())
-        send('10\n')
+        send('5\n')
         wait_for('请选择', start)
         start = len(text())
         send('2\n')
@@ -232,11 +232,11 @@ try:
         start = len(text())
         send('\n')
         wait_for('请选择', start)
-        assert '高级 NTP 设置' in text()[start:]
+        assert '高级 NTP 设置' not in text()[start:]
         start = len(text())
         send('0\n')
         wait_for('请选择', start)
-        assert '日志与监控' in text()[start:] and '按回车' not in text()[start:]
+        assert '日志设置' in text()[start:] and '按回车' not in text()[start:]
         start = len(text())
         send('0\n')
         wait_for('请选择', start)
@@ -258,16 +258,17 @@ try:
         send('\n')
         wait_for('请选择', start)
         page = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()[start:])
-        assert '当前 DNS: https://1.1.1.1/dns-query' in page, page
+        assert '当前 DNS: https://cloudflare-dns.com/dns-query' in page, page
         assert 'TLS SNI' not in page and 'JSON 替换' not in page, page
         start = len(text())
-        send('9\n')
-        wait_for('请选择', start)
-        assert 'DNS 高级设置' in text()[start:] and 'JSON 替换' in text()[start:]
+        send('9\ny\n')
+        wait_for('DNS 设置已更新', start)
+        wait_for('按回车返回菜单', start)
         start = len(text())
-        send('0\n')
+        send('\n')
         wait_for('请选择', start)
-        assert '高级设置' in text()[start:] and '按回车' not in text()[start:]
+        page = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()[start:])
+        assert '上游竞速: 开启' in page and 'JSON 替换' not in page, page
         start = len(text())
         send('0\n')
         wait_for('请选择', start)

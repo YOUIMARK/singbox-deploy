@@ -1,18 +1,8 @@
 #!/usr/bin/env bash
 
 sbd_observe_change() {
-    local stage="$1" action="$2" value="${3:-}" content secret port
+    local stage="$1" action="$2" value="${3:-}" content
     case "$action" in
-        api)
-            port=$(sbd_integer "$(jq -r '.port' <<< "$value")" 1 65535) || { _error 'API 端口无效'; return 1; }
-            secret=$(jq -er '.secret|select(type=="string" and length>0)' <<< "$value") || { _error 'API 必须设置 secret'; return 1; }
-            content=$(jq --arg addr "127.0.0.1:$port" --arg secret "$secret" '.experimental.clash_api=((.experimental.clash_api // {}) + {external_controller:$addr,secret:$secret})' "$stage/config.json") ;;
-        api_off) content=$(jq 'if .experimental.clash_api!=null then .experimental.clash_api.external_controller="" else . end' "$stage/config.json") ;;
-        cache_on|cache_off)
-            content=$(jq --arg path "$SBD_DATA/cache.db" --arg action "$action" '.experimental.cache_file=((.experimental.cache_file // {path:$path}) + {enabled:($action=="cache_on")})' "$stage/config.json") ;;
-        dns_cache)
-            case "$value" in true|false) ;; *) _error 'DNS 缓存持久化选项无效'; return 1 ;; esac
-            content=$(jq --arg path "$SBD_DATA/cache.db" --argjson enabled "$value" '.experimental.cache_file=((.experimental.cache_file // {path:$path}) + {store_dns:$enabled})' "$stage/config.json") ;;
         level)
             case "$value" in trace|debug|info|warn|error|fatal|panic) ;; *) _error '未知原生日志级别'; return 1 ;; esac
             content=$(jq --arg level "$value" '.log.level=$level | .log.disabled=false' "$stage/config.json") ;;
@@ -21,11 +11,6 @@ sbd_observe_change() {
         *) _error '未知观测设置操作'; return 1 ;;
     esac || { _error '构造观测设置失败'; return 1; }
     sbd_record_write "$stage/config.json" "$content"
-}
-
-sbd_observe_query() {
-    case "$1" in connections|traffic) ;; *) _error '仅提供原生连接/流量查询'; return 1 ;; esac
-    python3 "$SBD_APP/support/observe_api.py" "$SBD_CONFIG" "$1" || { _error '原生 API 查询失败；不以磁盘配置冒充运行事实'; return 1; }
 }
 
 sbd_observe_logs() {
@@ -77,32 +62,18 @@ sbd_time_change() {
     sbd_policy_finish "$stage"
 }
 
-sbd_time_interval_prompt() {
-    local default="$1" value
-    while true; do
-        sbd_entry_default '原生 NTP 同步间隔' "$default" || return $?; value="$SBD_REPLY"
-        if value=$(sbd_time_interval "$value"); then SBD_REPLY="$value"; return 0; fi
-        _error '请输入核心能解析的大于 0 的 duration'
-    done
-}
-
 sbd_time_prompt() {
-    local mode="${1:-simple}" config="$SBD_CONFIG" defaults server port interval resolver value
+    local config="$SBD_CONFIG" defaults server port interval resolver value
     [[ -f "$config" ]] || config="$SBD_APP/presets/base.json"
     defaults=$(jq -c '.ntp // {}' "$config") || { _error '读取已有 NTP 设置失败'; return 1; }
     sbd_entry_host_prompt 'NTP 时间源（不含 scheme/端口）' "$(jq -r '.server // "time.cloudflare.com"' <<< "$defaults")" || return $?; server="$SBD_REPLY"
     port=$(jq -r '.server_port // 123' <<< "$defaults") && interval=$(jq -r '.interval // "30m"' <<< "$defaults") || return 1
-    if [[ "$mode" = advanced ]]; then
-        sbd_entry_number_prompt 'NTP UDP 端口' 1 65535 "$port" || return $?; port="$SBD_REPLY"
-        sbd_time_interval_prompt "$interval" || return $?; interval="$SBD_REPLY"
-    fi
     value=$(jq -n --arg server "$server" --argjson port "$port" --arg interval "$interval" '{server:$server,server_port:$port,interval:$interval}') || return 1
     if [[ "$(sbd_tls_identity "$server")" = DNS:* ]] && ! jq -e '(.detour // "")!=""' <<< "$defaults" >/dev/null; then
         resolver=$(jq -c '.domain_resolver // null' <<< "$defaults") || return 1
-        if [[ "$mode" = advanced || "$resolver" = null ]]; then
+        if [[ "$resolver" = null ]]; then
             sbd_info '时间源域名解析器'
-            if [[ "$mode" = advanced ]]; then sbd_policy_target dns || return $?
-            else sbd_policy_target dns auto || return $?; fi
+            sbd_policy_target dns default || return $?
             resolver=$(jq -c --arg server "$SBD_REPLY" '.domain_resolver | if type=="object" then .server=$server else $server end' <<< "$defaults") || return 1
         fi
         value=$(jq --argjson resolver "$resolver" '.domain_resolver=$resolver' <<< "$value") || return 1
@@ -141,9 +112,9 @@ sbd_time_logs() {
 sbd_time_menu() {
     local choice page
     while true; do
-        sbd_ui_menu '时间诊断与原生 NTP' '[1] 本地只读诊断（不查询网络）' '[2] 启用/修改核心内部 NTP' '[3] 禁用核心 NTP' '[4] 最近 NTP/时间戳日志' '[5] 高级 NTP 设置' '[0] 返回'
+        sbd_ui_menu '时间诊断与原生 NTP' '[1] 本地只读诊断（不查询网络）' '[2] 启用/修改核心内部 NTP' '[3] 禁用核心 NTP' '[4] 最近 NTP/时间戳日志' '[0] 返回'
         page="$SBD_UI_PAGE"
-        sbd_read_integer '请选择' 0 5 || return 0; choice="$SBD_REPLY"
+        sbd_read_integer '请选择' 0 4 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
             1) sbd_time_diagnose || return 1 ;;
@@ -154,41 +125,32 @@ sbd_time_menu() {
                 sbd_apply sbd_time_change disable || return 1
                 sbd_success '核心 NTP 已禁用；不代表系统时间准确' ;;
             4) sbd_time_logs || return 1 ;;
-            5) sbd_time_prompt advanced; case "$?" in 0|2) ;; *) return 1 ;; esac ;;
         esac
         sbd_ui_pause "$page"
     done
 }
 
 sbd_observe_menu() {
-    local choice action value port secret page
+    local choice value action page
     while true; do
-        sbd_ui_menu '日志与监控' '[1] 查看设置（隐藏 secret）' '[2] 启用/修改 loopback Clash API' '[3] 禁用 API' \
-            '[4] 当前连接' '[5] 一次流量采样' '[6] 最近 100 行日志' '[7] 日志级别/关闭/回到服务日志' '[8] 启用/禁用 cache_file' '[9] DNS 缓存持久化开关' '[10] 时间诊断与原生 NTP' '[0] 返回'
+        sbd_ui_menu '日志设置' '[1] 查看日志' '[2] 修改日志级别' '[3] 关闭日志' '[4] 恢复服务日志' '[5] 时间设置' '[0] 返回'
+        sbd_config_hint
         page="$SBD_UI_PAGE"
-        sbd_read_integer '请选择' 0 10 || return 0; choice="$SBD_REPLY"
+        sbd_read_integer '请选择' 0 5 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
-            1) jq '{log,experimental:{clash_api:(.experimental.clash_api // {}|del(.secret)),cache_file:.experimental.cache_file}}' "$SBD_CONFIG" || { _error '读取观测配置失败'; return 1; }; sbd_ui_pause "$page"; continue ;;
-            4|5) action=connections; [[ "$choice" != 5 ]] || action=traffic; sbd_observe_query "$action" || return 1; sbd_ui_pause "$page"; continue ;;
-            6) sbd_observe_logs || return 1; sbd_ui_pause "$page"; continue ;;
-            10) sbd_time_menu; case "$?" in 0|2) ;; *) return 1 ;; esac; continue ;;
+            1) sbd_observe_logs || return 1; sbd_ui_pause "$page"; continue ;;
             2)
-                action=api
-                sbd_entry_number_prompt 'API loopback 端口' 1 65535 9090 || return $?; port="$SBD_REPLY"
-                sbd_entry_password_prompt 'API secret' || return $?; secret="$SBD_REPLY"
-                value=$(jq -n --argjson port "$port" --arg secret "$secret" '{port:$port,secret:$secret}') || return 1 ;;
-            3) action=api_off; value='' ;;
-            7)
-                sbd_policy_pick '["warn","info","debug","trace","error","fatal","panic","disabled","service"]' '日志设置（service 移除 log.output）' || return $?; value="$SBD_REPLY"
-                action=level; case "$value" in disabled) action=log_off ;; service) action=log_service ;; esac ;;
-            8)
-                sbd_policy_pick '["cache_on","cache_off"]' '缓存开关（不删除 DB）' || return $?; action="$SBD_REPLY"; value='' ;;
-            9) action=dns_cache; sbd_policy_pick '["true","false"]' 'store_dns（不自动启用 cache_file）' || return $?; value="$SBD_REPLY" ;;
+                sbd_ui_options '[1] 警告（默认）' '[2] 信息' '[3] 调试' '[4] 错误' '[0] 返回'
+                sbd_read_integer '日志级别' 0 4 || return 0
+                case "$SBD_REPLY" in 0) continue ;; 1) value=warn ;; 2) value=info ;; 3) value=debug ;; 4) value=error ;; esac
+                action=level ;;
+            3) action=log_off; value='' ;;
+            4) action=log_service; value='' ;;
+            5) sbd_time_menu; case "$?" in 0|2) ;; *) return 1 ;; esac; continue ;;
         esac
         sbd_policy_confirm || return $?
         sbd_apply sbd_observe_change "$action" "$value" || return 1
-        sbd_success '观测配置已提交；未声称 API 可访问或缓存已写入，不删除 DB'
-        sbd_ui_pause "$page"
+        sbd_success '日志设置已保存'; sbd_ui_pause "$page"
     done
 }

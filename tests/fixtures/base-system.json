@@ -1,0 +1,34 @@
+{
+  "$schema": "./schema.json",
+  "log": {
+    "level": "warn",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "local",
+        "tag": "system"
+      }
+    ],
+    "final": "system"
+  },
+  "ntp": {
+    "enabled": true,
+    "server": "time.cloudflare.com",
+    "server_port": 123,
+    "interval": "30m",
+    "write_to_system": false,
+    "domain_resolver": "system"
+  },
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "final": "direct",
+    "default_domain_resolver": "system"
+  }
+}

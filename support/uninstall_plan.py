@@ -41,11 +41,6 @@ def build(root, mode):
             path = rec.get("directory")
             if path and Path(path).parent == root / "data/rule-sets":
                 trees.add(path)
-        managed_endpoints = {r["id"] for r in registry.get("policy", {}).get("endpoints", [])}
-        for ep in config.get("endpoints", []):
-            path = ep.get("state_directory", "")
-            if ep.get("tag") in managed_endpoints and ep.get("type") == "tailscale" and path and Path(path).parent == root / "data/tailscale":
-                trees.add(path)
         managed_providers = set(registry.get("tls", {}).get("providers", []))
         for provider in config.get("certificate_providers", []):
             path = provider.get("data_directory", "")

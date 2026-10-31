@@ -232,22 +232,6 @@ kill_recovery() {
     t_unchanged
     t_assert '强杀恢复回收新规则材料' test -z "$(find "$SBD_DATA/rule-sets" -mindepth 1 -maxdepth 1 -type d)"
 }
-menus_contract() {
-    t_policy_seed
-    t_run 0 sbd_rules_menu <<< "$(printf '2\n1\nmenu-set\n1\n%s\ny\n0\n' "$ROOT/tests/fixtures/rule-set-domains.json")"
-    t_run 0 sbd_resolver_advanced_menu <<< $'2\n2\nmenu-dns\n192.0.2.53\n\n\ny\n0'
-    t_run 0 sbd_policy_rules_menu route_rules <<< $'2\n2\nexample.com\n1\n1\n\ny\n0'
-    t_run 0 sbd_policy_rules_menu dns_rules <<< $'2\n2\nexample.com\n1\n2\n\ny\n0'
-    t_run 0 sbd_resolver_advanced_menu <<< $'7\n8\n2\n1\n2\n\ny\n0'
-    t_assert '编号菜单提交了真实 DNS 竞速和路由' jq -e '(.route.rules|length==1) and (.dns.rules|length==5) and .dns.rules[0].server=="menu-dns"' "$SBD_CONFIG"
-}
-advanced_menu() {
-    t_policy_seed
-    t_run 0 sbd_policy_rules_menu route_rules <<< "$(printf '3\n%s\n\ny\n0\n' "$ROOT/tests/fixtures/route-policy.json")"
-    t_assert '高级原生文件经真实菜单提交' jq -e '.route.rules[0].outbound=="direct"' "$SBD_CONFIG"
-    sbd_policy_duration_prompt > "$CASE_TMP/prompt" 2>&1 <<< $'not-a-duration\n12h' || exit 1
-    t_assert 'duration 由核心解析，错误只重问该字段' test "$SBD_REPLY" = 12h
-}
 native_actions() {
     t_policy_seed
     local value
@@ -285,18 +269,6 @@ remote_activation_failure() {
     t_unchanged
     t_absent "$CASE_TMP/output" '[成功]'
 }
-wizard_replace() {
-    t_policy_seed
-    t_policy_udp
-    t_run 0 sbd_resolver_advanced_menu <<< $'9\n1\n3\n192.0.2.54\n\n\ny\n0'
-    t_assert '上游向导修改保留 tag' jq -e '.dns.servers[1]|.tag=="upstream" and .type=="tcp" and .server=="192.0.2.54"' "$SBD_CONFIG"
-    t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"before.example","action":"route","outbound":"direct"}'
-    local id
-    id=$(t_policy_id route_rules) || exit 1
-    t_run 0 sbd_policy_rules_menu route_rules <<< $'7\n1\n2\nafter.example\n2\ny\n0'
-    t_assert '规则向导替换保留管理 ID' test "$(t_policy_id route_rules)" = "$id"
-    t_assert '规则向导替换为选定原生动作' jq -e '.route.rules[0]|.domain_suffix=="after.example" and .action=="reject"' "$SBD_CONFIG"
-}
 t_case '本地更新独立路径、最近恢复源和安全淘汰' local_update
 t_case '坏源更新保留活跃文件且不回滚外部文件' bad_update
 t_case '人工 URL 添加/更新真实下载与失败回滚' local_download
@@ -315,10 +287,7 @@ t_case 'DNS inbound 引用也阻止删除托管节点' node_dns_reference
 t_case '运行中本地规则集新路径变更按需重启' running_contract
 t_case '规则集 state 写失败恢复配置和新材料' state_failure
 t_case '规则集发布后 SIGKILL 可恢复全部旧事实' kill_recovery
-t_case '规则/DNS/竞速完整编号菜单真实提交' menus_contract
-t_case '高级 JSON 菜单与核心 duration 字段重问' advanced_menu
 t_case '原生路由 route/reject/sniff/resolve/hijack-dns' native_actions
 t_case '旧规则材料回收失败可重试而不回退已接受事实' retirement_failure
 t_case 'remote 激活失败不假报成功并恢复完整旧版本' remote_activation_failure
-t_case '常用向导替换上游和规则保留原生/管理标识' wizard_replace
 t_finish

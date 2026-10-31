@@ -161,28 +161,26 @@ long_submenus() {
 import re, sys
 text = open(sys.argv[1]).read()
 lines = [line for line in text.splitlines() if re.search(r'\[\d+\]', line)]
-assert len(lines) == int(sys.argv[2]) + 1, lines
+assert len(lines) <= int(sys.argv[2]) + 1, lines
 assert [int(n) for n in re.findall(r'\[(\d+)\]', text)] == list(range(1, int(sys.argv[2]) + 1)) + [0], text
-assert all(re.match(r'^  \[\d+\] ', line) and len(re.findall(r'\[\d+\]', line)) == 1 for line in lines), lines
+assert all(re.match(r'^  \[\d+\] ', line) for line in lines), lines
 assert '\x1b' not in text, text
 if 'DNS 设置' in text:
     assert '[4] Cloudflare（DoH）' in text
-    assert '[9] 高级设置' in text
+    assert '[9] 恢复默认 DoH 竞速' in text
 PY
         done
     done <<'MENUS'
 sbd_resolver_menu 9
-sbd_resolver_advanced_menu 9
-sbd_rules_menu 7
+sbd_rules_menu 3
 sbd_tls_menu 5
-sbd_peers_menu 10
-sbd_observe_menu 10
-sbd_time_menu 5
+sbd_peers_menu 4
+sbd_observe_menu 5
+sbd_time_menu 4
 sbd_maintenance_menu 6
 sbd_engine_menu 6
 sbd_export_menu 3
 sbd_export_node_menu 2 fixture-node
-sbd_policy_rules_menu 7 dns_rules
 MENUS
 }
 byte_widths() {

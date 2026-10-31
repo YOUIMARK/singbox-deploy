@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 服务边界窄桩只操作 CASE_TMP 内的文件，不触碰宿主 unit/runlevel。
-# shellcheck disable=SC2329,SC2016
+# shellcheck disable=SC2329,SC2016,SC2153
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/harness.sh"
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/peers.sh"
 
@@ -33,7 +33,10 @@ uninstall_keep() {
 }
 uninstall_purge() {
     u_seed
-    t_peer_add tailscale
+    local value
+    value=$(jq --arg dir "$SBD_DATA/tailscale/legacy" '.state_directory=$dir' "$ROOT/tests/fixtures/endpoint-tailscale.json") || exit 1
+    jq --argjson value "$value" '.endpoints=[$value]' "$SBD_CONFIG" > "$CASE_TMP/legacy" || exit 1
+    cp "$CASE_TMP/legacy" "$SBD_CONFIG" || exit 1
     local dir plan
     dir=$(jq -r '.endpoints[0].state_directory' "$SBD_CONFIG") || exit 1
     mkdir -p "$dir/Taildrop" || exit 1
@@ -46,7 +49,7 @@ uninstall_purge() {
     cp "$CASE_TMP/custom" "$SBD_CONFIG" || exit 1
     plan=$(sbd_uninstall_plan purge) || exit 1
     t_run 0 sbd_write_lock sbd_uninstall_locked purge "$plan"
-    t_assert '明确 purge 清除原生自有目录' test ! -e "$dir"
+    t_assert '已移除的功能不再授予认证数据删除权' test -s "$dir/state"
     t_assert '清除配置文件' test ! -e "$SBD_CONFIG"
     t_assert '清除状态' test ! -e "$SBD_STATE"
     t_contains "$SBD_ROOT/user-notes.txt" 'unknown user'

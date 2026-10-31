@@ -116,7 +116,7 @@ policy_peers_adoption() {
 }
 reset_peers_tls() {
     t_policy_seed
-    t_peer_add tailscale
+    t_peer_add wireguard
     t_peer_add cloudflared
     t_run 0 sbd_apply sbd_reset peers
     t_assert '批量 peers reset 不留内嵌 connector 或 endpoint' jq -e '((.endpoints // [])|length==0) and ((.inbounds // [])|length==0)' "$SBD_CONFIG"
