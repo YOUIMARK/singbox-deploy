@@ -172,9 +172,9 @@ PY
         done
     done <<'MENUS'
 sbd_resolver_menu 9
-sbd_rules_menu 3
+sbd_rules_menu 6
 sbd_tls_menu 5
-sbd_peers_menu 4
+sbd_peers_menu 5
 sbd_observe_menu 5
 sbd_time_menu 4
 sbd_maintenance_menu 6

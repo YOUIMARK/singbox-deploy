@@ -40,16 +40,18 @@ custom_config_preserved() {
     t_run 1 sbd_apply sbd_peer_change endpoints add new-ts "$value"
     t_entry_unchanged
 }
-read_only_rules() {
+rules_scope() {
     t_policy_seed
     t_entry_save
     t_run 0 sbd_rules_menu <<< $'1\n2\n3\n0'
     t_contains "$CASE_TMP/output" "$SBD_CONFIG"
+    t_contains "$CASE_TMP/output" '[4] 添加规则集'
+    t_contains "$CASE_TMP/output" '[6] 恢复默认路由规则'
     t_absent "$CASE_TMP/output" 'JSON 替换'
     t_absent "$CASE_TMP/output" '向导添加'
     t_entry_unchanged
 }
 t_case '停管模块和高级编辑函数真正移除、菜单不再暴露内部字段' removed_features
 t_case '旧原生 Tailscale/API 配置、认证和已接收文件不被其他操作清理' custom_config_preserved
-t_case '分流菜单只读查看，高级设置交给原生配置文件' read_only_rules
+t_case '分流菜单允许规则集增删，路由规则只做查看与恢复默认' rules_scope
 t_finish

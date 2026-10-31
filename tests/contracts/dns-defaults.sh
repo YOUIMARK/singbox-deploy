@@ -7,7 +7,7 @@ fresh_defaults() {
     t_fresh
     t_stopped
     t_run 0 sbd_apply sbd_entry_create "$(cat "$ROOT/tests/fixtures/entry-shadowsocks.json")"
-    t_assert '首次创建内置三家直连 DoH、原生 evaluate/respond/race' jq -e '.dns.final=="cloudflare" and (.dns.servers|length==4) and (.dns.rules|length==9) and .dns.rules[0].server=="cloudflare" and .dns.rules[1].server=="quad9" and .dns.rules[2].server=="controld" and all(.dns.rules[3:][];.action=="respond" and .race) and .route.rules[0]=={action:"resolve"}' "$SBD_CONFIG"
+    t_assert '首次创建内置三家直连 DoH、原生 evaluate/respond/race' jq -e '.dns.final=="cloudflare" and (.dns.servers|length==4) and (.dns.rules|length==9) and .dns.rules[0].server=="cloudflare" and .dns.rules[1].server=="quad9" and .dns.rules[2].server=="controld" and all(.dns.rules[3:][];.action=="respond" and .race) and .route.rules[0]=={action:"sniff"} and .route.rules[1]=={protocol:"dns",action:"hijack-dns"} and .route.rules[2]=={action:"resolve"} and .route.rules[3]=={ip_is_private:true,action:"reject"} and (.route.rules|length==4)' "$SBD_CONFIG"
     t_assert 'DoH 使用独立 bootstrap，不关闭证书校验、不套代理' jq -e 'all(.dns.servers[]|select(.type=="https");.domain_resolver=="system" and .tls.enabled and (.tls.insecure // false)==false and (has("detour")|not))' "$SBD_CONFIG"
     t_run 0 sbd_resolver_summary
     t_contains "$CASE_TMP/output" '上游竞速: 开启'
@@ -19,7 +19,7 @@ fresh_defaults() {
     t_contains "$CASE_TMP/output" '上游竞速: 关闭'
     t_run 0 sbd_resolver_menu <<< $'9\ny\n0'
     t_contains "$CASE_TMP/output" '上游竞速: 开启'
-    t_assert '反复恢复默认不复制上游或规则' jq -e '(.dns.servers|length==4) and (.dns.rules|length==9) and (.route.rules|length==1)' "$SBD_CONFIG"
+    t_assert '反复恢复默认不复制上游或规则' jq -e '(.dns.servers|length==4) and (.dns.rules|length==9) and (.route.rules|length==4)' "$SBD_CONFIG"
 }
 old_config() {
     t_policy_seed

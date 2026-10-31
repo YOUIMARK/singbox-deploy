@@ -69,8 +69,9 @@ def run(resolve, drop_fast=False, fail_fast=False):
         config['dns']['strategy'] = 'ipv4_only'
         config['dns']['disable_cache'] = True
         config['inbounds'] = [{'type': 'socks', 'tag': 'test', 'listen': '127.0.0.1', 'listen_port': proxy_port}]
-        if not resolve:
-            config['route']['rules'] = []
+        # 目标固定绑定回环地址，默认私网拒绝规则与本用例无关，先剔除以免误拦
+        config['route']['rules'] = [] if not resolve else [
+            rule for rule in config.get('route', {}).get('rules', []) if not rule.get('ip_is_private')]
         path = Path(directory) / 'config.json'
         path.write_text(json.dumps(config))
         subprocess.run([binary, 'check', '-c', str(path)], check=True)
