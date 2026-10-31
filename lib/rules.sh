@@ -169,7 +169,7 @@ sbd_policy_choose() {
 }
 
 sbd_policy_target() {
-    local kind="$1" values config="$SBD_CONFIG"
+    local kind="$1" mode="${2:-manual}" values config="$SBD_CONFIG"
     [[ -f "$config" ]] || config="$SBD_APP/presets/base.json"
     case "$kind" in
         dns) values=$(jq -c '[.dns.servers[]?.tag]' "$config") ;;
@@ -179,6 +179,12 @@ sbd_policy_target() {
         *) _error '未知目标类型'; return 1 ;;
     esac || { _error '读取原生目标失败'; return 1; }
     values=$(jq -c 'map(select(type=="string" and length>0))' <<< "$values") || return 1
+    if [[ "$mode" = auto ]] && [[ "$(jq length <<< "$values")" = 1 ]]; then
+        [[ "${SBD_UI_EOF:-false}" != true ]] || return 2
+        SBD_REPLY=$(jq -er '.[0]' <<< "$values") || return 1
+        sbd_info "使用唯一目标: $SBD_REPLY"
+        return 0
+    fi
     sbd_policy_pick "$values" '选择目标标识'
 }
 

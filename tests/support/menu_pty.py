@@ -160,13 +160,76 @@ try:
         lines = [line for line in page.splitlines() if re.search(r'\[\d+\]', line)]
         assert [int(n) for n in re.findall(r'\[(\d+)\]', page)] == list(range(1, 10)) + [0], page
         assert all(re.match(r'^  \[\d+\] ', line) and len(re.findall(r'\[\d+\]', line)) == 1 for line in lines), lines
-        assert '[9] 向导重建托管上游（高级字段请用 JSON）' in page, page
+        assert '[9] 高级设置' in page and '当前 DNS:' in page, page
+        assert 'JSON 替换托管上游' not in page and 'TLS SNI' not in page, page
         start = len(text())
         send('0\n')
         wait_for('请选择', start)
         page = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()[start:])
         assert any('[1]' in line and '[2]' in line for line in page.splitlines()), page
         assert '按回车' not in page
+        send('0\n')
+    elif scenario == 'ntp_simple':
+        wait_for('请选择')
+        start = len(text())
+        send('17\n')
+        wait_for('请选择', start)
+        start = len(text())
+        send('10\n')
+        wait_for('请选择', start)
+        start = len(text())
+        send('2\n')
+        wait_for('NTP 时间源', start)
+        send('\ny\n')
+        wait_for('原生 NTP 配置已提交', start)
+        wait_for('按回车返回菜单', start)
+        page = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()[start:])
+        assert 'NTP UDP 端口' not in page and '原生 NTP 同步间隔' not in page, page
+        assert '选择目标标识' not in page, page
+        stable_page()
+        start = len(text())
+        send('\n')
+        wait_for('请选择', start)
+        assert '高级 NTP 设置' in text()[start:]
+        start = len(text())
+        send('0\n')
+        wait_for('请选择', start)
+        assert '日志与监控' in text()[start:] and '按回车' not in text()[start:]
+        start = len(text())
+        send('0\n')
+        wait_for('请选择', start)
+        assert 'singbox-deploy' in text()[start:]
+        send('0\n')
+    elif scenario == 'dns_preset':
+        wait_for('请选择')
+        send('6\n')
+        start = len(text())
+        wait_for('请选择', start)
+        start = len(text())
+        before = clears()
+        send('4\ny\n')
+        wait_for('DNS 设置已更新', start)
+        wait_for('按回车返回菜单', start)
+        assert clears() == before, '成功前不能清屏重绘'
+        stable_page()
+        start = len(text())
+        send('\n')
+        wait_for('请选择', start)
+        page = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text()[start:])
+        assert '当前 DNS: https://1.1.1.1/dns-query' in page, page
+        assert 'TLS SNI' not in page and 'JSON 替换' not in page, page
+        start = len(text())
+        send('9\n')
+        wait_for('请选择', start)
+        assert 'DNS 高级设置' in text()[start:] and 'JSON 替换' in text()[start:]
+        start = len(text())
+        send('0\n')
+        wait_for('请选择', start)
+        assert '高级设置' in text()[start:] and '按回车' not in text()[start:]
+        start = len(text())
+        send('0\n')
+        wait_for('请选择', start)
+        assert 'singbox-deploy' in text()[start:]
         send('0\n')
     elif scenario == 'create_link':
         wait_for('请选择')

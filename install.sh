@@ -15,7 +15,7 @@ sbd_install_manifest() {
         seen["$rel"]=1
         SBD_INSTALL_FILES+=("$rel")
     done < "$source/manifest.txt"
-    for rel in install.sh singbox-deploy.sh VERSION manifest.txt lib/input.sh lib/host.sh lib/records.sh lib/apply.sh lib/console.sh support/validate_schema.py support/policy_records.py support/observe_api.py support/uninstall_plan.py presets/base.json; do
+    for rel in install.sh singbox-deploy.sh VERSION manifest.txt lib/input.sh lib/host.sh lib/records.sh lib/apply.sh lib/console.sh support/validate_schema.py support/policy_records.py support/dns_settings.py support/observe_api.py support/uninstall_plan.py presets/base.json; do
         [[ -n "${seen[$rel]:-}" ]] || { _error "发布清单缺少入口依赖: $rel"; return 1; }
     done
 }

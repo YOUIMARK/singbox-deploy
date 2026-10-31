@@ -24,8 +24,12 @@ case "$1" in
         sbd_backend() { printf 'openrc\n'; }
         sbd_console
         ;;
-    create_link)
+    create_link|dns_preset|ntp_simple)
         t_seed
+        if [[ "$1" = ntp_simple ]]; then
+            cp "$ROOT/presets/base.json" "$SBD_CONFIG" || exit 1
+            sbd_prepare_config "$SBD_CONFIG_DIR" || exit 1
+        fi
         curl() { printf '8.8.8.8\n'; }
         sbd_service_enabled() { printf 'disabled\n'; }
         sbd_backend() { printf 'openrc\n'; }

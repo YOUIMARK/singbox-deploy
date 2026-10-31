@@ -87,18 +87,27 @@ sbd_time_interval_prompt() {
 }
 
 sbd_time_prompt() {
-    local config="$SBD_CONFIG" defaults server port interval resolver value
+    local mode="${1:-simple}" config="$SBD_CONFIG" defaults server port interval resolver value
     [[ -f "$config" ]] || config="$SBD_APP/presets/base.json"
     defaults=$(jq -c '.ntp // {}' "$config") || { _error '读取已有 NTP 设置失败'; return 1; }
     sbd_entry_host_prompt 'NTP 时间源（不含 scheme/端口）' "$(jq -r '.server // "time.cloudflare.com"' <<< "$defaults")" || return $?; server="$SBD_REPLY"
-    sbd_entry_number_prompt 'NTP UDP 端口' 1 65535 "$(jq -r '.server_port // 123' <<< "$defaults")" || return $?; port="$SBD_REPLY"
-    sbd_time_interval_prompt "$(jq -r '.interval // "30m"' <<< "$defaults")" || return $?; interval="$SBD_REPLY"
+    port=$(jq -r '.server_port // 123' <<< "$defaults") && interval=$(jq -r '.interval // "30m"' <<< "$defaults") || return 1
+    if [[ "$mode" = advanced ]]; then
+        sbd_entry_number_prompt 'NTP UDP 端口' 1 65535 "$port" || return $?; port="$SBD_REPLY"
+        sbd_time_interval_prompt "$interval" || return $?; interval="$SBD_REPLY"
+    fi
     value=$(jq -n --arg server "$server" --argjson port "$port" --arg interval "$interval" '{server:$server,server_port:$port,interval:$interval}') || return 1
     if [[ "$(sbd_tls_identity "$server")" = DNS:* ]] && ! jq -e '(.detour // "")!=""' <<< "$defaults" >/dev/null; then
-        sbd_info '请选择解析时间源域名的现有 DNS resolver'
-        sbd_policy_target dns || return $?; resolver="$SBD_REPLY"
-        value=$(jq --arg resolver "$resolver" '.domain_resolver=$resolver' <<< "$value") || return 1
+        resolver=$(jq -c '.domain_resolver // null' <<< "$defaults") || return 1
+        if [[ "$mode" = advanced || "$resolver" = null ]]; then
+            sbd_info '时间源域名解析器'
+            if [[ "$mode" = advanced ]]; then sbd_policy_target dns || return $?
+            else sbd_policy_target dns auto || return $?; fi
+            resolver=$(jq -c --arg server "$SBD_REPLY" '.domain_resolver | if type=="object" then .server=$server else $server end' <<< "$defaults") || return 1
+        fi
+        value=$(jq --argjson resolver "$resolver" '.domain_resolver=$resolver' <<< "$value") || return 1
     fi
+    sbd_info "时间源: $server:$port；同步间隔: $interval"
     sbd_info '将启用核心内部时间补偿；不修改系统/宿主机时钟。原有 detour/绑定等高级字段保留，保存不证明时间源可达'
     sbd_policy_confirm || return $?
     sbd_apply sbd_time_change enable "$value" || return 1
@@ -132,9 +141,9 @@ sbd_time_logs() {
 sbd_time_menu() {
     local choice page
     while true; do
-        sbd_ui_menu '时间诊断与原生 NTP' '[1] 本地只读诊断（不查询网络）' '[2] 启用/修改核心内部 NTP' '[3] 禁用核心 NTP' '[4] 最近 NTP/时间戳日志' '[0] 返回'
+        sbd_ui_menu '时间诊断与原生 NTP' '[1] 本地只读诊断（不查询网络）' '[2] 启用/修改核心内部 NTP' '[3] 禁用核心 NTP' '[4] 最近 NTP/时间戳日志' '[5] 高级 NTP 设置' '[0] 返回'
         page="$SBD_UI_PAGE"
-        sbd_read_integer '请选择' 0 4 || return 0; choice="$SBD_REPLY"
+        sbd_read_integer '请选择' 0 5 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
             1) sbd_time_diagnose || return 1 ;;
@@ -145,6 +154,7 @@ sbd_time_menu() {
                 sbd_apply sbd_time_change disable || return 1
                 sbd_success '核心 NTP 已禁用；不代表系统时间准确' ;;
             4) sbd_time_logs || return 1 ;;
+            5) sbd_time_prompt advanced; case "$?" in 0|2) ;; *) return 1 ;; esac ;;
         esac
         sbd_ui_pause "$page"
     done

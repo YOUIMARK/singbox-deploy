@@ -121,7 +121,7 @@ magic_race_separation() {
     t_run 0 sbd_apply sbd_peer_magic add ts-fixture ts-dns 0
     t_policy_udp
     t_run 0 sbd_apply sbd_resolver_race '["system","upstream"]' '{"domain_suffix":"example.com"}'
-    t_run 0 sbd_resolver_menu <<< $'8\n1\ny\n0'
+    t_run 0 sbd_resolver_advanced_menu <<< $'8\n1\ny\n0'
     t_absent "$CASE_TMP/output" magic.ts-dns
     t_assert '竞速菜单不误删 MagicDNS 规则组' jq -e '.dns.rules|length==1 and .[0].preferred_by=="ts-dns"' "$SBD_CONFIG"
 }
@@ -195,7 +195,7 @@ wireguard_menu() {
     t_stopped
     local key input
     key=$(jq -r .private_key "$ROOT/tests/fixtures/endpoint-wireguard.json") || exit 1
-    input=$(printf '2\nmenu-wg\n10.0.0.2/24\n%s\n\n\n\npeer.example.com\n51820\n%s\n\n0.0.0.0/0,::/0\n\n\n1\ny\n0\n' "$key" "$key") || exit 1
+    input=$(printf '2\nmenu-wg\n10.0.0.2/24\n%s\npeer.example.com\n51820\n%s\n\n0.0.0.0/0,::/0\ny\n0\n' "$key" "$key") || exit 1
     t_run 0 sbd_peers_menu <<< "$input"
     t_absent "$CASE_TMP/output" "$key"
     t_assert '首次无配置时可向导创建并选择原生默认 DNS' jq -e '.endpoints[0]|.tag=="menu-wg" and .address=="10.0.0.2/24" and .domain_resolver=="system"' "$SBD_CONFIG"

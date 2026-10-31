@@ -8,7 +8,7 @@ preserve_custom() {
     t_policy_seed
     jq '.ntp={enabled:false,server:"old.example",server_port:123,interval:"1h",detour:"direct",connect_timeout:"4s",write_to_system:true} | .log.level="error" | .route.rules=[{domain:"user.example",action:"route",outbound:"direct"}]' "$SBD_CONFIG" > "$CASE_TMP/custom" || exit 1
     cp "$CASE_TMP/custom" "$SBD_CONFIG" || exit 1
-    t_run 0 sbd_time_prompt <<< $'new.example\n\n10m\ny'
+    t_run 0 sbd_time_prompt advanced <<< $'new.example\n\n10m\ny'
     t_assert '显式修改只覆盖所选字段，保留高级拨号和其他配置' jq -e '.ntp.server=="new.example" and .ntp.detour=="direct" and .ntp.connect_timeout=="4s" and (.ntp.write_to_system // false)==false and .log.level=="error" and .route.rules[0].domain=="user.example"' "$SBD_CONFIG"
     t_run 0 sbd_apply sbd_time_change disable
     t_assert '禁用不丢失自定义 detour' jq -e '.ntp.detour=="direct" and (.ntp.enabled // false)==false' "$SBD_CONFIG"
@@ -17,7 +17,7 @@ source_preserved() {
     t_policy_seed
     t_run 0 sbd_apply sbd_time_change enable '{"server":"127.0.0.1","server_port":8123,"interval":"1h"}'
     t_run 0 sbd_apply sbd_time_change disable
-    t_run 0 sbd_time_prompt <<< $'\n\n\ny'
+    t_run 0 sbd_time_prompt <<< $'\ny'
     t_assert '重新启用沿用现有源而非静默覆盖为默认供应商' jq -e '.ntp.server=="127.0.0.1" and .ntp.server_port==8123 and .ntp.interval=="1h0m0s" and .ntp.enabled' "$SBD_CONFIG"
 }
 references_contract() {
@@ -82,7 +82,7 @@ kill_recovery() {
 }
 menu_contract() {
     t_policy_seed
-    t_run 0 sbd_observe_menu <<< $'10\n1\n2\n\n\n\n1\ny\n3\ny\n0\n0'
+    t_run 0 sbd_observe_menu <<< $'10\n1\n2\n\ny\n3\ny\n0\n0'
     t_contains "$CASE_TMP/output" '系统 UTC:'
     t_contains "$CASE_TMP/output" '未验证校时结果'
     t_assert '观测菜单串联时间向导、显式启用/禁用' jq -e '.ntp.server=="time.cloudflare.com" and (.ntp.enabled // false)==false and (.ntp.write_to_system // false)==false' "$SBD_CONFIG"

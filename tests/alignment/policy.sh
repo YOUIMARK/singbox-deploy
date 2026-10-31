@@ -235,10 +235,10 @@ kill_recovery() {
 menus_contract() {
     t_policy_seed
     t_run 0 sbd_rules_menu <<< "$(printf '2\n1\nmenu-set\n1\n%s\ny\n0\n' "$ROOT/tests/fixtures/rule-set-domains.json")"
-    t_run 0 sbd_resolver_menu <<< $'2\n2\nmenu-dns\n192.0.2.53\n\n\ny\n0'
+    t_run 0 sbd_resolver_advanced_menu <<< $'2\n2\nmenu-dns\n192.0.2.53\n\n\ny\n0'
     t_run 0 sbd_policy_rules_menu route_rules <<< $'2\n2\nexample.com\n1\n1\n\ny\n0'
     t_run 0 sbd_policy_rules_menu dns_rules <<< $'2\n2\nexample.com\n1\n2\n\ny\n0'
-    t_run 0 sbd_resolver_menu <<< $'7\n8\n2\n1\n2\n\ny\n0'
+    t_run 0 sbd_resolver_advanced_menu <<< $'7\n8\n2\n1\n2\n\ny\n0'
     t_assert '编号菜单提交了真实 DNS 竞速和路由' jq -e '(.route.rules|length==1) and (.dns.rules|length==5) and .dns.rules[0].server=="menu-dns"' "$SBD_CONFIG"
 }
 advanced_menu() {
@@ -288,7 +288,7 @@ remote_activation_failure() {
 wizard_replace() {
     t_policy_seed
     t_policy_udp
-    t_run 0 sbd_resolver_menu <<< $'9\n1\n3\n192.0.2.54\n\n\ny\n0'
+    t_run 0 sbd_resolver_advanced_menu <<< $'9\n1\n3\n192.0.2.54\n\n\ny\n0'
     t_assert '上游向导修改保留 tag' jq -e '.dns.servers[1]|.tag=="upstream" and .type=="tcp" and .server=="192.0.2.54"' "$SBD_CONFIG"
     t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"before.example","action":"route","outbound":"direct"}'
     local id

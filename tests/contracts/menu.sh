@@ -131,6 +131,7 @@ PY
     t_assert '上一组的单列状态不泄漏到下一组' test "$(wc -l < "$CASE_TMP/output")" = 1
 }
 long_submenus() {
+    t_fresh
     local menu count argument cols
     local -a command=()
     while read -r menu count argument; do
@@ -147,17 +148,18 @@ assert [int(n) for n in re.findall(r'\[(\d+)\]', text)] == list(range(1, int(sys
 assert all(re.match(r'^  \[\d+\] ', line) and len(re.findall(r'\[\d+\]', line)) == 1 for line in lines), lines
 assert '\x1b' not in text, text
 if 'DNS 设置' in text:
-    assert '[5] 默认上游/域名解析器/解析策略' in text
-    assert '[9] 向导重建托管上游（高级字段请用 JSON）' in text
+    assert '[4] Cloudflare（DoH）' in text
+    assert '[9] 高级设置' in text
 PY
         done
     done <<'MENUS'
 sbd_resolver_menu 9
+sbd_resolver_advanced_menu 9
 sbd_rules_menu 7
 sbd_tls_menu 5
-sbd_peers_menu 9
+sbd_peers_menu 10
 sbd_observe_menu 10
-sbd_time_menu 4
+sbd_time_menu 5
 sbd_maintenance_menu 6
 sbd_engine_menu 6
 sbd_export_menu 3

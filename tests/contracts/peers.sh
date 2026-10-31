@@ -69,7 +69,10 @@ field_contract() {
 }
 tailscale_prompt_contract() {
     t_policy_seed
-    sbd_peer_tailscale_prompt ts-menu > "$CASE_TMP/prompt" 2>&1 <<< $'y\n\n\n\n1' || exit 1
+    sbd_peer_tailscale_prompt ts-menu > "$CASE_TMP/prompt" 2>&1 <<< $'y\n' || exit 1
+    t_absent "$CASE_TMP/prompt" 'hostname'
+    t_absent "$CASE_TMP/prompt" 'control_url'
+    t_absent "$CASE_TMP/prompt" '选择目标标识'
     t_assert '默认 URL 登录，不自动提高日志级别' jq -e '(.log.level=="warn")' "$SBD_CONFIG"
     t_assert '向导明确接受 Taildrop 且可不填 auth_key' jq -e '.type=="tailscale" and (has("auth_key")|not) and .domain_resolver=="system"' <<< "$SBD_PEER_VALUE"
     t_contains "$CASE_TMP/prompt" Taildrop

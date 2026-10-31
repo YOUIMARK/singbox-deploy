@@ -127,12 +127,14 @@ sbd_peer_tag_prompt() {
 }
 
 sbd_peer_wireguard_prompt() {
-    local tag="$1" address private mtu listen peers='[]' count i host port public psk allowed reserved keepalive peer value resolver
+    local tag="$1" mode="${2:-simple}" address private mtu=1408 listen=0 peers='[]' count=1 i host port public psk allowed reserved keepalive peer value resolver
     sbd_peer_prefix_prompt address || return $?; address="$SBD_REPLY"
     sbd_peer_key_prompt '已有 WireGuard 私钥' || return $?; private="$SBD_REPLY"
-    sbd_entry_number_prompt 'MTU' 1 65535 1408 || return $?; mtu="$SBD_REPLY"
-    sbd_entry_number_prompt '本机 UDP 监听端口（0 为自动）' 0 65535 0 || return $?; listen="$SBD_REPLY"
-    sbd_entry_number_prompt 'peer 数量' 1 999999999 1 || return $?; count="$SBD_REPLY"
+    if [[ "$mode" = advanced ]]; then
+        sbd_entry_number_prompt 'MTU' 1 65535 1408 || return $?; mtu="$SBD_REPLY"
+        sbd_entry_number_prompt '本机 UDP 监听端口（0 为自动）' 0 65535 0 || return $?; listen="$SBD_REPLY"
+        sbd_entry_number_prompt 'peer 数量' 1 999999999 1 || return $?; count="$SBD_REPLY"
+    fi
     resolver=''
     for ((i=0; i<count; i++)); do
         printf 'peer %s/%s\n' "$((i+1))" "$count"
@@ -141,9 +143,16 @@ sbd_peer_wireguard_prompt() {
         sbd_peer_key_prompt 'peer public_key' || return $?; public="$SBD_REPLY"
         sbd_peer_key_prompt 'peer pre_shared_key' true || return $?; psk="$SBD_REPLY"
         sbd_peer_prefix_prompt allowed_ips || return $?; allowed="$SBD_REPLY"
-        sbd_peer_reserved_prompt || return $?; reserved="$SBD_REPLY"
-        sbd_entry_number_prompt 'persistent_keepalive_interval（秒）' 0 65535 0 || return $?; keepalive="$SBD_REPLY"
-        if [[ "$(sbd_tls_identity "$host")" = DNS:* && -z "$resolver" ]]; then sbd_policy_target dns || return $?; resolver="$SBD_REPLY"; fi
+        reserved='[0,0,0]'; keepalive=0
+        if [[ "$mode" = advanced ]]; then
+            sbd_peer_reserved_prompt || return $?; reserved="$SBD_REPLY"
+            sbd_entry_number_prompt 'persistent_keepalive_interval（秒）' 0 65535 0 || return $?; keepalive="$SBD_REPLY"
+        fi
+        if [[ "$(sbd_tls_identity "$host")" = DNS:* && -z "$resolver" ]]; then
+            if [[ "$mode" = advanced ]]; then sbd_policy_target dns || return $?
+            else sbd_policy_target dns auto || return $?; fi
+            resolver="$SBD_REPLY"
+        fi
         peer=$(jq -n --arg address "$host" --argjson port "$port" --arg public "$public" --arg psk "$psk" --argjson allowed "$allowed" --argjson reserved "$reserved" --argjson keepalive "$keepalive" \
             '{address:$address,port:$port,public_key:$public,allowed_ips:$allowed,reserved:$reserved,persistent_keepalive_interval:$keepalive} + (if $psk!="" then {pre_shared_key:$psk} else {} end)') || return 1
         peers=$(jq --argjson peer "$peer" '. + [$peer]' <<< "$peers") || return 1
@@ -154,20 +163,24 @@ sbd_peer_wireguard_prompt() {
 }
 
 sbd_peer_tailscale_prompt() {
-    local tag="$1" key hostname control resolver value
+    local tag="$1" mode="${2:-simple}" key hostname='' control='' resolver value
     sbd_info 'Tailscale 1.14 内置 Taildrop；状态与接收目录将独立保存，不提供虚假的关闭选项'
     sbd_read_required '接受该原生行为？输入 y 继续，其他输入取消' || return $?
     [[ "$SBD_REPLY" = y ]] || return 2
     sbd_read_optional 'auth_key（留空使用核心日志中的登录 URL）' true || return $?; key="$SBD_REPLY"
-    sbd_read_optional 'hostname（留空使用系统名称）' || return $?; hostname="$SBD_REPLY"
-    while true; do
-        sbd_read_optional 'control_url（留空使用 Tailscale 官方默认）' || return $?; control="$SBD_REPLY"
-        [[ -z "$control" ]] && break
-        sbd_rule_url "$control" 2>/dev/null && break
-        _error '协调服务器 URL 须为有效 HTTP/HTTPS 地址'
-    done
-    sbd_info '请选择控制面域名的 bootstrap resolver，不接管全局 DNS'
-    sbd_policy_target dns || return $?; resolver="$SBD_REPLY"
+    if [[ "$mode" = advanced ]]; then
+        sbd_read_optional 'hostname（留空使用系统名称）' || return $?; hostname="$SBD_REPLY"
+        while true; do
+            sbd_read_optional 'control_url（留空使用 Tailscale 官方默认）' || return $?; control="$SBD_REPLY"
+            [[ -z "$control" ]] && break
+            sbd_rule_url "$control" 2>/dev/null && break
+            _error '协调服务器 URL 须为有效 HTTP/HTTPS 地址'
+        done
+    fi
+    sbd_info '控制面域名解析器，不接管全局 DNS'
+    if [[ "$mode" = advanced ]]; then sbd_policy_target dns || return $?
+    else sbd_policy_target dns auto || return $?; fi
+    resolver="$SBD_REPLY"
     value=$(jq -n --arg tag "$tag" --arg key "$key" --arg hostname "$hostname" --arg control "$control" --arg resolver "$resolver" \
         '{type:"tailscale",tag:$tag,domain_resolver:$resolver,system_interface:false,ssh_server:false,accept_routes:false,advertise_exit_node:false} +
         (if $key!="" then {auth_key:$key} else {} end) + (if $hostname!="" then {hostname:$hostname} else {} end) + (if $control!="" then {control_url:$control} else {} end)') || return 1
@@ -272,25 +285,32 @@ sbd_peer_magic_prompt() {
 }
 
 sbd_peers_menu() {
-    local choice area action tag value kind rc page
+    local choice area action tag value kind rc page mode
     while true; do
         sbd_ui_menu '隧道管理' '[1] 查看概要（不显示密钥）' '[2] 向导添加 WireGuard' '[3] 向导添加 Tailscale' '[4] 向导添加 Cloudflared' \
-            '[5] 原生 JSON 添加' '[6] 原生 JSON 替换托管对象' '[7] 删除托管对象（保留认证/Taildrop 数据）' '[8] MagicDNS 关联' '[9] Tailscale 登录说明与日志设置' '[0] 返回'
+            '[5] 原生 JSON 添加' '[6] 原生 JSON 替换托管对象' '[7] 删除托管对象（保留认证/Taildrop 数据）' '[8] MagicDNS 关联' '[9] Tailscale 登录说明与日志设置' '[10] WireGuard/Tailscale 高级向导' '[0] 返回'
         page="$SBD_UI_PAGE"
-        sbd_read_integer '请选择' 0 9 || return 0; choice="$SBD_REPLY"
+        sbd_read_integer '请选择' 0 10 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
             1) sbd_peer_list || return 1; sbd_ui_pause "$page"; continue ;;
             8) sbd_peer_magic_prompt; rc=$?; [[ "$rc" = 0 || "$rc" = 2 ]] || return 1; continue ;;
             9) sbd_peer_login_menu; rc=$?; [[ "$rc" = 0 || "$rc" = 2 ]] || return 1; continue ;;
         esac
+        mode=simple
+        if [[ "$choice" = 10 ]]; then
+            sbd_ui_options '[1] WireGuard' '[2] Tailscale' '[0] 返回'
+            sbd_read_integer '高级向导' 0 2 || return 0
+            case "$SBD_REPLY" in 0) continue ;; 1) choice=2 ;; 2) choice=3 ;; esac
+            mode=advanced
+        fi
         sbd_version >/dev/null || return 1
         action=add; area=endpoints
         case "$choice" in
             2|3|4)
                 sbd_peer_tag_prompt || return $?; tag="$SBD_REPLY"
                 case "$choice" in
-                    2) sbd_peer_wireguard_prompt "$tag" ;; 3) sbd_peer_tailscale_prompt "$tag" ;; 4) area=connectors; sbd_peer_cloudflare_prompt "$tag" ;;
+                    2) sbd_peer_wireguard_prompt "$tag" "$mode" ;; 3) sbd_peer_tailscale_prompt "$tag" "$mode" ;; 4) area=connectors; sbd_peer_cloudflare_prompt "$tag" ;;
                 esac
                 rc=$?; [[ "$rc" = 0 ]] || return "$rc"; value="$SBD_PEER_VALUE" ;;
             5)
