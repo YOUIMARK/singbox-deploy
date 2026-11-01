@@ -66,14 +66,14 @@ uninstall_failure() {
     t_assert '未确认停止不删除服务定义' test -f "$CASE_TMP/etc/service"
     t_assert '保留可重试清单' test -f "$SBD_STATE_DIR/uninstall.json"
 }
-uninstall_foreign() {
+uninstall_same_name() {
     u_seed
-    printf 'foreign service\n' > "$CASE_TMP/etc/service" || exit 1
+    printf 'command="/opt/singbox-deploy/engine/sing-box"\ncommand_args="run -c /opt/singbox-deploy/config/config.json -D /opt/singbox-deploy"\n' > "$CASE_TMP/etc/service" || exit 1
     local plan
     plan=$(sbd_uninstall_plan purge) || exit 1
-    t_run 1 sbd_write_lock sbd_uninstall_locked purge "$plan"
-    t_assert '外来服务拒绝卸载，核心保留' test -x "$SBD_BINARY"
-    t_contains "$CASE_TMP/etc/service" 'foreign service'
+    t_run 0 sbd_write_lock sbd_uninstall_locked purge "$plan"
+    t_assert '同名旧布局服务一并删除' test ! -e "$CASE_TMP/etc/service"
+    t_assert '核心随卸载移除' test ! -e "$SBD_BINARY"
 }
 uninstall_cancel() {
     u_seed
@@ -123,7 +123,7 @@ history_install() {
 t_case '保留模式卸载运行文件，原路径数据与未知文件保留' uninstall_keep
 t_case '明确 purge 只清已知自有数据，外部/未知文件保留' uninstall_purge
 t_case '卸载停止失败保留入口和可重试记录' uninstall_failure
-t_case '外来服务不能借卸载入口删除' uninstall_foreign
+t_case '同名旧布局服务一并卸载，不再按内容拒绝' uninstall_same_name
 t_case '卸载预览取消保留所有运行文件' uninstall_cancel
 t_case '卸载删除边界失败不假报成功且保留重试记录' uninstall_partial_failure
 t_case '恢复最近核心事务的包/配置/服务/状态完整资源组' history_engine

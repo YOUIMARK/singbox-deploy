@@ -19,22 +19,22 @@ sbd_service_file() {
     esac
 }
 
-sbd_service_owned() {
+# 服务名与路径都是本脚本专用的（/etc/systemd/system/singbox-deploy.service、/etc/init.d/singbox-deploy），
+# 所以只按路径认领，不比对单元内容：旧布局（engine/ + config/）留下的单元在升级后照样能读状态、
+# 被核心安装重写、被卸载删除，不会因为内容对不上就把整条链路卡死。
+sbd_service_claim() {
     local backend="$1" file
-    file=$(sbd_service_file "$backend") || return 1
-    case "$backend" in
-        systemd) grep -Fxq "ExecStart=$SBD_BINARY run -c $SBD_CONFIG -D $SBD_ROOT" "$file" 2>/dev/null ;;
-        openrc) grep -Fxq "command=\"$SBD_BINARY\"" "$file" 2>/dev/null &&
-            grep -Fxq "command_args=\"run -c $SBD_CONFIG -D $SBD_ROOT\"" "$file" 2>/dev/null ;;
-    esac
+    file=$(sbd_service_file "$backend") || { _error '无法确定服务文件'; return 1; }
+    [[ -e "$file" || -L "$file" ]] || { _error '服务尚未创建'; return 1; }
+    [[ ! -L "$file" ]] || { _error '服务路径是外部链接，拒绝操作'; return 1; }
 }
 
 sbd_service_state() {
     local backend file output rc=0 active='' sub='' pid='' line
     backend=$(sbd_backend) || return 1
     file=$(sbd_service_file "$backend") || return 1
-    [[ -e "$file" ]] || { printf 'stopped\n'; return 0; }
-    sbd_service_owned "$backend" || { _error '同名服务不属于本部署，拒绝操作'; return 1; }
+    [[ -e "$file" || -L "$file" ]] || { printf 'stopped\n'; return 0; }
+    sbd_service_claim "$backend" || return 1
     case "$backend" in
         systemd)
             output=$(systemctl show "$SBD_SERVICE" -p ActiveState -p SubState -p MainPID) || { _error '读取服务状态失败'; return 1; }
@@ -72,7 +72,7 @@ sbd_service_action() (
     local action="$1" backend
     case "$action" in restart|start|stop) ;; *) _error '不支持的服务动作'; return 1 ;; esac
     backend=$(sbd_backend) || return 1
-    sbd_service_owned "$backend" || { _error '服务归属未确认，拒绝修改'; return 1; }
+    sbd_service_claim "$backend" || return 1
     # OpenRC 启动的守护进程不能继承管理器写锁。
     if [[ -n "${SBD_WRITE_FD:-}" ]]; then exec {SBD_WRITE_FD}>&-; fi
     case "$backend" in
@@ -145,7 +145,7 @@ sbd_service_enabled() {
     local backend path output rc=0
     if ! backend=$(sbd_backend) || ! path=$(sbd_service_file "$backend"); then _error '无法确定服务后端'; return 1; fi
     if [[ ! -e "$path" && ! -L "$path" ]]; then printf 'disabled\n'; return 0; fi
-    sbd_service_owned "$backend" || { _error '同名服务不属于本部署'; return 1; }
+    sbd_service_claim "$backend" || return 1
     if [[ "$backend" = systemd ]]; then
         output=$(systemctl is-enabled "$SBD_SERVICE" 2>/dev/null) || rc=$?
         case "$output:$rc" in
@@ -171,7 +171,7 @@ sbd_service_set_enabled() {
         [[ "$expected" = disabled ]] || { _error '服务尚未创建，无法启用自启'; return 1; }
         return 0
     fi
-    sbd_service_owned "$backend" || { _error '不修改外来服务自启'; return 1; }
+    sbd_service_claim "$backend" || return 1
     current=$(sbd_service_enabled) || return 1
     [[ "$current" != "$expected" ]] || return 0
     if [[ "$backend" = systemd ]]; then
@@ -327,7 +327,6 @@ sbd_engine_commit_locked() {
     expected="$enabled"
     [[ -e "$service" || -L "$service" ]] || expected=enabled
     if [[ -L "$service" ]] || { [[ "$backend" = openrc ]] && [[ -L "$logrotate" ]]; }; then _error '服务或日志轮换路径是外部链接，拒绝覆盖'; return 1; fi
-    if [[ "$backend" = openrc && -e "$logrotate" ]] && ! grep -Fq "\"$SBD_LOG\" {" "$logrotate"; then _error '同名日志轮换不属于本部署'; return 1; fi
     mkdir -p -- "$stage" || { _error '创建核心事务候选失败'; return 1; }
     trap sbd_apply_signal INT TERM HUP
     if [[ -f "$SBD_CONFIG" ]]; then cp "$SBD_CONFIG" "$stage/config.json"; else cp "$SBD_APP/presets/base.json" "$stage/config.json"; fi || { _error '暂存旧配置失败'; sbd_work_remove "$dir"; return 1; }
@@ -469,11 +468,10 @@ sbd_uninstall_locked() {
     local mode="$1" expected="$2" plan backend service rotate content helper="$SBD_WORK/uninstall-helper.py" path
     sbd_recover_locked || return 1
     backend=$(sbd_backend) && service=$(sbd_service_file "$backend") && rotate=$(sbd_logrotate_file) || return 1
-    [[ ! -e "$service" ]] || sbd_service_owned "$backend" || { _error '不卸载外来服务'; return 1; }
+    [[ ! -e "$service" ]] || sbd_service_claim "$backend" || return 1
     if [[ -e "$SBD_COMMAND" || -L "$SBD_COMMAND" ]]; then
         [[ -L "$SBD_COMMAND" && "$(readlink "$SBD_COMMAND")" = "$SBD_APP/singbox-deploy.sh" ]] || { _error '不删除非本部署的 sd'; return 1; }
     fi
-    if [[ -e "$rotate" ]]; then grep -Fq "\"$SBD_LOG\" {" "$rotate" || { _error '不删除外来 logrotate 文件'; return 1; }; fi
     plan=$(sbd_uninstall_plan "$mode") || return 1
     [[ "$plan" = "$expected" ]] || { _error '卸载清单在确认后变化，请重新预览确认'; return 1; }
     sbd_record_write "$SBD_STATE_DIR/uninstall.json" "$plan" || return 1

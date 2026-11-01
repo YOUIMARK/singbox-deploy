@@ -30,12 +30,12 @@ systemd_states() {
     printf 'ActiveState=activating\nSubState=start\nMainPID=0\n' > "$CASE_TMP/runtime" || exit 1
     t_run 1 sbd_service_state
 }
-foreign_unit() {
+same_name_unit() {
     service_fixture
-    printf 'ExecStart=/other/sing-box run\n' > "$CASE_TMP/unit" || exit 1
-    t_run 1 sbd_service_state
-    t_run 1 sbd_service_action stop
-    t_assert '不操作外来同名服务' test ! -e "$CASE_TMP/actions"
+    printf 'ExecStart=/opt/singbox-deploy/engine/sing-box run -c /opt/singbox-deploy/config/config.json -D /opt/singbox-deploy\n' > "$CASE_TMP/unit" || exit 1
+    t_assert '旧布局单元仍读到运行态' test "$(sbd_service_state)" = running
+    t_run 0 sbd_service_action stop
+    t_contains "$CASE_TMP/actions" stop
 }
 restart_window() {
     service_fixture
@@ -81,7 +81,7 @@ no_inherited_lock() {
 }
 t_case '未安装服务明确停止' absent_service
 t_case 'systemd 运行、停止、未知三态' systemd_states
-t_case '外来同名服务拒绝操作' foreign_unit
+t_case '同名旧布局单元按本部署认领' same_name_unit
 t_case '重启必须持续运行' restart_window
 t_case 'stop 成功不等于已停止' stop_verified
 t_case 'OpenRC 状态与失败可见' openrc_states

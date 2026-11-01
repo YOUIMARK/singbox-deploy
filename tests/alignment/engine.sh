@@ -181,12 +181,11 @@ openrc_install() {
     t_assert '不意外启动 OpenRC 核心' test "$(cat "$CASE_TMP/runtime")" = stopped
     t_run 0 sh -n "$CASE_TMP/etc/service"
 }
-foreign_service() {
+takeover_service() {
     e_fixture
-    printf 'ExecStart=/other/program\n' > "$CASE_TMP/etc/service" || exit 1
-    t_run 1 sbd_engine_commit "$CASE_TMP/candidate"
-    t_assert '未写配置' cmp -s "$SBD_CONFIG" "$CASE_TMP/old-config"
-    t_contains "$CASE_TMP/etc/service" /other/program
+    printf 'ExecStart=/opt/singbox-deploy/engine/sing-box run -c /opt/singbox-deploy/config/config.json -D /opt/singbox-deploy\n' > "$CASE_TMP/etc/service" || exit 1
+    t_run 0 sbd_engine_commit "$CASE_TMP/candidate"
+    t_assert '同名旧布局服务被重写为本部署定义' grep -Fxq "ExecStart=$SBD_BINARY run -c $SBD_CONFIG -D $SBD_ROOT" "$CASE_TMP/etc/service"
 }
 schema_failure() {
     e_fixture
@@ -348,7 +347,7 @@ t_case '首次核心安装自启但保持停止' fresh_install
 t_case '停止升级保留自启关闭与停止态' stopped_upgrade
 t_case '运行升级停止后再启动验证' running_upgrade
 t_case 'OpenRC 服务执行位和轮换参数' openrc_install
-t_case '拒绝覆盖外来服务定义' foreign_service
+t_case '同名旧布局服务被接管并重写' takeover_service
 t_case '候选真实 Schema 失败不碰旧包' schema_failure
 t_case '服务文件提交失败恢复整组' service_write_failure
 t_case '核心 state 写失败恢复完整旧包' state_write_failure
