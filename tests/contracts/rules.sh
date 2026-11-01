@@ -87,7 +87,9 @@ menu_add_preset() {
     t_policy_seed
     t_run 0 sbd_rules_menu <<< $'4\n1\n4\ny\n0'
     t_contains "$CASE_TMP/output" '规则集 geosite-cn 已添加'
-    t_assert '预设目录写入与 s-ui 同源的规则集地址' jq -e '.route.rule_set[0] | .tag=="geosite-cn" and .url=="https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs" and (.format // "binary")=="binary" and .update_interval=="24h0m0s"' "$SBD_CONFIG"
+    t_assert '预设目录写入 MetaCubeX 规则集地址' jq -e '.route.rule_set[0] | .tag=="geosite-cn" and .url=="https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs" and (.format // "binary")=="binary" and .update_interval=="24h0m0s"' "$SBD_CONFIG"
+    t_assert '目录中的规则统一来自 MetaCubeX' jq -e '
+        all(.[]; .url | startswith("https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/"))' <<< "$(sbd_rule_catalog)"
 }
 menu_add_preset_multi() {
     t_policy_seed
@@ -108,6 +110,24 @@ menu_add_preset_retry() {
     t_contains "$CASE_TMP/output" '可多选，用逗号或空格分隔'
     t_contains "$CASE_TMP/output" '规则集 geosite-private 已添加'
     t_assert '非法编号重问后只写入合法项' jq -e '[.route.rule_set[].tag]==["geosite-private"]' "$SBD_CONFIG"
+}
+menu_add_named_preset() {
+    t_policy_seed
+    t_run 0 sbd_rules_menu <<< $'4\n4\nGEOSITE:OpenAI, github, openai\ny\n0'
+    t_contains "$CASE_TMP/output" '规则集 geosite-openai, geosite-github 已添加'
+    t_assert '预设名称映射到 MetaCubeX 并去重' jq -e '
+        [.route.rule_set[] | {tag,url,format:(.format // "binary"),update_interval,http_client}] == [
+          {tag:"geosite-openai",url:"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/openai.srs",format:"binary",update_interval:"24h0m0s",http_client:{version:2}},
+          {tag:"geosite-github",url:"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/github.srs",format:"binary",update_interval:"24h0m0s",http_client:{version:2}}
+        ]' "$SBD_CONFIG"
+    t_assert '预设名称逐条登记归属' jq -e '[.policy.rule_sets[].id]==["geosite-openai","geosite-github"]' "$SBD_REGISTRY"
+    t_assert '预设名称共用核心缓存' jq -e '.experimental.cache_file.enabled==true and (.route.rule_set|length)==2' "$SBD_CONFIG"
+}
+menu_add_named_preset_retry() {
+    t_policy_seed
+    t_run 0 sbd_rules_menu <<< $'4\n4\nbad/name\nopenai\ny\n0'
+    t_contains "$CASE_TMP/output" 'geosite 名称只能包含字母、数字、下划线、@、点、感叹号和横线'
+    t_assert '非法名称重问后只写入合法项' jq -e '[.route.rule_set[].tag]==["geosite-openai"]' "$SBD_CONFIG"
 }
 menu_delete_referenced() {
     t_policy_seed
@@ -143,6 +163,8 @@ t_case '菜单按预设目录添加规则集' menu_add_preset
 t_case '预设目录多选一次事务写入' menu_add_preset_multi
 t_case '预设目录区间与重复编号归一' menu_add_preset_range
 t_case '预设目录非法编号重问' menu_add_preset_retry
+t_case '菜单按预设名称添加 MetaCubeX 规则集' menu_add_named_preset
+t_case '预设名称非法字符重问' menu_add_named_preset_retry
 t_case '菜单导入本地规则集并保留源文件' menu_add_local
 t_case '被规则引用的规则集拒绝删除，解除后真实删除' menu_delete_referenced
 t_case '补齐默认路由规则并保留自定义规则' defaults_restore
