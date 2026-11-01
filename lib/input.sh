@@ -3,6 +3,10 @@
 # 最近一次输出是否为字段提示：连续字段紧排，其余输出之后才空一行（对齐 xray-deploy 的紧凑向导）。
 SBD_UI_AFTER_PROMPT=false
 
+# 双列菜单右列的起始显示列（含两格缩进），与 xray-deploy 的 MENU_COL_WIDTH=23 对齐。
+# 缩进+左列+间隔恰好落到该列，长短项共用同一起点，读起来才不散。
+SBD_UI_COLUMN_START=23
+
 sbd_ui_terminal() { [[ -t 0 && -t 1 && "${TERM:-dumb}" != dumb ]]; }
 
 sbd_ui_tint() {
@@ -79,7 +83,9 @@ sbd_ui_item() {
 }
 
 sbd_ui_rows() {
-    local cols left right width right_width pad span=24 gap="${SBD_UI_COLUMN_GAP:-6}"
+    local cols left right width right_width pad span gap
+    span=$(( ${SBD_UI_COLUMN_START:-23} - 2 ))
+    gap="${SBD_UI_COLUMN_GAP:-3}"
     SBD_UI_AFTER_PROMPT=false
     cols=$(sbd_ui_columns)
     (( cols <= 100 )) || cols=100
@@ -121,48 +127,30 @@ sbd_ui_status_field() {
 }
 
 sbd_ui_status_row() {
-    local cols field width index=0 used=0 previous=0 pad gap
-    local -a widths=()
+    # 分隔符固定为两格空白加竖线，不按上下行补空格：补出来的对齐只让同一行内的间隔忽宽忽窄。
+    local cols field width used=0
+    SBD_UI_AFTER_PROMPT=false
     cols=$(sbd_ui_columns)
     for field in "$@"; do
+        [[ -n "$field" ]] || continue
         width=$(sbd_ui_width "$field") || return 1
-        widths+=("$width")
-    done
-    for field in "$@"; do
-        width="${widths[index]}"
-        if [[ -n "$field" ]]; then
-            if (( used > 0 )); then
-                pad=$(( ${SBD_UI_STATUS_WIDTHS[index-1]:-0} - previous ))
-                (( pad >= 0 )) || pad=0
-                # 放不下对齐间距时先退为紧凑分隔，再按完整字段换行。
-                (( used+pad+5+width <= cols-4 )) || pad=0
-                gap=$((pad+5))
-                if (( used+gap+width > cols-4 )); then
-                    printf '\n'; used=0
-                else
-                    printf '%*s  |  ' "$pad" ''; used=$((used+gap))
-                fi
+        if (( used > 0 )); then
+            if (( used+5+width > cols-4 )); then
+                printf '\n'; used=0
+            else
+                printf '  |  '; used=$((used+5))
             fi
-            (( used > 0 )) || printf '  '
-            sbd_ui_status_field "$field"
-            used=$((used+width)); previous="$width"
         fi
-        index=$((index+1))
+        (( used > 0 )) || printf '  '
+        sbd_ui_status_field "$field"
+        used=$((used+width))
     done
     (( used == 0 )) || printf '\n'
     return 0
 }
 
 sbd_ui_status_table() {
-    local field width column index=0
-    # 动态作用域只在本次表格内共享列宽，ANSI 着色不参与计宽。
-    local -a SBD_UI_STATUS_WIDTHS=(0 0 0)
-    for field in "$@"; do
-        column=$((index%3))
-        width=$(sbd_ui_width "$field") || return 1
-        if (( width > SBD_UI_STATUS_WIDTHS[column] )); then SBD_UI_STATUS_WIDTHS[column]="$width"; fi
-        index=$((index+1))
-    done
+    # 每行三个字段成组；行内间隔由 sbd_ui_status_row 统一给出。
     while (( $# > 0 )); do
         sbd_ui_status_row "$1" "${2:-}" "${3:-}" || return 1
         if (( $# <= 3 )); then break; fi
@@ -171,26 +159,45 @@ sbd_ui_status_table() {
 }
 
 sbd_ui_options() {
-    local item width
-    local SBD_UI_COLUMN_GAP=6 SBD_UI_SINGLE_COLUMN=false
+    local item width span single=false zero_separate=false
+    local SBD_UI_COLUMN_GAP=3 SBD_UI_SINGLE_COLUMN=false
     local -a rows=()
+    span=$(( ${SBD_UI_COLUMN_START:-23} - 2 ))
     SBD_UI_AFTER_PROMPT=false
-    if [[ "${1:-}" = --compact ]]; then SBD_UI_COLUMN_GAP=2; shift; fi
-    # 长说明不参与双列拼接；整组采用同一布局，避免长短项交替错落。
-    for item in "$@"; do
-        [[ "$item" != @* && "$item" != '[0] '* ]] || continue
-        width=$(sbd_ui_width "$item") || return 1
-        if (( width > 24-SBD_UI_COLUMN_GAP )); then SBD_UI_SINGLE_COLUMN=true; break; fi
+    while :; do
+        case "${1:-}" in
+            --compact) SBD_UI_COLUMN_GAP=2; shift ;;
+            # 返回项是否单独隔开由调用方声明：只有首页需要，子菜单（含自绘标题的向导菜单）一律紧跟上一项。
+            --zero-separate) zero_separate=true; shift ;;
+            *) break ;;
+        esac
     done
+    # 分组各自决定单双列：长说明只让所在组单列，其余组仍可两列，避免整屏稀疏或长短项交错。
     for item in "$@"; do
         if [[ "$item" = @* || "$item" = '[0] '* ]]; then
-            if (( ${#rows[@]} > 0 )); then sbd_ui_rows "${rows[@]}" || return 1; fi
-            rows=()
-            if [[ "$item" = @* ]]; then sbd_ui_section "${item#@}"
-            else printf '\n'; sbd_ui_rows "$item" || return 1; fi
-        else rows+=("$item"); fi
+            if (( ${#rows[@]} > 0 )); then
+                SBD_UI_SINGLE_COLUMN=$single
+                sbd_ui_rows "${rows[@]}" || return 1
+            fi
+            rows=(); single=false; SBD_UI_SINGLE_COLUMN=false
+            if [[ "$item" = @* ]]; then
+                sbd_ui_section "${item#@}"
+            else
+                # 子菜单里的返回项紧跟上一项，只有首页把它单独隔开（对齐 xray-deploy 的主菜单/子菜单差别）。
+                [[ "$zero_separate" != true ]] || printf '\n'
+                sbd_ui_rows "$item" || return 1
+            fi
+            continue
+        fi
+        rows+=("$item")
+        [[ "$single" = true ]] && continue
+        width=$(sbd_ui_width "$item") || return 1
+        (( width <= span-SBD_UI_COLUMN_GAP )) || single=true
     done
-    if (( ${#rows[@]} > 0 )); then sbd_ui_rows "${rows[@]}" || return 1; fi
+    if (( ${#rows[@]} > 0 )); then
+        SBD_UI_SINGLE_COLUMN=$single
+        sbd_ui_rows "${rows[@]}" || return 1
+    fi
 }
 
 sbd_ui_menu() {

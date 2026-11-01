@@ -248,11 +248,11 @@ sbd_console() {
     while true; do
         sbd_ui_begin 'sing-box 部署管理脚本 (singbox-deploy)' true || return 1
         sbd_status brief || _error '状态摘要读取不完整；仍可选择检查或维护，不将未知状态当作停止'
-        sbd_ui_options --compact '@节点管理' '[1] 添加节点' '[2] 查看节点' '[3] 修改节点' '[4] 删除节点' '[5] 节点链接' \
+        sbd_ui_options --compact --zero-separate '@节点管理' '[1] 添加节点' '[2] 查看节点' '[3] 修改节点' '[4] 删除节点' '[5] 节点链接' \
             '@网络设置' '[6] DNS 设置' '[7] 分流设置' '[8] 证书管理' '[9] 隧道管理' \
             '@服务控制' '[10] 重启服务' '[11] 停止服务' '[12] 查看状态' '[13] 查看日志' '[14] 启用自启' '[15] 关闭自启' \
             '@配置与维护' '[16] 检查配置' '[17] 日志设置' '[18] 脚本维护' \
-            '@核心管理' '[19] sing-box 核心管理' '[20] 卸载脚本' '[0] 退出'
+            '@核心管理' '[19] sing-box 核心' '[20] 卸载脚本' '[0] 退出'
         page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 20 || return 0
         choice="$SBD_REPLY"

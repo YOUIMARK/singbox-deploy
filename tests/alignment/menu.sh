@@ -37,7 +37,7 @@ assert [int(n) for n in re.findall(r'\[(\d+)\]', text)] == list(range(1, 21)) + 
 labels = ['添加节点', '查看节点', '修改节点', '删除节点', '节点链接',
           'DNS 设置', '分流设置', '证书管理', '隧道管理',
           '重启服务', '停止服务', '查看状态', '查看日志', '启用自启', '关闭自启',
-          '检查配置', '日志设置', '脚本维护', 'sing-box 核心管理', '卸载脚本']
+          '检查配置', '日志设置', '脚本维护', 'sing-box 核心', '卸载脚本']
 for number, label in enumerate(labels, 1):
     assert f'[{number}] {label}' in text
 for old in ('部署状态', '独立 DNS', '分享与客户端资料', '维护与显式协调', '原生观测'):
@@ -50,7 +50,7 @@ for item in ('[2]', '[4]', '[7]', '[9]', '[11]', '[13]', '[15]', '[17]', '[20]')
     line = next(line for line in text.splitlines() if item in line)
     prefix = line[:line.index(item)]
     width = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix)
-    assert width == 26, (item, width, line)
+    assert width == 23, (item, width, line)
 PY
     t_run 0 sbd_dispatch 12
     t_contains "$CASE_TMP/output" "$SBD_CONFIG"
