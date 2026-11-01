@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+SBD_PEER_WARP_API='https://warp.cloudflare.now.cc/?run=register&format=sing-box'
+
 sbd_peer_change() {
     local stage="$1" area="$2" action="$3" tag="$4" value="${5:-}" kind old request port exclude=''
     case "$area" in endpoints|connectors) ;; *) _error '未知连接对象区域'; return 1 ;; esac
@@ -96,6 +98,50 @@ sbd_peer_tag_prompt() {
     done
 }
 
+sbd_peer_warp_download() {
+    local target="$1"
+    [[ -n "$target" ]] || return 1
+    if command -v curl >/dev/null 2>&1; then
+        curl -fLsS --connect-timeout 8 --max-time 25 -H 'Accept: application/json' \
+            "$SBD_PEER_WARP_API" -o "$target" 2>/dev/null || return 1
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -T 25 -O "$target" "$SBD_PEER_WARP_API" 2>/dev/null || return 1
+    else
+        return 1
+    fi
+    [[ -s "$target" ]]
+}
+
+sbd_peer_warp_obtain() {
+    local raw value
+    raw=$(mktemp "${TMPDIR:-/tmp}/sbd-warp.XXXXXX") || { _error '无法创建 WARP 临时文件'; return 1; }
+    if ! sbd_peer_warp_download "$raw"; then
+        rm -f -- "$raw"
+        _error 'WARP 自动注册失败：未取得注册 API 响应，配置未修改'
+        return 1
+    fi
+    if ! value=$(python3 "$SBD_APP/support/warp.py" normalize "$raw" 2>/dev/null); then
+        rm -f -- "$raw"
+        _error 'WARP 自动注册响应无效，配置未修改'
+        return 1
+    fi
+    rm -f -- "$raw"
+    SBD_PEER_VALUE="$value"
+}
+
+sbd_peer_warp_prompt() {
+    local host value
+    sbd_info '正在向 Cloudflare WARP 自动注册'
+    sbd_peer_warp_obtain || return $?
+    value="$SBD_PEER_VALUE"
+    host=$(jq -er '.peers[0].address' <<< "$value") || { _error 'WARP peer 地址缺失'; return 1; }
+    if [[ "$(sbd_tls_identity "$host")" = DNS:* ]]; then
+        sbd_policy_target dns default || { _error 'WARP peer 使用域名，但当前没有可用的默认 DNS'; return 1; }
+        value=$(jq --arg resolver "$SBD_REPLY" '.domain_resolver=$resolver' <<< "$value") || return 1
+    fi
+    SBD_PEER_VALUE="$value"
+}
+
 sbd_peer_wireguard_prompt() {
     local address private mtu=1408 listen=0 peers='[]' count=1 i host port public psk allowed reserved keepalive peer value resolver
     sbd_peer_prefix_prompt address || return $?; address="$SBD_REPLY"
@@ -164,7 +210,7 @@ sbd_peer_list() {
         "  \(.tag)\n    address: \(.address|join(","))\n    mtu: \(.mtu // 1408)\n    peers: \(.peers|length)\n    listen_port: \(.listen_port // 0)"' "$SBD_CONFIG") || { _error '读取连接对象失败'; return 1; }
     cloudflared=$(jq -r '.inbounds[]? | select(.type=="cloudflared") |
         "  \(.tag)\n    protocol: \(.protocol // "quic")\n    edge_ip_version: \(if (.edge_ip_version // 0)==0 then "auto" else (.edge_ip_version|tostring) end)\n    grace_period: \(.grace_period // "默认")\n    control_dialer.detour: \(.control_dialer.detour // "无")\n    tunnel_dialer.detour: \(.tunnel_dialer.detour // "无")\n    token: \(if (.token|length)>12 then (.token[0:6]+"…"+.token[-4:]) else "…" end)"' "$SBD_CONFIG") || { _error '读取连接对象失败'; return 1; }
-    printf 'WireGuard endpoints:\n%s\n' "${wireguard:-  （无）}"
+    printf 'WireGuard / WARP endpoints:\n%s\n' "${wireguard:-  （无）}"
     printf 'Cloudflare Tunnel:\n%s\n' "${cloudflared:-  （无）}"
     sbd_info '仅显示 WireGuard 与 Cloudflare Tunnel 配置，不显示密钥或完整 token'
 }
@@ -172,7 +218,7 @@ sbd_peer_list() {
 sbd_peers_menu() {
     local choice area base tag value rc page values
     while true; do
-        sbd_ui_menu '隧道管理' '[1] 查看隧道' '[2] 添加 WireGuard' '[3] 添加 Cloudflare Tunnel' \
+        sbd_ui_menu '隧道管理' '[1] 查看隧道' '[2] 添加 WARP' '[3] 添加 Cloudflare Tunnel' \
             '[4] 修改 Cloudflare Tunnel（切换 token）' '[5] 删除隧道' '[0] 返回'
         sbd_config_hint
         page="$SBD_UI_PAGE"
@@ -183,12 +229,19 @@ sbd_peers_menu() {
             2|3)
                 sbd_version >/dev/null || return 1
                 area=endpoints
-                if [[ "$choice" = 2 ]]; then base=wireguard; sbd_peer_wireguard_prompt
-                else base=cloudflared; area=connectors; sbd_peer_cloudflare_prompt; fi
+                if [[ "$choice" = 2 ]]; then
+                    sbd_peer_warp_prompt
+                else
+                    base=cloudflared; area=connectors; sbd_peer_cloudflare_prompt
+                fi
                 rc=$?; [[ "$rc" = 0 ]] || return "$rc"; value="$SBD_PEER_VALUE"
-                # 连接参数填完后再定 tag：默认取类型名，已占用时自动加序号。
-                sbd_peer_tag_prompt "$(sbd_peer_tag_free "$base")" || return $?
-                tag="$SBD_REPLY"
+                if [[ "$choice" = 2 ]]; then
+                    tag=$(sbd_peer_tag_free warp) || return 1
+                else
+                    # Cloudflare Tunnel 连接参数填完后再定 tag。
+                    sbd_peer_tag_prompt "$(sbd_peer_tag_free "$base")" || return $?
+                    tag="$SBD_REPLY"
+                fi
                 value=$(jq --arg tag "$tag" '. + {tag:$tag}' <<< "$value") || return 1 ;;
             4)
                 values=$(jq -c '[.policy.connectors[]?|select(.expected.type=="cloudflared")|{id,area:"connectors"}]' "$SBD_REGISTRY") || return 1
@@ -203,9 +256,12 @@ sbd_peers_menu() {
                 sbd_apply sbd_peer_change "$area" delete "$tag" || return 1
                 sbd_success '隧道已删除'; sbd_ui_pause "$page"; continue ;;
         esac
-        sbd_policy_confirm || return $?
+        if [[ "$choice" != 2 ]]; then
+            sbd_policy_confirm || return $?
+        fi
         sbd_apply sbd_peer_change "$area" add "$tag" "$value" || return 1
         sbd_success '隧道配置已保存'
+        [[ "$choice" != 2 ]] || sbd_info "WARP tag: $tag；不会自动创建分流规则"
         sbd_ui_pause "$page"
     done
 }

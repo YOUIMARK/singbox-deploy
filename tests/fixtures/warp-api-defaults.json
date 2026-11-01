@@ -1,0 +1,16 @@
+{
+  "endpoints": [
+    {
+      "type": "wireguard",
+      "tag": "warp-ep",
+      "address": "172.16.0.3",
+      "private_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "peers": [
+        {
+          "address": "2606:4700:110:8a36::3",
+          "public_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+        }
+      ]
+    }
+  ]
+}

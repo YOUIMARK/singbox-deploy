@@ -139,15 +139,20 @@ ws_not_rebound() {
     t_assert 'Q5A 不自动改 URI' cmp -s "$SBD_EXPORTS/$NODE_ID.txt" "$CASE_TMP/uri"
     t_assert '原生 WS 仍保留自身监听/无 TLS' jq -e '.inbounds[0]|.type=="vless" and .listen_port==19506 and (has("tls")|not)' "$SBD_CONFIG"
 }
-wireguard_menu() {
+warp_menu() {
     t_fresh
     t_stopped
-    local key input
-    key=$(jq -r .private_key "$ROOT/tests/fixtures/endpoint-wireguard.json") || exit 1
-    input=$(printf '2\n10.0.0.2/24\n%s\npeer.example.com\n51820\n%s\n\n0.0.0.0/0,::/0\nmenu-wg\ny\n0\n' "$key" "$key") || exit 1
-    t_run 0 sbd_peers_menu <<< "$input"
+    local key
+    key=$(jq -r '.endpoints[0].private_key' "$ROOT/tests/fixtures/warp-api.json") || exit 1
+    sbd_peer_warp_download() { cp "$ROOT/tests/fixtures/warp-api.json" "$1"; }
+    t_run 0 sbd_peers_menu <<< $'2\n0'
     t_absent "$CASE_TMP/output" "$key"
-    t_assert '首次无配置时可向导创建并选择原生默认 DNS' jq -e '.endpoints[0]|.tag=="menu-wg" and .address=="10.0.0.2/24" and .domain_resolver=="cloudflare"' "$SBD_CONFIG"
+    t_contains "$CASE_TMP/output" '[2] 添加 WARP'
+    t_absent "$CASE_TMP/output" '[2] 添加 WARP（自动获取）'
+    t_assert 'WARP 菜单自动获取、自动 tag 并选择原生默认 DNS' jq -e '
+        .endpoints[0]|.tag=="warp" and .type=="wireguard"
+        and .address==["172.16.0.2/32","2606:4700:110:8a36::2/128"]
+        and .domain_resolver=="cloudflare"' "$SBD_CONFIG"
 }
 cloudflare_menu() {
     t_policy_seed
@@ -177,17 +182,18 @@ cloudflare_token_edit() {
     t_absent "$CASE_TMP/output" "$new"
     t_assert 'token 已切换且保留协议与拨号对象' jq -e --arg t "$new" '.inbounds[0]|.token==$t and .protocol=="quic" and .control_dialer.domain_resolver=="system"' "$SBD_CONFIG"
 }
-tag_after_fields() {
-    t_fresh
+warp_tag_collision() {
+    t_policy_seed
     t_stopped
-    local key input
-    key=$(jq -r .private_key "$ROOT/tests/fixtures/endpoint-wireguard.json") || exit 1
-    input=$(printf '2\n10.0.0.8/24\n%s\npeer.example.com\n51820\n%s\n\n0.0.0.0/0\n\ny\n0\n' "$key" "$key") || exit 1
-    t_run 0 sbd_peers_menu <<< "$input"
-    t_contains "$CASE_TMP/output" '原生 tag（默认 wireguard）'
-    t_assert 'tag 在连接参数之后询问并采用默认值' jq -e '.endpoints[0]|.tag=="wireguard" and .address=="10.0.0.8/24"' "$SBD_CONFIG"
-    t_run 0 sbd_peer_tag_free wireguard
-    t_assert '已占用的默认名自动加序号' test "$(cat "$CASE_TMP/output")" = wireguard-2
+    local custom
+    custom=$(jq '.tag="warp"' "$ROOT/tests/fixtures/endpoint-wireguard.json") || exit 1
+    jq --argjson custom "$custom" '.endpoints=[$custom]' "$SBD_CONFIG" > "$CASE_TMP/custom" || exit 1
+    cp "$CASE_TMP/custom" "$SBD_CONFIG" || exit 1
+    sbd_peer_warp_download() { cp "$ROOT/tests/fixtures/warp-api.json" "$1"; }
+    t_run 0 sbd_peers_menu <<< $'2\n0'
+    t_assert '未托管的 warp tag 保留，自动新增使用序号' jq -e '
+        (.endpoints|length==2) and .endpoints[0].tag=="warp" and .endpoints[0].address==["10.0.0.2/32","fd00::2/128"]
+        and .endpoints[1].tag=="warp-2" and .endpoints[1].address==["172.16.0.2/32","2606:4700:110:8a36::2/128"]' "$SBD_CONFIG"
 }
 t_case 'endpoint 原生入口/出口关联和删除保护' endpoint_routes
 t_case 'endpoint preferred_by 存活引用保护' preferred_routes
@@ -202,9 +208,9 @@ t_case 'endpoint state 提交失败整组恢复' state_write_failure
 t_case 'connector 发布后 SIGKILL 恢复旧事实' kill_recovery
 t_case 'endpoint 服务激活失败不假报成功' activation_failure
 t_case 'connector 管理不偷偷绑定 WS 或修改分享' ws_not_rebound
-t_case '首次配置 WireGuard 完整向导与秘密不回显' wireguard_menu
+t_case '首次配置自动获取 WARP、固定参数与秘密不回显' warp_menu
 t_case 'Cloudflared 完整向导与秘密不回显' cloudflare_menu
 t_case 'Cloudflared 详情脱敏显示' cloudflare_detail
 t_case 'Cloudflared 切换 token 保留其他字段' cloudflare_token_edit
-t_case '连接标识在连接参数之后询问并带默认值' tag_after_fields
+t_case '自定义 warp tag 不覆盖，自动新增使用序号' warp_tag_collision
 t_finish

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2329
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/harness.sh"
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/peers.sh"
 
@@ -6,9 +7,51 @@ cancel_contract() {
     t_fresh
     t_run 0 sbd_peers_menu <<< 0
     t_run 0 sbd_peers_menu < /dev/null
-    t_run 2 sbd_peers_menu <<< $'2\nwg-fixture'
-    t_assert 'EOF/拒绝不创建配置' test ! -e "$SBD_CONFIG"
+    sbd_peer_warp_download() { return 1; }
+    t_run 1 sbd_peers_menu <<< 2
+    t_contains "$CASE_TMP/output" 'WARP 自动注册失败'
+    t_assert 'EOF/自动获取失败不创建配置' test ! -e "$SBD_CONFIG"
     t_assert 'EOF/拒绝不创建原生认证目录' test ! -e "$SBD_STATE_DIR/tailscale"
+}
+warp_contract() {
+    t_fresh
+    local value
+    t_assert 'WARP 注册接口请求 sing-box 原生格式' test "$SBD_PEER_WARP_API" = 'https://warp.cloudflare.now.cc/?run=register&format=sing-box'
+    sbd_peer_warp_download() { cp "$ROOT/tests/fixtures/warp-api.json" "$1"; }
+    t_run 0 sbd_peer_warp_obtain
+    value="$SBD_PEER_VALUE"
+    t_assert 'WARP API sing-box endpoint 映射与保留' jq -e '
+        .type=="wireguard" and .tag=="warp" and .system==false and .listen_port==0
+        and .address==["172.16.0.2/32","2606:4700:110:8a36::2/128"]
+        and .mtu==1280 and .peers[0].address=="engage.cloudflareclient.com"
+        and .peers[0].port==2408 and .peers[0].reserved==[1,2,3]
+        and .peers[0].allowed_ips==["0.0.0.0/0","::/0"]' <<< "$value"
+    t_run 0 python3 "$ROOT/support/warp.py" normalize "$ROOT/tests/fixtures/warp-api-defaults.json"
+    value=$(cat "$CASE_TMP/output")
+    t_assert '缺省字段与裸 IPv6 endpoint 归一正确' jq -e '
+        .address==["172.16.0.3/32"] and .mtu==1280
+        and .peers[0].address=="2606:4700:110:8a36::3" and .peers[0].port==2408
+        and .peers[0].reserved==[0,0,0]
+        and .peers[0].allowed_ips==["0.0.0.0/0","::/0"]' <<< "$value"
+}
+warp_failures() {
+    t_fresh
+    local key
+    key=$(jq -r '.endpoints[0].private_key' "$ROOT/tests/fixtures/warp-api.json") || exit 1
+    cp "$ROOT/tests/fixtures/warp-api.json" "$CASE_TMP/raw" || exit 1
+    sbd_peer_warp_download() { cp "$CASE_TMP/raw" "$1"; }
+    t_run 0 sbd_peer_warp_obtain
+    t_absent "$CASE_TMP/output" "$key"
+    sbd_peer_warp_download() { return 1; }
+    t_run 1 sbd_peer_warp_obtain
+    sbd_peer_warp_download() { cp "$CASE_TMP/raw" "$1"; }
+    printf '{"outbounds":[' > "$CASE_TMP/raw" || exit 1
+    t_run 1 sbd_peer_warp_obtain
+    jq 'del(.endpoints[0].private_key)' "$ROOT/tests/fixtures/warp-api.json" > "$CASE_TMP/raw" || exit 1
+    t_run 1 sbd_peer_warp_obtain
+    jq '.endpoints[0].peers[0].reserved=[1,2]' "$ROOT/tests/fixtures/warp-api.json" > "$CASE_TMP/raw" || exit 1
+    t_run 1 sbd_peer_warp_obtain
+    t_contains "$CASE_TMP/output" '配置未修改'
 }
 wireguard_contract() {
     t_policy_seed
@@ -67,7 +110,9 @@ tagless_target_contract() {
     t_absent "$CASE_TMP/output" null
     t_run 2 sbd_policy_target dns <<< 2
 }
-t_case '连接对象菜单取消、必填 EOF ' cancel_contract
+t_case '连接对象菜单取消、EOF 与 WARP 自动获取失败' cancel_contract
+t_case 'WARP 注册 API sing-box 字段映射与缺省归一' warp_contract
+t_case 'WARP 下载/JSON/密钥/reserved 失败均不写入' warp_failures
 t_case 'WireGuard 原生 endpoints 与 peer reserved 真实检查' wireguard_contract
 t_case 'Cloudflared QUIC/HTTP2 原生入站和秘密不回显' cloudflare_contract
 t_case '密钥/token/CIDR 字段重问与核心 token 解析' field_contract
