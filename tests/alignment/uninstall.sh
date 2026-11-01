@@ -30,6 +30,7 @@ uninstall_keep() {
     t_assert '核心已移除' test ! -e "$SBD_BINARY"
     t_contains "$SBD_APP/user-notes.txt" 'unknown user'
     t_assert '卸载事实写入 state' jq -e '.installed==false' "$SBD_STATE"
+    t_assert 'keep 模式仍清空临时 work 目录' test ! -e "$SBD_WORK"
 }
 uninstall_purge() {
     u_seed
@@ -55,6 +56,16 @@ uninstall_purge() {
     t_contains "$SBD_ROOT/user-notes.txt" 'unknown user'
     t_contains "$CASE_TMP/external.pem" 'external keep'
     t_contains "$SBD_STATE_DIR/tailscale/user-unmanaged/state" 'unmanaged state'
+}
+uninstall_purge_clean_tree() {
+    u_seed
+    local plan
+    rm -f "$SBD_EXPORTS/node.txt" || exit 1
+    plan=$(sbd_uninstall_plan purge) || exit 1
+    t_run 0 sbd_write_lock sbd_uninstall_locked purge "$plan"
+    t_assert 'purge 清除空的 state 目录' test ! -e "$SBD_STATE_DIR"
+    t_assert 'purge 清除空的 work 目录' test ! -e "$SBD_WORK"
+    t_assert 'purge 删除空的部署根' test ! -e "$SBD_ROOT"
 }
 uninstall_failure() {
     u_seed
@@ -122,6 +133,7 @@ history_install() {
 }
 t_case '保留模式卸载运行文件，原路径数据与未知文件保留' uninstall_keep
 t_case '明确 purge 只清已知自有数据，外部/未知文件保留' uninstall_purge
+t_case 'pure purge 清理完成后不残留空 state/work 目录' uninstall_purge_clean_tree
 t_case '卸载停止失败保留入口和可重试记录' uninstall_failure
 t_case '同名旧布局服务一并卸载，不再按内容拒绝' uninstall_same_name
 t_case '卸载预览取消保留所有运行文件' uninstall_cancel

@@ -380,13 +380,14 @@ sbd_engine_stage_remove() {
 }
 
 sbd_engine_install() (
-    local requested="$1" stage version backend rc=0
+    local requested="$1" stage version backend rc=0 fresh=false
     sbd_directories || return 1
+    [[ -e "$SBD_BINARY" ]] || fresh=true
     stage=$(mktemp -d "$SBD_WORK/download.XXXXXX") || { _error '创建下载暂存目录失败'; return 1; }
     trap 'sbd_engine_stage_remove "$stage" || exit 1' EXIT
     sbd_engine_fetch "$requested" "$stage" || return 1
     version=$(cat "$stage/version") || { _error '读取候选版本失败'; return 1; }
-    printf '将安装 sing-box %s；运行中升级会重启，原本停止的会在完成后询问是否启动。\n' "$version"
+    printf '将安装 sing-box %s；首次安装完成后自动启动，已有服务保持原运行态。\n' "$version"
     if [[ "$version" != 1.14.* ]]; then sbd_info '跨 1.14 基线：请先核对官方 changelog；不自动迁移弃用配置，候选校验失败将取消'; fi
     sbd_read_required '确认安装此稳定版本？输入 y 确认，其他输入取消' || return $?
     [[ "$SBD_REPLY" = y ]] || { sbd_info '已取消核心安装'; return 2; }
@@ -394,8 +395,13 @@ sbd_engine_install() (
     if [[ "$backend" = openrc ]]; then sbd_engine_logrotate_ready || return 1; fi
     sbd_engine_commit "$stage" || rc=$?
     [[ "$rc" = 0 ]] || return 1
-    sbd_success "核心 $version、匹配 Schema 与服务定义已提交；未验证外网连通"
-    sbd_service_after_change || sbd_info '核心已提交，但服务尚未运行；按上方提示处理后客户端才能连接'
+    if [[ "$fresh" = true ]]; then
+        sbd_engine_control restart || { _error '核心已提交，但首次启动失败；请检查上方错误'; return 1; }
+        sbd_success "核心 $version、匹配 Schema 与服务定义已提交并启动；未验证外网连通"
+    else
+        sbd_success "核心 $version、匹配 Schema 与服务定义已提交；未验证外网连通"
+        sbd_service_after_change || sbd_info '核心已提交，但服务尚未运行；按上方提示处理后客户端才能连接'
+    fi
 )
 
 sbd_engine_control_locked() {
@@ -491,7 +497,18 @@ sbd_uninstall_locked() {
     fi
     rm -f -- "$SBD_COMMAND" || { _error '快捷命令清理失败'; return 1; }
     rm -f -- "$helper" "$SBD_STATE_DIR/uninstall.json" || { _error '卸载收尾未完成'; return 1; }
-    sbd_info "未确认归属的残留及所选保留数据仍在 $SBD_ROOT；不删除部署根或其他服务"
+    # helper 和可重试清单会暂时占用 state/work，收尾后只删除确定已空的目录。
+    rmdir -- "$SBD_WORK" 2>/dev/null || true
+    if [[ "$mode" = purge ]]; then
+        rmdir -- "$SBD_STATE_DIR" 2>/dev/null || true
+        if rmdir -- "$SBD_ROOT" 2>/dev/null; then
+            sbd_info '已清除可确认归属的数据；空的部署根目录已删除'
+        else
+            sbd_info "已清除可确认归属的数据；未知或未托管内容仍在 $SBD_ROOT"
+        fi
+    else
+        sbd_info "所选保留数据及未确认归属的残留仍在 $SBD_ROOT；不删除部署根或其他服务"
+    fi
 }
 
 sbd_uninstall_menu() {

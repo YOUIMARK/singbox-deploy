@@ -28,7 +28,14 @@ def build(root, mode):
     if mode == "purge":
         config = json.loads((root / "confs/config.json").read_text()) if (root / "confs/config.json").is_file() else {}
         registry = json.loads((root / "state/registry.json").read_text())
-        for name in ("confs/config.json", "confs/schema.json", "assets/cache.db", "logs/sing-box.log"):
+        for name in (
+            "confs/config.json",
+            "confs/schema.json",
+            "confs/input.json",
+            "confs/core-version",
+            "assets/cache.db",
+            "logs/sing-box.log",
+        ):
             files.add(str(root / name))
         for p in (root / "exports").iterdir():
             if p.name in ("links.txt", "schema.json") or any(p.name == n["id"] + suffix for n in registry.get("nodes", []) for suffix in (".json", ".txt")):

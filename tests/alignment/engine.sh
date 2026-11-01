@@ -294,6 +294,18 @@ menu_cancel_install() {
     t_run 2 sbd_engine_install latest <<< n
     e_old
 }
+fresh_install_starts_service() {
+    e_fixture systemd no
+    sbd_engine_fetch() {
+        cp -a "$CASE_TMP/candidate/engine" "$2/engine" || return 1
+        cp "$CASE_TMP/candidate/version" "$2/version" || return 1
+        cp "$CASE_TMP/candidate/asset" "$2/asset"
+    }
+    t_run 0 sbd_engine_install latest <<< y
+    t_assert '首次安装完成后自动启动服务' test "$(cat "$CASE_TMP/runtime")" = running
+    t_absent "$CASE_TMP/output" '是否立即启动服务'
+    t_contains "$CASE_TMP/output" '已提交并启动'
+}
 enable_unknown() {
     e_fixture
     original=$(declare -f systemctl)
@@ -358,6 +370,7 @@ t_case '核心回滚失败保留并可重试' failed_rollback
 t_case '已接受核心收尾失败不逆转' accepted_recovery
 t_case '随包库部分复制失败不能发布' partial_bundle
 t_case '安装确认 EOF 与拒绝不变更' menu_cancel_install
+t_case '首次安装确认后自动启动服务' fresh_install_starts_service
 t_case '未知自启状态不能猜测覆盖' enable_unknown
 t_case 'daemon-reload 失败恢复旧版本' reload_failure
 t_case 'OpenRC 轮换提交失败整组恢复' openrc_log_failure
