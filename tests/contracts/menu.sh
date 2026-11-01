@@ -18,11 +18,40 @@ import sys
 text = open(sys.argv[1]).read()
 assert '\n  【核心管理】\n\n  【安装与更新】\n' in text, text
 assert '\n  [1] 安装\n\n  【服务控制】\n' in text, text
-assert '\n  [2] 启动\n\n  [0] 返回\n' in text, text
+assert '\n  [2] 启动\n  [0] 返回\n' in text, text
 assert '\n\n\n' not in text, text
 PY
     t_run 0 sbd_ui_menu '节点管理' '[1] 列出节点' '[0] 返回'
     t_contains "$CASE_TMP/output" $'  【节点管理】\n\n  [1] 列出节点'
+}
+zero_separate() {
+    COLUMNS=80 t_run 0 sbd_ui_options '[1] DNS' '[2] TLS' '[0] 返回'
+    t_assert '默认返回项紧跟上一项' python3 - "$CASE_TMP/output" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+assert '[2] TLS' in text, text
+assert '\n  [0] 返回\n' in text, text
+assert '\n\n  [0] 返回\n' not in text, text
+PY
+    COLUMNS=80 t_run 0 sbd_ui_options --zero-separate '[1] DNS' '[2] TLS' '[0] 退出'
+    t_assert '首页开关把返回项单独隔开' python3 - "$CASE_TMP/output" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+assert '\n\n  [0] 退出\n' in text, text
+PY
+    { sbd_ui_begin '添加节点'; sbd_ui_options '[1] Hysteria2' '[2] AnyTLS' '[0] 返回上一级'; } > "$CASE_TMP/output" 2>&1
+    t_assert '自绘标题的向导菜单同样紧跟返回项' python3 - "$CASE_TMP/output" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+assert '\n  [0] 返回上一级\n' in text, text
+assert '\n\n  [0] 返回上一级\n' not in text, text
+PY
+    COLUMNS=80 t_run 0 sbd_ui_options --compact --zero-separate '[1] DNS' '[2] TLS' '[0] 退出'
+    t_assert '首页同时开启精简间隔时开关仍然生效' python3 - "$CASE_TMP/output" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+assert '\n\n  [0] 退出\n' in text, text
+PY
 }
 compact_prompts() {
     { sbd_ui_menu '添加节点' '[1] Hysteria2' '[0] 返回上一级'
@@ -68,16 +97,18 @@ status_table() {
             '系统: Debian GNU/Linux 13 (trixie)' 'init: systemd' '' \
             '核心: 1.14.4' '服务: 运行中' '托管节点: 10 个' \
             '开机自启: 已开启' '配置: 已存在' '管理器: 0.1.0'
-        t_assert '三行状态分隔符按显示列对齐' python3 - "$CASE_TMP/output" "$cols" <<'PY'
+        t_assert '三行状态分隔符固定两格空白、不按上下行补空格' python3 - "$CASE_TMP/output" "$cols" <<'PY'
 import sys, unicodedata
 lines = open(sys.argv[1]).read().splitlines()
 def width(s):
     return sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in s)
 assert len(lines) == 3, lines
-bars = [[width(line[:i]) for i, c in enumerate(line) if c == '|'] for line in lines]
-assert bars[0][0] == bars[1][0] == bars[2][0], bars
-assert bars[1][1] == bars[2][1], bars
-assert all(width(line) <= int(sys.argv[2]) for line in lines), lines
+for line in lines:
+    assert width(line) <= int(sys.argv[2]), line
+    parts = line.split('|')
+    assert len(parts) >= 2, line
+    assert all(part.endswith('  ') and not part.endswith('   ') for part in parts[:-1]), line
+    assert all(part.startswith('  ') and not part.startswith('   ') for part in parts[1:]), line
 PY
     done
     COLUMNS=40 t_run 0 sbd_ui_status_table \
@@ -107,7 +138,7 @@ lines = open(sys.argv[1]).read().splitlines()
 for line, item in zip(lines, ('[2]', '[4]')):
     prefix = line[:line.index(item)]
     width = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix)
-    assert width == 26, (line, width)
+    assert width == 23, (line, width)
 PY
     done
 }
@@ -131,7 +162,7 @@ short_option_spacing() {
     local cols
     for cols in 80 100; do
         COLUMNS="$cols" t_run 0 sbd_ui_options '[1] 添加原生竞速组' '[2] 删除竞速组' '[3] DNS' '[4] TLS'
-        t_assert '短选项右列固定且至少间隔六个显示列' python3 - "$CASE_TMP/output" <<'PY'
+        t_assert '短选项右列固定且至少间隔三格空白' python3 - "$CASE_TMP/output" <<'PY'
 import re, sys, unicodedata
 lines = open(sys.argv[1]).read().splitlines()
 assert len(lines) == 2, lines
@@ -139,14 +170,25 @@ for line in lines:
     items = list(re.finditer(r'\[\d+\]', line))
     assert len(items) == 2, line
     prefix = line[:items[1].start()]
-    assert sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix) == 26, line
-    assert len(prefix) - len(prefix.rstrip()) >= 6, line
+    assert sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix) == 23, line
+    assert len(prefix) - len(prefix.rstrip()) >= 3, line
 PY
     done
     COLUMNS=80 t_run 0 sbd_ui_options '[1] DNS' '[2] TLS' '[3] JSON 替换托管上游' '[4] 删除上游'
     t_assert '长短选项混合时整组单列、不再交错布局' test "$(wc -l < "$CASE_TMP/output")" = 4
     COLUMNS=80 t_run 0 sbd_ui_options '[1] DNS' '[2] TLS'
     t_assert '上一组的单列状态不泄漏到下一组' test "$(wc -l < "$CASE_TMP/output")" = 1
+    COLUMNS=80 t_run 0 sbd_ui_options '@甲' '[1] DNS' '[2] TLS' \
+        '@乙' '[3] JSON 替换托管上游' '[4] 删除上游' '@丙' '[5] DNS' '[6] TLS'
+    t_assert '长项只让所在组单列、前后组仍双列' python3 - "$CASE_TMP/output" <<'PY'
+import re, sys
+lines = [line for line in open(sys.argv[1]).read().splitlines() if '[' in line]
+assert len(lines) == 4, lines
+assert re.search(r'\[1\].*\[2\]', lines[0]), lines
+assert '[3]' in lines[1] and '[4]' not in lines[1], lines
+assert '[4]' in lines[2] and '[3]' not in lines[2], lines
+assert re.search(r'\[5\].*\[6\]', lines[3]), lines
+PY
 }
 long_submenus() {
     t_fresh
@@ -226,14 +268,15 @@ pty_case() {
 }
 t_case '非终端标题与编号完整且无 ANSI' plain_menu
 t_case '首个分组不叠加标题空行、其余分组间距不变' section_spacing
+t_case '返回项默认紧跟上一项、仅首页开关单独隔开' zero_separate
 t_case '主菜单标题居中、窄屏不增加多余缩进' centered_title
 t_case '子菜单标题用【】、向导字段提示紧排' compact_prompts
 t_case '状态用分隔符紧凑排列、窄屏按字段换行' status_rows
-t_case 'Debian 状态分隔符跨行对齐且窄屏完整换行' status_table
+t_case 'Debian 状态分隔符固定两格且窄屏完整换行' status_table
 t_case '80/100 列双栏及中文对齐' column_layout
 t_case '窄屏与长标签回退单列' narrow_layout
 t_case '长项回退不改变后续编号配对' stable_pairs
-t_case '短选项双列留足间隔、长短混排统一单列' short_option_spacing
+t_case '短选项双列留足间隔、组内长短混排统一单列且组间不牵联' short_option_spacing
 t_case 'DNS/规则/证书/隧道/观测/维护/核心/链接真实菜单排版' long_submenus
 t_case 'C/UTF-8 下截图中的中文标签按字节正确计宽' byte_widths
 t_case '计宽工具失败明确返回错误、不继续错位渲染' width_failure

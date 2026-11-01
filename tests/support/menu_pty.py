@@ -99,9 +99,12 @@ try:
         lines = [line for line in plain.splitlines() if '  |  ' in line][:3]
         def width(value):
             return sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in value)
-        bars = [[width(line[:i]) for i, c in enumerate(line) if c == '|'] for line in lines]
-        assert bars[0][0] == bars[1][0] == bars[2][0], bars
-        assert bars[1][1] == bars[2][1], bars
+        assert len(lines) == 3, lines
+        for line in lines:
+            parts = line.split('|')
+            assert len(parts) >= 2, line
+            assert all(part.endswith('  ') and not part.endswith('   ') for part in parts[:-1]), line
+            assert all(part.startswith('  ') and not part.startswith('   ') for part in parts[1:]), line
         if scenario == 'status_colors':
             for value in ('Debian GNU/Linux 13 (trixie)', 'systemd', '10 个', '0.1.0', '1.14.4'):
                 assert f'\x1b[36m{value}\x1b[0m' in text(), value
@@ -130,7 +133,7 @@ try:
             line = next(line for line in lines if item in line)
             prefix = line[:line.index(item)]
             width = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in prefix)
-            assert width == (2 if columns == 40 else 26), (item, width, line)
+            assert width == (2 if columns == 40 else 23), (item, width, line)
         start = len(text())
         send('12\n')
         wait_for('按回车返回菜单', start)
