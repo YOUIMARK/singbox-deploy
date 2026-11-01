@@ -167,6 +167,13 @@ dns_support_required() {
     t_run 1 sbd_install_validate "$SBD_APP"
     t_contains "$CASE_TMP/output" 'support/dns_settings.py'
 }
+warp_support_required() {
+    t_fresh
+    grep -Fxv support/warp.py "$SBD_APP/manifest.txt" > "$CASE_TMP/manifest" || exit 1
+    cp "$CASE_TMP/manifest" "$SBD_APP/manifest.txt" || exit 1
+    t_run 1 sbd_install_validate "$SBD_APP"
+    t_contains "$CASE_TMP/output" 'support/warp.py'
+}
 t_case '首次发布清单、命令、记录成组提交' fresh_install
 t_case '更新管理器不碰配置和服务' preserve_config
 t_case '已有其他 sd 不覆盖' command_collision
@@ -183,4 +190,5 @@ t_case '落地复核失败恢复完整旧版本' published_tree_check
 t_case '远端更新下载失败未触碰安装' remote_failure
 t_case '策略关联 helper 是发布必需依赖' policy_support_required
 t_case '简易 DNS helper 是发布必需依赖' dns_support_required
+t_case 'WARP helper 是发布必需依赖' warp_support_required
 t_finish
