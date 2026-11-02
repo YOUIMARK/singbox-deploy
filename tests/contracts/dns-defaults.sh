@@ -14,7 +14,7 @@ fresh_defaults() {
     t_contains "$CASE_TMP/output" 'https://dns.quad9.net/dns-query'
     t_contains "$CASE_TMP/output" 'https://freedns.controld.com/p0'
     t_run 0 sbd_apply sbd_resolver_switch local
-    t_assert '新默认切换单上游会关闭本包竞速，不残留截获规则' jq -e '.dns.final=="system" and ((.dns.rules // [])|length==0)' "$SBD_CONFIG"
+    t_assert '新默认切换单上游会关闭竞速并清理其他内置 DoH' jq -e '.dns.final=="system" and (.dns.servers|map(.tag)==["system"]) and ((.dns.rules // [])|length==0)' "$SBD_CONFIG"
     t_run 0 sbd_resolver_summary
     t_contains "$CASE_TMP/output" '上游竞速: 关闭'
     t_run 0 sbd_resolver_menu <<< $'9\ny\n0'
@@ -30,6 +30,15 @@ old_config() {
     t_assert '旧用户显式恢复默认，保留原有 DNS 规则的优先级' jq -e '.dns.rules[0].domain=="custom.example" and (.dns.rules|length==10) and .route.rules[0].action=="resolve"' "$SBD_CONFIG"
     t_run 0 sbd_apply sbd_resolver_switch https://dns.google/dns-query
     t_assert '切回单上游只移除面板竞速组，自定义规则保留' jq -e '.dns.final=="google" and (.dns.rules|length==1) and .dns.rules[0].domain=="custom.example"' "$SBD_CONFIG"
+}
+split_default_race() {
+    t_fresh
+    t_stopped
+    t_run 0 sbd_apply sbd_entry_create "$(cat "$ROOT/tests/fixtures/entry-shadowsocks.json")"
+    jq '.dns.rules |= .[0:4] + [{domain:"custom.example","action":"route","server":"system"}] + .[4:]' "$SBD_CONFIG" > "$CASE_TMP/config.json" || exit 1
+    cp "$CASE_TMP/config.json" "$SBD_CONFIG" || exit 1
+    t_run 0 sbd_apply sbd_resolver_switch https://dns.google/dns-query
+    t_assert '首次切换仍识别被自定义规则拆开的默认竞速组' jq -e '.dns.final=="google" and (.dns.rules|length==1) and .dns.rules[0].domain=="custom.example"' "$SBD_CONFIG"
 }
 custom_race() {
     t_policy_seed
@@ -60,6 +69,7 @@ native_race() {
 }
 t_case '新配置默认 DoH 竞速、代理目标接入和单上游切换' fresh_defaults
 t_case '旧配置不静默迁移，显式恢复默认保留自定义规则' old_config
+t_case '首次切换识别拆开的默认竞速组' split_default_race
 t_case '自定义多个地址自动竞速、重复拒绝和幂等切换' custom_race
 t_case '默认 DNS 组配置与 state 提交失败完整回滚' race_failure
 t_case '真实核心竞速、对照绕过和最快上游失联回退' native_race

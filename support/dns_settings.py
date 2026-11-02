@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""DNS 简易入口：地址解析、只读摘要和不覆盖存量对象的默认上游切换。"""
+"""DNS 简易入口：地址解析、只读摘要和按 tag 切换上游。"""
 
+import copy
 import hashlib
 import ipaddress
 import json
@@ -47,6 +48,33 @@ def race_rules(tags):
          "response_rcode": rcode, "race": True}
         for rcode in ("NOERROR", "NXDOMAIN") for tag in tags
     ]
+
+
+def race_indexes(rules, expected):
+    starts = [
+        i for i in range(len(rules) - len(expected) + 1)
+        if rules[i:i + len(expected)] == expected
+    ]
+    if len(starts) == 1:
+        return list(range(starts[0], starts[0] + len(expected)))
+    if starts:
+        return None
+    matches = []
+    for start, rule in enumerate(rules):
+        if rule != expected[0]:
+            continue
+        indexes = [start]
+        cursor = start + 1
+        for wanted in expected[1:]:
+            while cursor < len(rules) and rules[cursor] != wanted:
+                cursor += 1
+            if cursor == len(rules):
+                break
+            indexes.append(cursor)
+            cursor += 1
+        else:
+            matches.append(indexes)
+    return matches[0] if len(matches) == 1 else None
 
 
 def host_name(value):
@@ -138,17 +166,51 @@ def remove_default_race(config, registry):
     if not any(rec.get("group") == RACE_GROUP for rec in owned):
         # 核心首次安装仅发布配置；首次切换时识别本包原样生成的默认组。
         expected = default_config()["dns"]["rules"]
-        rules = policy.array(config, "dns_rules")
-        starts = [i for i in range(len(rules) - len(expected) + 1) if rules[i:i + len(expected)] == expected]
-        if len(starts) == 1:
-            start = starts[0]
+        rules = config.get("dns", {}).get("rules", [])
+        indexes = race_indexes(rules, expected)
+        if indexes is not None:
             occupied = {rec["index"] for rec in owned}
-            if not any(i in occupied for i in range(start, start + len(expected))):
-                for offset, rule in enumerate(expected):
-                    owned.append({"id": f"{RACE_GROUP}.{offset}", "index": start + offset,
+            if not any(i in occupied for i in indexes):
+                for offset, (index, rule) in enumerate(zip(indexes, expected)):
+                    owned.append({"id": f"{RACE_GROUP}.{offset}", "index": index,
                                   "group": RACE_GROUP, "expected": rule})
     if any(rec.get("group") == RACE_GROUP for rec in owned):
         policy.edit(config, registry, {"area": "dns_rules", "action": "delete_group", "id": RACE_GROUP})
+
+
+def server_referenced(config, tag):
+    candidate = copy.deepcopy(config)
+    dns = candidate.setdefault("dns", {})
+    dns["servers"] = [server for server in dns.get("servers", []) if server.get("tag") != tag]
+    try:
+        policy.references(candidate)
+    except ValueError:
+        return True
+    return False
+
+
+def remove_unused_servers(config, registry, selected):
+    removed = []
+    default_servers = default_config()["dns"]["servers"]
+    while True:
+        managed = {rec["id"] for rec in policy.records(registry, "dns_servers")}
+        candidates = [
+            server for server in policy.array(config, "dns_servers")
+            if server.get("tag") and server["tag"] != "system" and server["tag"] not in selected
+            and not server_referenced(config, server["tag"])
+            and (server in default_servers or server["tag"] in managed)
+        ]
+        if not candidates:
+            break
+        for server in candidates:
+            tag = server["tag"]
+            if any(rec["id"] == tag for rec in policy.records(registry, "dns_servers")):
+                policy.edit(config, registry, {"area": "dns_servers", "action": "delete", "id": tag})
+            else:
+                policy.array(config, "dns_servers").remove(server)
+            if tag not in removed:
+                removed.append(tag)
+    return removed
 
 
 def switch(config, registry, address):
@@ -178,7 +240,15 @@ def switch(config, registry, address):
         if {"action": "resolve"} not in route.get("rules", []):
             policy.edit(config, registry, {"area": "route_rules", "action": "add", "id": "dns.default.resolve",
                                           "value": {"action": "resolve"}, "position": 0})
+    removed = remove_unused_servers(config, registry, set(tags))
     policy.references(config)
+    return removed
+
+
+def unchanged(config, registry, address):
+    candidate = copy.deepcopy(config)
+    switch(candidate, copy.deepcopy(registry), address)
+    return candidate == config
 
 
 def server_address(server):
@@ -207,7 +277,7 @@ def summary(config):
     rules = dns.get("rules", [])
     tags = [rule["server"] for rule in rules if rule.get("action") == "evaluate" and rule.get("tag") == "sd.dns." + rule.get("server", "")]
     expected = race_rules(tags)
-    if len(tags) > 1 and any(rules[i:i + len(expected)] == expected for i in range(len(rules) - len(expected) + 1)):
+    if len(tags) > 1 and race_indexes(rules, expected) is not None:
         mapped = {server.get("tag"): server for server in servers}
         result["address"] = ", ".join(server_address(mapped.get(tag, {})) for tag in tags)
         result["race"] = "开启" if {"action": "resolve"} in config.get("route", {}).get("rules", []) else "仅 DNS 查询（代理目标未接入）"
@@ -232,8 +302,15 @@ def main():
                 config = json.load(stream)
             with open(stage + "/registry.json", encoding="utf-8") as stream:
                 registry = json.load(stream)
-            switch(config, registry, address)
-            result = {"config": config, "registry": registry}
+            removed = switch(config, registry, address)
+            result = {"config": config, "registry": registry, "removed": removed}
+        elif command == "unchanged":
+            config_path, registry_path, address = sys.argv[2:5]
+            with open(config_path, encoding="utf-8") as stream:
+                config = json.load(stream)
+            with open(registry_path, encoding="utf-8") as stream:
+                registry = json.load(stream)
+            result = {"unchanged": unchanged(config, registry, address)}
         else:
             raise ValueError("未知 DNS 操作")
         print(json.dumps(result, ensure_ascii=False))

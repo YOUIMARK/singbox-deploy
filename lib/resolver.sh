@@ -59,6 +59,13 @@ sbd_resolver_switch() {
     sbd_policy_finish "$stage"
 }
 
+sbd_resolver_unchanged() {
+    local address="$1" report
+    [[ -f "$SBD_CONFIG" && -f "$SBD_REGISTRY" ]] || return 1
+    report=$(python3 "$SBD_APP/support/dns_settings.py" unchanged "$SBD_CONFIG" "$SBD_REGISTRY" "$address") || return 1
+    jq -er '.unchanged' <<< "$report"
+}
+
 sbd_resolver_summary() {
     local config="$SBD_CONFIG" report address strategy race
     if [[ ! -f "$config" ]]; then
@@ -74,7 +81,7 @@ sbd_resolver_summary() {
 }
 
 sbd_resolver_menu() {
-    local choice page address value rc config
+    local choice page address value rc config label
     while true; do
         sbd_ui_begin 'DNS 设置'
         sbd_resolver_summary || _error 'DNS 摘要读取失败，请检查完整配置'
@@ -120,7 +127,18 @@ sbd_resolver_menu() {
         else
             sbd_info "使用 DNS: $address；一个上游单独使用，多个上游自动竞速"
         fi
-        sbd_info '保留已有上游与自定义规则；仅替换本面板生成的竞速组'
+        sbd_info '未选中且未被引用的内置或已登记上游会清理；其他上游保留'
+        if sbd_resolver_unchanged "$address" >/dev/null 2>&1 && sbd_check_config >/dev/null 2>&1; then
+            case "$address" in
+                local) label='系统 DNS' ;;
+                default) label='默认 DoH 竞速' ;;
+                *) label="$address" ;;
+            esac
+            sbd_info "当前已是 $label；config.json 无需修改"
+            sbd_ui_pause "$page"
+            [[ "${SBD_UI_EOF:-false}" != true ]] || return 0
+            continue
+        fi
         rc=0; sbd_policy_confirm || rc=$?
         if [[ "$rc" = 2 ]]; then [[ "${SBD_UI_EOF:-false}" != true ]] || return 0; continue
         elif [[ "$rc" != 0 ]]; then return 1; fi

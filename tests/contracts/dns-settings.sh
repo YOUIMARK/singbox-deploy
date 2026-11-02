@@ -31,9 +31,13 @@ https://1.1.1.1/dns-query cloudflare
 https://dns.google/dns-query google
 local system
 PRESETS
+    t_assert '切回系统 DNS 后清理未选中的内置 DoH' jq -e '.dns.servers|map(.tag)==["system"]' "$SBD_CONFIG"
     local count
     count=$(jq '.dns.servers|length' "$SBD_CONFIG") || exit 1
-    t_assert '默认本地 resolver 被复用' test "$count" = 5
+    t_assert '切回系统 DNS 后只保留系统 bootstrap' test "$count" = 1
+    t_run 0 sbd_apply sbd_resolver_switch https://dns.alidns.com/dns-query
+    count=$(jq '.dns.servers|length' "$SBD_CONFIG") || exit 1
+    t_assert '当前与系统 bootstrap 同时存在' test "$count" = 2
     t_run 0 sbd_apply sbd_resolver_switch https://dns.alidns.com/dns-query
     t_assert '反复切换不重复增加相同上游' test "$(jq '.dns.servers|length' "$SBD_CONFIG")" = "$count"
     t_assert '域名上游有独立本地 bootstrap、启用系统 CA' jq -e '.dns.servers[]|select(.server=="dns.alidns.com")|.domain_resolver=="system" and .tls=={enabled:true,server_name:"dns.alidns.com"}' "$SBD_CONFIG"
@@ -86,7 +90,7 @@ collision_and_bootstrap() {
     jq '.policy.dns_servers=[]' "$SBD_REGISTRY" > "$CASE_TMP/registry.json" || exit 1
     cp "$CASE_TMP/registry.json" "$SBD_REGISTRY" || exit 1
     t_run 0 sbd_apply sbd_resolver_switch https://dns.example.com/dns-query
-    t_assert '生成标识碰撞时不覆盖或接管旧对象、bootstrap 独立' jq -e --arg old "$tag" '.dns.final!=$old and any(.dns.servers[];.tag==$old and .server=="192.0.2.53") and (.dns.final as $tag|.dns.servers[]|select(.tag==$tag)|.domain_resolver!="system" and .domain_resolver!=$tag)' "$SBD_CONFIG"
+    t_assert '生成标识碰撞时新建独立上游并保留未托管旧对象' jq -e --arg old "$tag" '.dns.final!=$old and any(.dns.servers[];.tag==$old and .server=="192.0.2.53") and (.dns.final as $tag|.dns.servers[]|select(.tag==$tag)|.domain_resolver!="system" and .domain_resolver!=$tag)' "$SBD_CONFIG"
     t_run 0 sbd_check_config
 }
 fixed_tag_collision() {
@@ -141,9 +145,35 @@ no_implicit_race() {
     t_run 0 sbd_apply sbd_resolver_switch https://1.1.1.1/dns-query
     t_run 0 sbd_apply sbd_resolver_switch https://dns.google/dns-query
     t_assert '添加多个预设只切换默认 DNS，不自动生成 evaluate/respond 竞速' jq -e '.dns.final=="google" and ((.dns.rules // [])|length==0)' "$SBD_CONFIG"
+    local cloudflare
+    cloudflare=$(jq -c '.dns.servers[]|select(.tag=="cloudflare")' "$SBD_APP/presets/base.json") || exit 1
+    t_run 0 sbd_apply sbd_resolver_server add cloudflare "$cloudflare"
     t_run 0 sbd_apply sbd_resolver_race '["cloudflare","google"]' '{"domain_suffix":["example.com"]}'
     t_run 0 sbd_apply sbd_resolver_switch https://doh.pub/dns-query
     t_assert '用户显式创建的竞速仍保留且使用固定 tag' jq -e '.dns.final=="dnspod" and (.dns.rules|length==4) and .dns.rules[0].server=="cloudflare" and .dns.rules[1].server=="google" and .dns.rules[2].race and .dns.rules[3].race' "$SBD_CONFIG"
+}
+preset_cleanup() {
+    t_policy_seed
+    t_run 0 sbd_apply sbd_resolver_server add manual '{"type":"udp","tag":"manual","server":"192.0.2.53","server_port":53}'
+    t_run 0 sbd_apply sbd_resolver_switch https://dns.alidns.com/dns-query
+    t_assert '手动新增但未引用的 DNS 同样按 tag 清理' jq -e '.dns.servers|map(.tag)==["system","alidns"]' "$SBD_CONFIG"
+    t_assert '手动 DNS 的托管登记同步清理' jq -e 'all(.policy.dns_servers[]; .id!="manual")' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_resolver_switch default
+    t_run 0 sbd_apply sbd_resolver_switch https://cloudflare-dns.com/dns-query
+    t_assert '选择单个预设时删除未选中的内置上游' jq -e '.dns.servers|map(.tag)==["system","cloudflare"]' "$SBD_CONFIG"
+    t_run 0 sbd_apply sbd_resolver_switch default
+    t_run 0 sbd_apply sbd_policy_rule dns_rules add '' '{"domain":"keep.example","action":"route","server":"quad9"}'
+    t_run 0 sbd_apply sbd_resolver_switch https://dns.google/dns-query
+    t_assert '自定义规则仍引用的内置 tag 不删除' jq -e '(.dns.servers|map(.tag)==["system","quad9","google"]) and .dns.rules[0].server=="quad9"' "$SBD_CONFIG"
+    t_assert '删除成功的内置上游同步移除托管登记' jq -e 'all(.policy.dns_servers[]; .id!="cloudflare" and .id!="controld")' "$SBD_REGISTRY"
+}
+unmanaged_cleanup_boundary() {
+    t_policy_seed
+    jq '.dns.servers += [{type:"udp",tag:"manual-raw",server:"192.0.2.53",server_port:53}]' "$SBD_CONFIG" > "$CASE_TMP/config.json" || exit 1
+    cp "$CASE_TMP/config.json" "$SBD_CONFIG" || exit 1
+    t_run 0 sbd_apply sbd_resolver_switch https://dns.alidns.com/dns-query
+    t_assert '未登记的手工 DNS 上游不在清理范围' jq -e 'any(.dns.servers[];.tag=="manual-raw" and .server=="192.0.2.53")' "$SBD_CONFIG"
+    t_assert '保留的手工 DNS 上游不伪造托管登记' jq -e 'all(.policy.dns_servers[]; .id!="manual-raw")' "$SBD_REGISTRY"
 }
 menu_flow() {
     t_policy_seed
@@ -159,6 +189,15 @@ menu_flow() {
     t_run 0 sbd_resolver_menu <<< $'8\n0'
     t_absent "$CASE_TMP/output" 'DNS 高级设置'
     t_contains "$CASE_TMP/output" '"default_domain_resolver"'
+}
+idempotent_menu() {
+    t_policy_seed
+    t_run 0 sbd_apply sbd_resolver_switch https://cloudflare-dns.com/dns-query
+    t_entry_save
+    t_run 0 sbd_resolver_menu <<< $'4\n0'
+    t_contains "$CASE_TMP/output" '当前已是 https://cloudflare-dns.com/dns-query；config.json 无需修改'
+    t_absent "$CASE_TMP/output" 'DNS 设置已更新'
+    t_entry_unchanged
 }
 cancellation() {
     t_policy_seed
@@ -234,7 +273,10 @@ t_case '固定 tag 被托管或自定义不同配置占用时失败并保留旧�
 t_case '相同固定 tag 对象直接复用且不自动接管' fixed_tag_reuse
 t_case '旧散列 tag 与引用不自动迁移，重选预设使用固定 tag' legacy_tags_retained
 t_case '默认与预设切换不启用竞速，显式竞速组仍保留' no_implicit_race
+t_case '内置预设按 tag 清理并保留被引用上游' preset_cleanup
+t_case '仅清理内置或已登记的 DNS 上游' unmanaged_cleanup_boundary
 t_case '首页预设、自定义/策略/恢复默认与查看配置实际导航提交' menu_flow
+t_case '重复选择当前 DNS 明确提示无需修改且不提交空事务' idempotent_menu
 t_case '取消、EOF、无效地址不改变当前配置与登记' cancellation
 t_case 'state 提交失败整组回滚且不假报成功' state_failure
 t_case '运行中服务激活失败恢复旧配置与管理事实' activation_failure
