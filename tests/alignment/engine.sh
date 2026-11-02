@@ -140,6 +140,13 @@ fresh_install() {
     t_assert '基线无业务节点' jq -e '(.inbounds // [])==[]' "$SBD_CONFIG"
     t_assert '首次安装生成配置分片' test -n "$(find "$SBD_CONF_PARTS" -maxdepth 1 -name '*.json' -print -quit)"
 }
+keep_reinstall() {
+    e_fixture systemd yes
+    rm "$SBD_BINARY" || exit 1
+    t_run 0 sbd_engine_commit "$CASE_TMP/candidate"
+    t_assert '重装后核心已恢复' test -x "$SBD_BINARY"
+    t_assert '重装使用候选核心合并保留分片' jq -e '.log.level=="warn"' "$SBD_CONF_PARTS/00_base.json"
+}
 running_upgrade() {
     e_fixture
     printf 'running\n' > "$CASE_TMP/runtime" || exit 1
@@ -163,6 +170,7 @@ t_case '稳定版与 amd64/arm64 默认-musl 映射' asset_contract
 t_case '完整发行包解压与版本实测' unpack_contract
 t_case 'latest 与指定稳定版下载实际参数' fetch_contract
 t_case '首次核心安装自启但保持停止' fresh_install
+t_case '核心文件缺失时使用候选核心合并分片重装' keep_reinstall
 t_case '运行升级停止后再启动验证' running_upgrade
 t_case '核心提交 SIGKILL 后自动恢复' kill_recover
 t_finish

@@ -7,6 +7,19 @@ import shutil
 import sys
 
 
+CONFIG_PART_NAMES = (
+    "00_base.json",
+    "10_dns.json",
+    "20_endpoints.json",
+    "30_inbounds.json",
+    "40_outbounds.json",
+    "50_route.json",
+    "60_services.json",
+    "70_experimental.json",
+    "90_extra.json",
+)
+
+
 def build(root, mode):
     root = Path(root).resolve()
     files, trees = set(), set()
@@ -36,8 +49,10 @@ def build(root, mode):
         ):
             files.add(str(root / name))
         parts = root / "confs"
-        if parts.is_dir():
-            trees.add(str(parts))
+        for name in CONFIG_PART_NAMES:
+            path = parts / name
+            if path.is_file():
+                files.add(str(path))
         for p in (root / "exports").iterdir():
             if p.name in ("links.txt", "schema.json") or any(p.name == n["id"] + suffix for n in registry.get("nodes", []) for suffix in (".json", ".txt")):
                 files.add(str(p))

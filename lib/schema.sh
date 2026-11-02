@@ -110,10 +110,10 @@ sbd_config_merge() {
 }
 
 sbd_config_stage_current() {
-    local target="$1" raw="$1.merge"
+    local target="$1" binary="${2:-$SBD_BINARY}" raw="$1.merge"
     mkdir -p -- "$(dirname -- "$target")" || { _error '暂存配置目录创建失败'; return 1; }
     if sbd_config_parts_present; then
-        sbd_config_merge "$SBD_BINARY" "$SBD_CONF_PARTS" "$raw" || return 1
+        sbd_config_merge "$binary" "$SBD_CONF_PARTS" "$raw" || return 1
         jq '. + {"$schema":"./schema.json"}' "$raw" > "$target" || { _error '分片合并结果写入暂存失败'; return 1; }
         rm -f -- "$raw" || { _error '分片合并临时文件清理失败'; return 1; }
         return 0
