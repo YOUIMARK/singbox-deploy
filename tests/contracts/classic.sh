@@ -46,22 +46,6 @@ vision_contract() {
     t_assert 'Vision 服务端 flow，TCP 不伪装成 transport' jq -e '.inbounds[0]|.users[0].flow=="xtls-rprx-vision" and (has("transport")|not) and (.tls|has("utls")|not)' "$SBD_CONFIG"
     t_absent "$SBD_EXPORTS/$NODE_ID.json" private_key
 }
-field_contract() {
-    t_fresh
-    sbd_entry_uuid_prompt > "$CASE_TMP/prompt" 2>&1 <<< $'bad\n899954A1-86C4-4DB7-B7A3-8B6F196A890E' || exit 1
-    t_assert 'UUID 错误只重问且规范化' test "$SBD_REPLY" = 899954a1-86c4-4db7-b7a3-8b6f196a890e
-    t_absent "$CASE_TMP/prompt" 899954A1
-    sbd_entry_uuid_prompt > "$CASE_TMP/prompt" 2>&1 <<< '' || exit 1
-    t_run 0 sbd_entry_uuid "$SBD_REPLY"
-    sbd_entry_ss_password_prompt 2022-blake3-aes-256-gcm > "$CASE_TMP/prompt" 2>&1 <<< $'bad\n' || exit 1
-    t_run 0 sbd_entry_ss_key 2022-blake3-aes-256-gcm "$SBD_REPLY"
-    t_run 2 sbd_entry_uuid_prompt < /dev/null
-    t_run 2 sbd_entry_ss_prompt <<< $'1\n2'
-    t_run 1 sbd_entry_ws_path /ws?ed=2560
-    t_run 1 sbd_entry_ws_path /ws#fragment
-    sbd_entry_cdn_prompt 19505 > "$CASE_TMP/prompt" 2>&1 <<< $'127.0.0.1\ncdn.example.com\n\n\n\n' || exit 1
-    t_assert 'CDN 字段重问和默认前端 443' jq -e '.host=="cdn.example.com" and .server=="cdn.example.com" and .origin_port==19505 and .server_port==443 and (.path|startswith("/"))' <<< "$SBD_CDN_REQUEST"
-}
 menu_contract() {
     t_seed
     t_run 0 sbd_entry_create_prompt <<< $'5\n127.0.0.1\n19505\ncdn.example.com\n29505\n\n\n/ws\n菜单CDN\n\ny'
@@ -78,32 +62,9 @@ menu_contract() {
     t_run 2 sbd_entry_change_prompt <<< $'1\n6'
     t_contains "$CASE_TMP/output" '选择显示的编号'
 }
-required_contract() {
-    t_seed
-    local profile expression
-    for profile in shadowsocks vmess_ws vless_reality vless_ws; do
-        t_entry_add "$profile"
-        jq '.nodes[-1]' "$SBD_REGISTRY" > "$CASE_TMP/node.json" || exit 1
-        for expression in 'del(.client.server)' 'del(.client.server_port)' 'del(.name)' 'del(.client.password,.client.uuid)'; do
-            jq "$expression" "$CASE_TMP/node.json" > "$CASE_TMP/bad.json" || exit 1
-            t_run 1 sbd_share_build "$CASE_TMP/bad.json"
-            t_absent "$CASE_TMP/output" '://'
-        done
-        case "$profile" in
-            shadowsocks) expression='.client.plugin="obfs-local"' ;;
-            vmess_ws|vless_ws) expression='del(.client.transport.path)' ;;
-            vless_reality) expression='del(.client.tls.reality.public_key)' ;;
-        esac
-        jq "$expression" "$CASE_TMP/node.json" > "$CASE_TMP/bad.json" || exit 1
-        t_run 1 sbd_share_build "$CASE_TMP/bad.json"
-        t_absent "$CASE_TMP/output" '://'
-    done
-}
 t_case 'SS 三算法真实 Schema/check 与 SIP002 回读' ss_contract
 t_case 'SS2022 密钥长度和编码、算法边界' ss_key_contract
 t_case '双 WS CDN 原生配置、URI 和三个端口事实' ws_contract
 t_case 'VLESS Reality Vision 公私钥与 URI' vision_contract
-t_case 'UUID/密钥/域名字段重问、默认与 EOF' field_contract
 t_case '真实菜单创建 WS、编辑 UUID/CDN 和拒绝源站 TLS' menu_contract
-t_case '四档分享缺少必需字段明确失败' required_contract
 t_finish

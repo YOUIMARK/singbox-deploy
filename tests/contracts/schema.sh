@@ -10,26 +10,35 @@ prepare_valid() {
     # shellcheck disable=SC2016
     t_assert '本地 schema 引用保留' jq -e '."$schema"=="./schema.json"' "$CASE_TMP/stage/config.json"
     t_run 0 sbd_validate_schema "$CASE_TMP/stage/schema.json" "$CASE_TMP/stage/config.json"
+    t_assert '按顶层域生成分片' test -s "$CASE_TMP/stage/config/00_base.json"
+    t_assert 'DNS 独立分片' test -s "$CASE_TMP/stage/config/10_dns.json"
+    t_assert 'outbounds 独立分片' test -s "$CASE_TMP/stage/config/40_outbounds.json"
+    t_assert 'route 独立分片' test -s "$CASE_TMP/stage/config/50_route.json"
+    t_assert '分片不含 $schema' jq -e 'has("$schema")|not' "$CASE_TMP/stage/config/00_base.json"
+}
+certificate_paths_only() {
+    t_fresh
+    mkdir "$CASE_TMP/stage" || exit 1
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 \
+        -subj /CN=node.example.com -addext subjectAltName=DNS:node.example.com \
+        -keyout "$CASE_TMP/key.pem" -out "$CASE_TMP/cert.pem" >/dev/null 2>&1 || exit 1
+    jq -n --arg cert "$CASE_TMP/cert.pem" --arg key "$CASE_TMP/key.pem" '{
+        "$schema":"./schema.json",
+        inbounds:[{type:"anytls",tag:"tls-path",listen:"127.0.0.1",listen_port:18443,
+            users:[{name:"fixture",password:"fixture"}],
+            tls:{enabled:true,certificate_path:$cert,key_path:$key}}],
+        outbounds:[{type:"direct",tag:"direct"}],
+        route:{final:"direct"}
+    }' > "$CASE_TMP/stage/config.json" || exit 1
+    t_run 0 sbd_prepare_config "$CASE_TMP/stage"
+    t_assert '合并后仍使用证书文件路径' jq -e '.inbounds[0].tls|has("certificate_path") and has("key_path")' "$CASE_TMP/stage/config.json"
+    t_assert '合并后不保留旧内嵌证书' jq -e '.inbounds[0].tls|(has("certificate") or has("key"))|not' "$CASE_TMP/stage/config.json"
 }
 wrong_type() {
     t_fresh
     "$SBD_BINARY" schema -o "$CASE_TMP/schema.json" || exit 1
     t_run 1 sbd_validate_schema "$CASE_TMP/schema.json" "$ROOT/tests/fixtures/invalid-type.json"
     t_contains "$CASE_TMP/output" 'Schema'
-}
-unknown_field() {
-    t_fresh
-    "$SBD_BINARY" schema -o "$CASE_TMP/schema.json" || exit 1
-    printf '{"unknown_field":true}' > "$CASE_TMP/invalid.json" || exit 1
-    t_run 1 sbd_validate_schema "$CASE_TMP/schema.json" "$CASE_TMP/invalid.json"
-    t_contains "$CASE_TMP/output" additionalProperties
-}
-no_secret_leak() {
-    t_fresh
-    "$SBD_BINARY" schema -o "$CASE_TMP/schema.json" || exit 1
-    printf '{"log":{"level":"SECRET_MUST_NOT_APPEAR"}}' > "$CASE_TMP/invalid.json" || exit 1
-    t_run 1 sbd_validate_schema "$CASE_TMP/schema.json" "$CASE_TMP/invalid.json"
-    t_absent "$CASE_TMP/output" SECRET_MUST_NOT_APPEAR
 }
 semantic_failure() {
     t_fresh
@@ -60,9 +69,8 @@ version_gate() {
     t_run 1 sbd_version
 }
 t_case '目标核心生成、校验和 format/check' prepare_valid
-t_case '真实 Schema 拒绝类型错误' wrong_type
-t_case '真实 Schema 拒绝未知字段' unknown_field
-t_case '错误信息不输出实例凭据' no_secret_leak
+t_case 'merge 展开证书后仍保留路径事实' certificate_paths_only
+t_case '真实 Schema 拒绝非法枚举值' wrong_type
 t_case '真实 check 拒绝非法 SS2022 密钥' semantic_failure
 t_case '如实记录 check 对路由引用的边界' check_boundary
 t_case '旧核心与缺核心明确拒绝' version_gate

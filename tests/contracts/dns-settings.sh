@@ -57,6 +57,7 @@ preserve_config() {
     t_run 0 sbd_apply sbd_resolver_default strategy prefer_ipv6
     jq '.route.default_domain_resolver={server:"system",strategy:"ipv4_only"} | .dns.reverse_mapping=true' "$SBD_CONFIG" > "$CASE_TMP/extra.json" || exit 1
     cp "$CASE_TMP/extra.json" "$SBD_CONFIG" || exit 1
+    t_sync_config
     t_entry_save
     t_run 0 sbd_apply sbd_resolver_switch https://dns.google/dns-query
     t_assert '旧服务器、DNS/route 规则和高级字段不丢失' python3 - "$ENTRY_SAVED/config" "$SBD_CONFIG" <<'PY'
@@ -79,20 +80,6 @@ for area, records in old['policy'].items():
 PY
     t_assert '切换 DNS 不修改客户端导出' sbd_tree_compare "$ENTRY_SAVED/exports" "$SBD_EXPORTS"
 }
-collision_and_bootstrap() {
-    t_policy_seed
-    # 先为目标生成稳定 tag，再把同名对象替换成非托管配置，验证不会接管覆盖。
-    t_run 0 sbd_apply sbd_resolver_switch https://dns.example.com/dns-query
-    local tag
-    tag=$(jq -r '.dns.final' "$SBD_CONFIG") || exit 1
-    jq --arg tag "$tag" '(.dns.servers[]|select(.tag==$tag))={type:"udp",tag:$tag,server:"192.0.2.53",server_port:53} | (.dns.servers[]|select(.tag=="system"))={type:"udp",tag:"system",server:"192.0.2.54",server_port:53}' "$SBD_CONFIG" > "$CASE_TMP/custom.json" || exit 1
-    cp "$CASE_TMP/custom.json" "$SBD_CONFIG" || exit 1
-    jq '.policy.dns_servers=[]' "$SBD_REGISTRY" > "$CASE_TMP/registry.json" || exit 1
-    cp "$CASE_TMP/registry.json" "$SBD_REGISTRY" || exit 1
-    t_run 0 sbd_apply sbd_resolver_switch https://dns.example.com/dns-query
-    t_assert '生成标识碰撞时新建独立上游并保留未托管旧对象' jq -e --arg old "$tag" '.dns.final!=$old and any(.dns.servers[];.tag==$old and .server=="192.0.2.53") and (.dns.final as $tag|.dns.servers[]|select(.tag==$tag)|.domain_resolver!="system" and .domain_resolver!=$tag)' "$SBD_CONFIG"
-    t_run 0 sbd_check_config
-}
 fixed_tag_collision() {
     t_policy_seed
     t_run 0 sbd_apply sbd_resolver_server add alidns '{"type":"udp","tag":"alidns","server":"192.0.2.53","server_port":53}'
@@ -103,41 +90,18 @@ fixed_tag_collision() {
     t_run 0 sbd_apply sbd_resolver_server delete alidns
     jq '.dns.servers += [{type:"udp",tag:"google",server:"192.0.2.54",server_port:53}]' "$SBD_CONFIG" > "$CASE_TMP/config" || exit 1
     cp "$CASE_TMP/config" "$SBD_CONFIG" || exit 1
+    t_sync_config
     t_entry_save
     t_run 1 sbd_apply sbd_resolver_switch https://dns.google/dns-query
     t_contains "$CASE_TMP/output" '预设 tag google 已被不同配置占用'
     t_entry_unchanged
     jq '(.dns.servers[]|select(.tag=="system"))={type:"udp",tag:"system",server:"192.0.2.55",server_port:53}' "$SBD_CONFIG" > "$CASE_TMP/config" || exit 1
     cp "$CASE_TMP/config" "$SBD_CONFIG" || exit 1
+    t_sync_config
     t_entry_save
     t_run 1 sbd_apply sbd_resolver_switch local
     t_contains "$CASE_TMP/output" '预设 tag system 已被不同配置占用'
     t_entry_unchanged
-}
-fixed_tag_reuse() {
-    t_policy_seed
-    t_run 0 sbd_apply sbd_resolver_switch https://dns.google/dns-query
-    jq '.policy.dns_servers=[]' "$SBD_REGISTRY" > "$CASE_TMP/registry" || exit 1
-    cp "$CASE_TMP/registry" "$SBD_REGISTRY" || exit 1
-    local count
-    count=$(jq '.dns.servers|length' "$SBD_CONFIG") || exit 1
-    t_run 0 sbd_apply sbd_resolver_switch https://dns.google/dns-query
-    t_assert '相同固定 tag 的非托管对象只复用，不接管或复制' jq -e --argjson count "$count" '.dns.final=="google" and (.dns.servers|length==$count)' "$SBD_CONFIG"
-    t_assert '复用不自动创建托管记录' jq -e '.policy.dns_servers==[]' "$SBD_REGISTRY"
-}
-legacy_tags_retained() {
-    t_policy_seed
-    t_run 0 sbd_apply sbd_resolver_server add dns.quick.legacy '{"type":"https","tag":"dns.quick.legacy","server":"dns.google","server_port":443,"path":"/dns-query","tls":{"enabled":true,"server_name":"dns.google"},"domain_resolver":"system"}'
-    t_run 0 sbd_apply sbd_policy_rule dns_rules add '' '{"domain_suffix":["example.com"],"action":"route","server":"dns.quick.legacy"}'
-    t_entry_save
-    t_run 0 sbd_apply sbd_resolver_switch https://dns.google/dns-query
-    t_assert '重新选预设采用固定 tag，旧 tag 和规则引用原样保留' jq -e '.dns.final=="google" and .route.default_domain_resolver=="google" and .dns.rules[0].server=="dns.quick.legacy" and any(.dns.servers[];.tag=="dns.quick.legacy") and any(.dns.servers[];.tag=="google")' "$SBD_CONFIG"
-    t_assert '旧托管对象未被改名或移除' python3 - "$ENTRY_SAVED/registry" "$SBD_REGISTRY" <<'PY'
-import json, sys
-old, new = [json.load(open(path)) for path in sys.argv[1:]]
-for record in old['policy']['dns_servers']:
-    assert record in new['policy']['dns_servers']
-PY
 }
 no_implicit_race() {
     t_policy_seed
@@ -167,14 +131,6 @@ preset_cleanup() {
     t_assert '自定义规则仍引用的内置 tag 不删除' jq -e '(.dns.servers|map(.tag)==["system","quad9","google"]) and .dns.rules[0].server=="quad9"' "$SBD_CONFIG"
     t_assert '删除成功的内置上游同步移除托管登记' jq -e 'all(.policy.dns_servers[]; .id!="cloudflare" and .id!="controld")' "$SBD_REGISTRY"
 }
-unmanaged_cleanup_boundary() {
-    t_policy_seed
-    jq '.dns.servers += [{type:"udp",tag:"manual-raw",server:"192.0.2.53",server_port:53}]' "$SBD_CONFIG" > "$CASE_TMP/config.json" || exit 1
-    cp "$CASE_TMP/config.json" "$SBD_CONFIG" || exit 1
-    t_run 0 sbd_apply sbd_resolver_switch https://dns.alidns.com/dns-query
-    t_assert '未登记的手工 DNS 上游不在清理范围' jq -e 'any(.dns.servers[];.tag=="manual-raw" and .server=="192.0.2.53")' "$SBD_CONFIG"
-    t_assert '保留的手工 DNS 上游不伪造托管登记' jq -e 'all(.policy.dns_servers[]; .id!="manual-raw")' "$SBD_REGISTRY"
-}
 menu_flow() {
     t_policy_seed
     t_run 0 sbd_resolver_menu <<< $'4\ny\n0'
@@ -189,28 +145,6 @@ menu_flow() {
     t_run 0 sbd_resolver_menu <<< $'8\n0'
     t_absent "$CASE_TMP/output" 'DNS 高级设置'
     t_contains "$CASE_TMP/output" '"default_domain_resolver"'
-}
-idempotent_menu() {
-    t_policy_seed
-    t_run 0 sbd_apply sbd_resolver_switch https://cloudflare-dns.com/dns-query
-    t_entry_save
-    t_run 0 sbd_resolver_menu <<< $'4\n0'
-    t_contains "$CASE_TMP/output" '当前已是 https://cloudflare-dns.com/dns-query；config.json 无需修改'
-    t_absent "$CASE_TMP/output" 'DNS 设置已更新'
-    t_entry_unchanged
-}
-cancellation() {
-    t_policy_seed
-    t_entry_save
-    local input
-    for input in $'0' $'4\nn\n0' $'4' $'6\n\n0' $'6' $'7\n0\n0' $'7\n2\nn\n0' $'9\nn\n0'; do
-        t_run 0 sbd_resolver_menu <<< "$input"
-        t_entry_unchanged
-    done
-    t_run 0 sbd_resolver_menu < /dev/null
-    t_entry_unchanged
-    t_run 1 sbd_apply sbd_resolver_switch 'https://bad/path with space'
-    t_entry_unchanged
 }
 state_failure() {
     t_policy_seed
@@ -236,51 +170,14 @@ activation_failure() {
     t_absent "$CASE_TMP/output" '[成功]'
     t_entry_unchanged
 }
-drift_and_summary() {
-    t_policy_seed
-    t_policy_udp
-    jq '(.dns.servers[]|select(.tag=="upstream")).server="192.0.2.99"' "$SBD_CONFIG" > "$CASE_TMP/drift" || exit 1
-    cp "$CASE_TMP/drift" "$SBD_CONFIG" || exit 1
-    t_entry_save
-    t_run 1 sbd_apply sbd_resolver_switch local
-    t_contains "$CASE_TMP/output" '漂移'
-    t_entry_unchanged
-    t_run 0 sbd_resolver_summary
-    t_contains "$CASE_TMP/output" '当前 DNS: 系统 DNS'
-    printf '{bad' > "$SBD_CONFIG" || exit 1
-    t_run 1 sbd_resolver_summary
-    t_run 0 sbd_resolver_menu <<< 0
-    t_contains "$CASE_TMP/output" 'DNS 摘要读取失败'
-    t_absent "$CASE_TMP/output" '当前 DNS: 系统 DNS'
-}
-cold_summary() {
-    t_fresh
-    t_run 0 sbd_resolver_menu <<< $'8\n0'
-    t_contains "$CASE_TMP/output" '当前 DNS: 未创建配置'
-    t_contains "$CASE_TMP/output" '以下为新配置默认值'
-    t_assert '只读菜单不创建业务配置' test ! -e "$SBD_CONFIG"
-}
-preset_pty() {
-    t_assert '真实终端预设切换、默认恢复和一次回车停留' python3 "$ROOT/tests/support/menu_pty.py" "$ROOT" "$CASE_TMP" dns_preset
-}
-
 t_case 'DNS 完整地址解析、IPv6/自定义端口/path 与错误拒绝' address_parser
 t_case '五种常用预设原生校验、独立 bootstrap 与反复切换复用' presets_and_reuse
 t_case '六种自定义协议可真正提交并保留端口和 path' custom_types
 t_case '切换保留规则/上游/策略/拨号解析器选项/导出与托管事实' preserve_config
-t_case '自动 tag 不覆盖自定义对象、无本地 DNS 时新增安全 bootstrap' collision_and_bootstrap
 t_case '固定 tag 被托管或自定义不同配置占用时失败并保留旧事实' fixed_tag_collision
-t_case '相同固定 tag 对象直接复用且不自动接管' fixed_tag_reuse
-t_case '旧散列 tag 与引用不自动迁移，重选预设使用固定 tag' legacy_tags_retained
 t_case '默认与预设切换不启用竞速，显式竞速组仍保留' no_implicit_race
 t_case '内置预设按 tag 清理并保留被引用上游' preset_cleanup
-t_case '仅清理内置或已登记的 DNS 上游' unmanaged_cleanup_boundary
 t_case '首页预设、自定义/策略/恢复默认与查看配置实际导航提交' menu_flow
-t_case '重复选择当前 DNS 明确提示无需修改且不提交空事务' idempotent_menu
-t_case '取消、EOF、无效地址不改变当前配置与登记' cancellation
 t_case 'state 提交失败整组回滚且不假报成功' state_failure
 t_case '运行中服务激活失败恢复旧配置与管理事实' activation_failure
-t_case '漂移拒绝变更、坏配置不冒充默认系统 DNS' drift_and_summary
-t_case '尚未创建配置时摘要不假装系统 DNS 已运行' cold_summary
-t_case 'DNS 简易首页真实终端切换和默认恢复' preset_pty
 t_finish

@@ -301,5 +301,6 @@ sbd_unavailable() {
 }
 
 sbd_config_hint() {
-    printf '\n  高级设置请直接编辑: %s\n' "$SBD_CONFIG"
+    printf '\n  高级设置请编辑配置分片: %s\n' "$SBD_CONF_PARTS"
+    printf '  运行配置由 sing-box merge 生成: %s\n' "$SBD_CONFIG"
 }

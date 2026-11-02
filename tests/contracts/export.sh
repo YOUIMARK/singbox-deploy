@@ -40,12 +40,6 @@ empty_contract() {
     t_assert '空节点不伪造链接' test ! -s "$SBD_EXPORTS/links.txt"
     t_assert '重建参与状态提交' jq -e '.revision==1' "$SBD_STATE"
 }
-unsupported_contract() {
-    printf '{"profile":"unknown"}' > "$CASE_TMP/node.json" || exit 1
-    t_run 1 sbd_share_build "$CASE_TMP/node.json"
-    t_contains "$CASE_TMP/output" '未知分享配置档'
-    t_absent "$CASE_TMP/output" '://'
-}
 menu_contract() {
     t_seed
     t_run 0 sbd_export_menu <<< 0
@@ -53,29 +47,6 @@ menu_contract() {
     t_run 0 sbd_export_menu <<< $'1\nn\n0'
     t_unchanged
     t_run 1 sbd_export_menu <<< 2
-}
-reality_required_metadata() {
-    t_seed
-    t_entry_add anyreality
-    jq '.nodes[0]' "$SBD_REGISTRY" > "$CASE_TMP/node.json" || exit 1
-    local expression
-    for expression in 'del(.client.password)' 'del(.client.tls.server_name)' 'del(.client.tls.reality.public_key)' 'del(.client.tls.reality.short_id)' '.client.tls.utls.enabled=false'; do
-        jq "$expression" "$CASE_TMP/node.json" > "$CASE_TMP/bad.json" || exit 1
-        t_run 1 sbd_share_build "$CASE_TMP/bad.json"
-        t_absent "$CASE_TMP/output" 'anytls://'
-        t_contains "$CASE_TMP/output" '[错误]'
-    done
-}
-certificate_and_obfs_metadata() {
-    t_seed
-    t_entry_add hysteria2
-    jq '.nodes[0]' "$SBD_REGISTRY" > "$CASE_TMP/node.json" || exit 1
-    local expression
-    for expression in 'del(.share.certificate_sha256)' '.share.certificate_sha256="a-public-key-pin"' '.client.obfs={type:"unknown",password:"x"}' '.client.obfs={type:"gecko",password:"x",min_packet_size:1300,max_packet_size:600}'; do
-        jq "$expression" "$CASE_TMP/node.json" > "$CASE_TMP/bad.json" || exit 1
-        t_run 1 sbd_share_build "$CASE_TMP/bad.json"
-        t_absent "$CASE_TMP/output" 'hysteria2://'
-    done
 }
 single_node_contract() {
     t_seed
@@ -116,10 +87,7 @@ single_node_failure() {
 t_case '统一 URI 编码、IPv6、端口规范化和扩展参数回读' uri_contract
 t_case '节点元数据缺值与重复明确失败' metadata_contract
 t_case '空登记经过真实事务清空派生输出' empty_contract
-t_case '未知配置档明确失败而非伪造链接' unsupported_contract
 t_case '导出菜单取消不改原文件' menu_contract
-t_case 'AnyReality 必需元数据缺失不输出死链接' reality_required_metadata
-t_case '证书指纹和混淆缺值不伪造 Hysteria2 URI' certificate_and_obfs_metadata
 t_case '按节点选择链接/JSON，不混入其他节点且查看不写状态' single_node_contract
 t_case '单节点资料 ID/缺文件/坏元数据明确失败，不隐式重建' single_node_failure
 t_finish

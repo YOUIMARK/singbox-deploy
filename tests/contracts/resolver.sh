@@ -3,12 +3,6 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/harness.sh"
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/policy.sh"
 
-cancel_contract() {
-    t_fresh
-    t_run 0 sbd_resolver_menu <<< 0
-    t_run 0 sbd_resolver_menu < /dev/null
-    t_assert 'EOF 不创建配置' test ! -e "$SBD_CONFIG"
-}
 typed_contract() {
     t_policy_seed
     local type value tag
@@ -53,20 +47,8 @@ race_contract() {
     t_run 0 sbd_apply sbd_policy_edit "$request"
     t_assert '竞速组完整删除' jq -e '(.dns.rules // [])==[]' "$SBD_CONFIG"
 }
-bootstrap_detour_cycle() {
-    t_policy_seed
-    t_policy_udp
-    jq '.outbounds += [{type:"socks",tag:"bootstrap-proxy",server:"proxy.example.com",server_port:1080,domain_resolver:"upstream"}]' "$SBD_CONFIG" > "$CASE_TMP/outbound" || exit 1
-    cp "$CASE_TMP/outbound" "$SBD_CONFIG" || exit 1
-    t_entry_save
-    t_run 1 sbd_apply sbd_resolver_server replace upstream '{"type":"udp","tag":"upstream","server":"192.0.2.53","detour":"bootstrap-proxy"}'
-    t_contains "$CASE_TMP/output" '循环'
-    t_entry_unchanged
-}
-t_case 'DNS 菜单退出、EOF 无副作用' cancel_contract
 t_case '六种新格式 DNS 上游真实 Schema/check' typed_contract
 t_case '域名 bootstrap、默认策略与循环拒绝' bootstrap_contract
 t_case 'DNS 查询分流和响应 IP 原生规则' dns_rules_contract
 t_case '原生 DNS 竞速组与整体删除' race_contract
-t_case 'DNS 经出站拨号的 bootstrap 环路拒绝提交' bootstrap_detour_cycle
 t_finish

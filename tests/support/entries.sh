@@ -13,6 +13,7 @@ t_entry_save() {
     for key in config schema state registry; do
         cp "$(sbd_resource_path "$key")" "$ENTRY_SAVED/$key" || exit 1
     done
+    cp -a "$SBD_CONF_PARTS" "$ENTRY_SAVED/parts" || exit 1
     cp -a "$SBD_EXPORTS" "$ENTRY_SAVED/exports" || exit 1
 }
 
@@ -21,6 +22,7 @@ t_entry_unchanged() {
     for key in config schema state registry; do
         t_assert "$key 保留原字节" cmp -s "$(sbd_resource_path "$key")" "$ENTRY_SAVED/$key"
     done
+    t_assert '配置分片保留原字节' sbd_tree_compare "$ENTRY_SAVED/parts" "$SBD_CONF_PARTS"
     t_assert '全部导出保留原字节' sbd_tree_compare "$ENTRY_SAVED/exports" "$SBD_EXPORTS"
 }
 

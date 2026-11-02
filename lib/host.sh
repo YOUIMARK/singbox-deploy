@@ -10,8 +10,9 @@ sbd_paths() {
     SBD_BIN_DIR="$SBD_ROOT/bin"
     SBD_BINARY="$SBD_BIN_DIR/sing-box"
     SBD_CONF_DIR="$SBD_ROOT/confs"
-    SBD_CONFIG="$SBD_CONF_DIR/config.json"
-    SBD_SCHEMA="$SBD_CONF_DIR/schema.json"
+    SBD_CONF_PARTS="$SBD_CONF_DIR"
+    SBD_CONFIG="$SBD_ROOT/config.json"
+    SBD_SCHEMA="$SBD_ROOT/schema.json"
     SBD_ASSET_DIR="$SBD_ROOT/assets"
     SBD_CERT_DIR="$SBD_ROOT/certs"
     SBD_LOG_DIR="$SBD_ROOT/logs"
@@ -63,6 +64,40 @@ sbd_arch() {
         aarch64|arm64) printf 'arm64\n' ;;
         *) _error '仅支持 amd64/arm64'; return 1 ;;
     esac
+}
+
+# 计算 sing-box 的 Go 运行时软内存限制（MiB）。
+# 以系统可见内存和 cgroup v1/v2 限制中的最小值为准；128 MB 档只给 Go
+# 保留约 40 MiB，其余留给内核、TLS、socket 缓冲和其他进程。
+sbd_go_memlimit_mb() {
+    local meminfo="${1:-/proc/meminfo}" cgroup_root="${2:-/sys/fs/cgroup}"
+    local total_mb=0 value candidate limit file
+    total_mb=$(awk '/^MemTotal:/{print int($2 / 1024); exit}' "$meminfo" 2>/dev/null) || total_mb=0
+    [[ "$total_mb" =~ ^[0-9]+$ ]] || total_mb=0
+
+    for file in "$cgroup_root/memory.max" "$cgroup_root/memory.high" \
+        "$cgroup_root/memory/memory.limit_in_bytes"; do
+        [[ -r "$file" ]] || continue
+        IFS= read -r value < "$file" || continue
+        [[ "$value" =~ ^[0-9]+$ && ${#value} -le 18 ]] || continue
+        candidate=$((value / 1024 / 1024))
+        (( candidate > 0 )) || continue
+        if (( total_mb == 0 || candidate < total_mb )); then total_mb=$candidate; fi
+    done
+
+    # 只读 /proc 不可用时按最小常见容器档处理，避免退化为无限制。
+    (( total_mb > 0 )) || total_mb=128
+    if (( total_mb <= 128 )); then
+        limit=$((total_mb * 5 / 16))
+    elif (( total_mb <= 256 )); then
+        limit=$((total_mb * 50 / 100))
+    elif (( total_mb <= 512 )); then
+        limit=$((total_mb * 65 / 100))
+    else
+        limit=$((total_mb * 80 / 100))
+    fi
+    (( limit >= 32 )) || limit=32
+    printf '%s\n' "$limit"
 }
 
 sbd_dependencies() {

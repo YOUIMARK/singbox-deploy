@@ -194,17 +194,16 @@ sbd_rule_sets_add() {
 sbd_rule_catalog() {
     cat <<'JSON'
 [
-  {"tag":"geosite-ads","title":"广告拦截 geosite-ads","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ads-all.srs"},
-  {"tag":"geosite-private","title":"私有域名 geosite-private","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/private.srs"},
-  {"tag":"geoip-private","title":"私有 IP geoip-private","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/private.srs"},
-  {"tag":"geosite-cn","title":"中国域名 geosite-cn","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs"},
-  {"tag":"geoip-cn","title":"中国 IP geoip-cn","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs"},
-  {"tag":"geosite-google","title":"Google geosite-google","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/google.srs"},
-  {"tag":"geosite-youtube","title":"YouTube geosite-youtube","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/youtube.srs"},
-  {"tag":"geosite-telegram","title":"Telegram geosite-telegram","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/telegram.srs"},
-  {"tag":"geosite-netflix","title":"Netflix geosite-netflix","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/netflix.srs"},
-  {"tag":"geosite-ai","title":"AI 服务（非中国） geosite-ai","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ai-!cn.srs"},
-  {"tag":"geosite-openai","title":"OpenAI geosite-openai","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/openai.srs"}
+  {"tag":"geosite-ads","title":"广告拦截 geosite:category-ads-all","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ads-all.srs"},
+  {"tag":"geosite-private","title":"私有域名 geosite:private","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/private.srs"},
+  {"tag":"geoip-private","title":"私有 IP geoip:private","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/private.srs"},
+  {"tag":"geosite-cn","title":"中国域名 geosite:cn","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs"},
+  {"tag":"geoip-cn","title":"中国 IP geoip:cn","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs"},
+  {"tag":"geosite-google","title":"Google geosite:google","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/google.srs"},
+  {"tag":"geosite-youtube","title":"YouTube geosite:youtube","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/youtube.srs"},
+  {"tag":"geosite-telegram","title":"Telegram geosite:telegram","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/telegram.srs"},
+  {"tag":"geosite-netflix","title":"Netflix geosite:netflix","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/netflix.srs"},
+  {"tag":"geosite-ai","title":"AI 服务 geosite:category-ai-!cn","url":"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ai-!cn.srs"}
 ]
 JSON
 }
@@ -390,14 +389,14 @@ sbd_rule_add_flow() {
 sbd_rule_set_remove() {
     local values tag count
     values=$(jq -c '[.policy.rule_sets[]? | {id, area:"rule_sets"}]' "$SBD_REGISTRY") || return 1
-    [[ "$(jq length <<< "$values")" != 0 ]] || { _error '没有脚本管理的规则集；手工写入的请直接编辑 config.json'; return 1; }
+    [[ "$(jq length <<< "$values")" != 0 ]] || { _error "没有脚本管理的规则集；手工写入的请直接编辑 $SBD_CONF_PARTS"; return 1; }
     sbd_policy_pick "$values" '选择要删除的规则集' || return $?
     tag="$SBD_REPLY"
     count=$(jq --arg tag "$tag" '[(.route.rules // [])[], (.dns.rules // [])[]] |
         [.. | objects | .rule_set? | select(.!=null) | if type=="array" then .[] else . end |
          select(.==$tag)] | length' "$SBD_CONFIG") || { _error '读取规则集引用失败'; return 1; }
     if [[ "$count" != 0 ]]; then
-        _error "仍有 $count 条路由/DNS 规则引用 $tag；请先在 config.json 删除这些规则"
+        _error "仍有 $count 条路由/DNS 规则引用 $tag；请先在 $SBD_CONF_PARTS 删除这些规则"
         return 1
     fi
     sbd_policy_confirm || return $?

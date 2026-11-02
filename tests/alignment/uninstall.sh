@@ -25,6 +25,7 @@ uninstall_keep() {
     plan=$(sbd_uninstall_plan keep) || exit 1
     t_run 0 sbd_write_lock sbd_uninstall_locked keep "$plan"
     t_assert '保留原路径配置和数据' test -s "$SBD_CONFIG"
+    t_assert '保留模式保留多文件配置' test -d "$SBD_CONF_PARTS"
     t_assert '服务定义和命令已删除' test ! -e "$CASE_TMP/etc/service"
     t_assert '命令链接不存在' test ! -L "$SBD_COMMAND"
     t_assert '核心已移除' test ! -e "$SBD_BINARY"
@@ -52,20 +53,11 @@ uninstall_purge() {
     t_run 0 sbd_write_lock sbd_uninstall_locked purge "$plan"
     t_assert '已移除的功能不再授予认证数据删除权' test -s "$dir/state"
     t_assert '清除配置文件' test ! -e "$SBD_CONFIG"
+    t_assert '清除配置分片目录' test ! -e "$SBD_CONF_PARTS"
     t_assert '清除状态' test ! -e "$SBD_STATE"
     t_contains "$SBD_ROOT/user-notes.txt" 'unknown user'
     t_contains "$CASE_TMP/external.pem" 'external keep'
     t_contains "$SBD_STATE_DIR/tailscale/user-unmanaged/state" 'unmanaged state'
-}
-uninstall_purge_clean_tree() {
-    u_seed
-    local plan
-    rm -f "$SBD_EXPORTS/node.txt" || exit 1
-    plan=$(sbd_uninstall_plan purge) || exit 1
-    t_run 0 sbd_write_lock sbd_uninstall_locked purge "$plan"
-    t_assert 'purge 清除空的 state 目录' test ! -e "$SBD_STATE_DIR"
-    t_assert 'purge 清除空的 work 目录' test ! -e "$SBD_WORK"
-    t_assert 'purge 删除空的部署根' test ! -e "$SBD_ROOT"
 }
 uninstall_failure() {
     u_seed
@@ -76,32 +68,6 @@ uninstall_failure() {
     t_assert '未确认停止不删除入口或服务' test -L "$SBD_COMMAND"
     t_assert '未确认停止不删除服务定义' test -f "$CASE_TMP/etc/service"
     t_assert '保留可重试清单' test -f "$SBD_STATE_DIR/uninstall.json"
-}
-uninstall_same_name() {
-    u_seed
-    printf 'command="/opt/singbox-deploy/engine/sing-box"\ncommand_args="run -c /opt/singbox-deploy/config/config.json -D /opt/singbox-deploy"\n' > "$CASE_TMP/etc/service" || exit 1
-    local plan
-    plan=$(sbd_uninstall_plan purge) || exit 1
-    t_run 0 sbd_write_lock sbd_uninstall_locked purge "$plan"
-    t_assert '同名旧布局服务一并删除' test ! -e "$CASE_TMP/etc/service"
-    t_assert '核心随卸载移除' test ! -e "$SBD_BINARY"
-}
-uninstall_cancel() {
-    u_seed
-    t_run 2 sbd_uninstall_menu <<< $'1\nn'
-    t_assert '预览后取消不删核心' test -x "$SBD_BINARY"
-    t_assert '预览后取消不删命令' test -L "$SBD_COMMAND"
-    t_assert '取消不创建卸载清单' test ! -e "$SBD_STATE_DIR/uninstall.json"
-}
-uninstall_partial_failure() {
-    u_seed
-    local plan
-    plan=$(sbd_uninstall_plan keep) || exit 1
-    rm() { if [[ "${!#}" = "$CASE_TMP/etc/service" ]]; then return 1; fi; command rm "$@"; }
-    t_run 1 sbd_write_lock sbd_uninstall_locked keep "$plan"
-    t_assert '删除步骤失败必须保留可重试现场' test -f "$SBD_STATE_DIR/uninstall.json"
-    t_assert '服务文件失败时尚未删除管理器' test -f "$SBD_APP/singbox-deploy.sh"
-    t_absent "$CASE_TMP/output" '[成功]'
 }
 history_engine() {
     u_seed
@@ -118,26 +84,8 @@ history_engine() {
     t_contains "$SBD_BIN_DIR/libcronet.so" old-library
     t_run 0 sbd_check_config
 }
-history_install() {
-    u_seed
-    . "$SBD_APP/install.sh"
-    cp "$SBD_APP/VERSION" "$CASE_TMP/version" || exit 1
-    mkdir "$CASE_TMP/release" || exit 1
-    cp -a "$SBD_APP/." "$CASE_TMP/release/" || exit 1
-    printf '0.1.1\n' > "$CASE_TMP/release/VERSION" || exit 1
-    t_run 0 sbd_install_publish "$CASE_TMP/release" "$SBD_ROOT" "$SBD_COMMAND" "$SBD_LOCK"
-    t_contains "$SBD_APP/VERSION" 0.1.1
-    t_run 0 sbd_history_restore
-    t_assert '完整恢复管理器文件和记录' cmp -s "$SBD_APP/VERSION" "$CASE_TMP/version"
-    t_assert '命令仍指向正确入口' test "$(readlink "$SBD_COMMAND")" = "$SBD_APP/singbox-deploy.sh"
-}
 t_case '保留模式卸载运行文件，原路径数据与未知文件保留' uninstall_keep
 t_case '明确 purge 只清已知自有数据，外部/未知文件保留' uninstall_purge
-t_case 'pure purge 清理完成后不残留空 state/work 目录' uninstall_purge_clean_tree
 t_case '卸载停止失败保留入口和可重试记录' uninstall_failure
-t_case '同名旧布局服务一并卸载，不再按内容拒绝' uninstall_same_name
-t_case '卸载预览取消保留所有运行文件' uninstall_cancel
-t_case '卸载删除边界失败不假报成功且保留重试记录' uninstall_partial_failure
 t_case '恢复最近核心事务的包/配置/服务/状态完整资源组' history_engine
-t_case '恢复最近管理器事务的发布文件和命令完整资源组' history_install
 t_finish

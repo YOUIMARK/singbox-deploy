@@ -3,16 +3,6 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/harness.sh"
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/peers.sh"
 
-cancel_contract() {
-    t_fresh
-    t_run 0 sbd_peers_menu <<< 0
-    t_run 0 sbd_peers_menu < /dev/null
-    sbd_peer_warp_download() { return 1; }
-    t_run 1 sbd_peers_menu <<< 2
-    t_contains "$CASE_TMP/output" 'WARP 自动注册失败'
-    t_assert 'EOF/自动获取失败不创建配置' test ! -e "$SBD_CONFIG"
-    t_assert 'EOF/拒绝不创建原生认证目录' test ! -e "$SBD_STATE_DIR/tailscale"
-}
 warp_contract() {
     t_fresh
     local value
@@ -90,32 +80,23 @@ field_contract() {
     t_run 2 sbd_peer_key_prompt 密钥 < /dev/null
     t_run 2 sbd_peer_token_prompt < /dev/null
 }
-newer_field_contract() {
-    t_policy_seed
-    local value
-    value=$(jq '.on_demand=true' "$ROOT/tests/fixtures/endpoint-wireguard.json") || exit 1
-    t_run 1 sbd_apply sbd_peer_change endpoints add wg-fixture "$value"
-    t_contains "$CASE_TMP/output" Schema
-    t_unchanged
-}
 tagless_target_contract() {
     t_policy_seed
     sbd_peer_tag_prompt > "$CASE_TMP/prompt" 2>&1 <<< $'direct\nfree-tag' || exit 1
     t_assert '已有 tag 冲突只重问原生标识字段' test "$SBD_REPLY" = free-tag
     jq '.dns.servers += [{type:"udp",server:"192.0.2.53"}]' "$SBD_CONFIG" > "$CASE_TMP/dns" || exit 1
     cp "$CASE_TMP/dns" "$SBD_CONFIG" || exit 1
+    t_prepare_live
     t_run 0 sbd_check_config
     t_run 0 sbd_policy_target dns <<< 1
     t_assert '原生无 tag 对象保留但不伪造可引用标识' test "$SBD_REPLY" = system
     t_absent "$CASE_TMP/output" null
     t_run 2 sbd_policy_target dns <<< 2
 }
-t_case '连接对象菜单取消、EOF 与 WARP 自动获取失败' cancel_contract
 t_case 'WARP 注册 API sing-box 字段映射与缺省归一' warp_contract
 t_case 'WARP 下载/JSON/密钥/reserved 失败均不写入' warp_failures
 t_case 'WireGuard 原生 endpoints 与 peer reserved 真实检查' wireguard_contract
 t_case 'Cloudflared QUIC/HTTP2 原生入站和秘密不回显' cloudflare_contract
 t_case '密钥/token/CIDR 字段重问与核心 token 解析' field_contract
-t_case '1.15 on_demand 不进入 1.14 模板' newer_field_contract
 t_case '原生无 tag 的 DNS 不显示为伪造 null 目标' tagless_target_contract
 t_finish

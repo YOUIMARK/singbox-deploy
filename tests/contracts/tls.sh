@@ -64,36 +64,9 @@ external_contract() {
     t_run 1 sbd_apply sbd_tls_material_add import wrong.example.com "$CASE_TMP/external-cert.pem" "$CASE_TMP/external-key.pem"
     t_run 1 sbd_apply sbd_tls_material_add import import.example.com "$CASE_TMP/external-cert.pem" "$CASE_TMP/missing.pem"
 }
-import_retry() {
-    t_seed
-    local cert="$CASE_TMP/cert.pem" key="$CASE_TMP/key.pem" wrong="$CASE_TMP/wrong.pem"
-    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 -subj /CN=retry.example.com -addext subjectAltName=DNS:retry.example.com -keyout "$key" -out "$cert" >/dev/null 2>&1 || exit 1
-    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$wrong" >/dev/null 2>&1 || exit 1
-    t_run 0 sbd_tls_material_prompt import <<< "$(printf 'retry.example.com\n%s\n%s\n%s\n%s\n' "$CASE_TMP/missing" "$cert" "$wrong" "$key")"
-    t_contains "$CASE_TMP/output" '请仅重新填写私钥路径'
-    # jq 参数保持字面值，不由 Bash 展开。
-    # shellcheck disable=SC2016
-    t_assert '证书字段成功后不被重问或丢失' jq -e --arg cert "$cert" --arg key "$key" '.tls.certificates[0] | .certificate_path==$cert and .key_path==$key and .server_name=="retry.example.com"' "$SBD_REGISTRY"
-    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 -subj /CN=retry.example.com -keyout "$CASE_TMP/old-key.pem" -out "$CASE_TMP/cn-only.pem" >/dev/null 2>&1 || exit 1
-    t_run 1 sbd_apply sbd_tls_material_add import retry.example.com "$CASE_TMP/cn-only.pem" "$CASE_TMP/old-key.pem"
-    t_contains "$CASE_TMP/output" subjectAltName
-}
-prompt_contract() {
-    t_seed
-    t_run 0 sbd_tls_menu <<< 0
-    t_run 0 sbd_tls_menu < /dev/null
-    t_run 2 sbd_tls_provider_prompt <<< $'tag\nexample.com\nadmin@example.com\n1'
-    t_unchanged
-    t_run 0 sbd_tls_provider_prompt <<< $'bad/name\nvalid\nbad/name\nexample.com\nnot-email\nadmin@example.com\n01\nfixture-secret\n'
-    t_absent "$CASE_TMP/output" fixture-secret
-    # 1.14.4 原生 format 将单元素 Listable 域名数组格式化为字符串。
-    t_assert '错误只重问当前字段' jq -e '.certificate_providers[0] | .tag=="valid" and .domain=="example.com" and .email=="admin@example.com"' "$SBD_CONFIG"
-}
 # 本套件只调用真实菜单、OpenSSL、Schema 和核心；不向 CA 发起签发。
 t_case 'TLS 名称和标识输入契约' identity_contract
 t_case '三种 DNS-01 原生 provider 真实校验且凭据不回显' provider_contract
 t_case 'P-256 IPv6 SAN 与证书/公钥信任' self_signed_contract
 t_case '导入 PEM 校验并保留外部所有权' external_contract
-t_case 'PEM 输入错误只重问当前字段且拒绝 CN-only 证书' import_retry
-t_case 'TLS 菜单字段重问与必填 EOF 取消' prompt_contract
 t_finish

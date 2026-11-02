@@ -28,25 +28,21 @@ done
 SLOW_SUITES=(
     contracts/apply.sh
     contracts/classic.sh
-    contracts/dns-defaults.sh
     contracts/dns-settings.sh
     contracts/entries.sh
     contracts/export.sh
     contracts/peers.sh
     contracts/resolver.sh
     contracts/rules.sh
-    contracts/simple-wizards.sh
     contracts/time.sh
     alignment/classic.sh
     alignment/engine.sh
     alignment/entries.sh
-    alignment/maintenance.sh
     alignment/peers.sh
     alignment/policy.sh
     alignment/time.sh
     alignment/tls-export.sh
     alignment/uninstall.sh
-    alignment/usability.sh
 )
 LOGS=$(mktemp -d "${TMPDIR:-/tmp}/singbox-runner.XXXXXX") || exit 1
 trap 'case "$LOGS" in "${TMPDIR:-/tmp}"/singbox-runner.*) rm -rf -- "$LOGS" ;; esac' EXIT

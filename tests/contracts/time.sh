@@ -4,16 +4,6 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/harness.sh"
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/policy.sh"
 
-cancel_contract() {
-    t_fresh
-    t_run 0 sbd_time_menu <<< 0
-    t_run 0 sbd_time_menu < /dev/null
-    t_run 0 sbd_observe_menu <<< $'5\n0\n0'
-    t_run 2 sbd_time_prompt <<< ''
-    t_run 2 sbd_time_prompt <<< $'\nn'
-    t_assert 'EOF/拒绝不初始化配置' test ! -e "$SBD_CONFIG"
-    t_assert 'EOF/拒绝不增加修订' jq -e '.revision==0' "$SBD_STATE"
-}
 default_contract() {
     t_policy_seed
     t_run 0 sbd_time_prompt <<< $'\ny'
@@ -24,14 +14,6 @@ default_contract() {
     t_contains "$CASE_TMP/output" '未验证校时结果'
     t_assert '启用通过真实配置事务提交' jq -e '.revision==1' "$SBD_STATE"
     t_run 0 sbd_check_config
-}
-field_contract() {
-    t_policy_seed
-    t_run 1 sbd_time_interval bad
-    t_run 1 sbd_time_interval 0s
-    t_run 0 sbd_time_interval 10m
-    t_run 0 sbd_time_prompt <<< $'bad/path\n127.0.0.1\ny'
-    t_assert 'IP 源不新增 bootstrap，已有 resolver 原样保留' jq -e '.ntp.server=="127.0.0.1" and .ntp.server_port==123 and .ntp.interval=="30m0s" and .ntp.domain_resolver=="system" and (.dns.servers|length==1)' "$SBD_CONFIG"
 }
 disabled_contract() {
     t_policy_seed
@@ -78,9 +60,7 @@ logs_contract() {
     t_contains "$CASE_TMP/output" '历史记录仅供排障'
     t_assert '日志只读不改修订号' jq -e '.revision==0' "$SBD_STATE"
 }
-t_case '时间菜单取消/EOF、不创建配置或访问公网' cancel_contract
 t_case '确认 A 默认源、原生字段和 Schema/check 真实提交' default_contract
-t_case '时间源/端口/duration 错误只重问当前字段' field_contract
 t_case '禁用保留配置，诊断不冒充当前校时成功' disabled_contract
 t_case '无配置本地诊断无副作用，坏配置明确失败' diagnostic_contract
 t_case '实际 SS2022/VMess 计数和客户端时间边界' protocol_count

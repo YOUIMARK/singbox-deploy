@@ -2,6 +2,7 @@
 
 sbd_resource_path() {
     case "$1" in
+        config_parts) printf '%s\n' "$SBD_CONF_PARTS" ;;
         config) printf '%s\n' "$SBD_CONFIG" ;;
         schema) printf '%s\n' "$SBD_SCHEMA" ;;
         state) printf '%s\n' "$SBD_STATE" ;;
@@ -18,10 +19,10 @@ sbd_resource_path() {
 
 sbd_resources() {
     case "$1" in
-        config) printf '%s\n' schema config registry exports state ;;
+        config) printf '%s\n' config_parts schema config registry exports state ;;
         install) printf '%s\n' app registry state command ;;
         engine)
-            printf '%s\n' engine schema config service
+            printf '%s\n' engine schema config_parts config service
             local backend
             backend=$(sbd_backend) || return 1
             [[ "$backend" != openrc ]] || printf 'logrotate\n'
@@ -127,8 +128,8 @@ sbd_journal_valid() {
         jq -e --arg key "$key" '(.present[$key] | type) == "boolean"' "$dir/journal.json" >/dev/null || { _error '事务存在性记录无效'; return 1; }
         had=$(jq -r --arg key "$key" '.present[$key]' "$dir/journal.json") || return 1
         if [[ "$had" = true ]]; then
-            if [[ "$key" = exports || "$key" = app || "$key" = engine ]]; then
-                [[ -d "$dir/before/$key" && ! -L "$dir/before/$key" ]] || { _error '导出恢复副本缺失'; return 1; }
+            if [[ "$key" = exports || "$key" = app || "$key" = engine || "$key" = config_parts ]]; then
+                [[ -d "$dir/before/$key" && ! -L "$dir/before/$key" ]] || { _error "目录恢复副本缺失: $key"; return 1; }
             elif [[ "$key" = command ]]; then
                 [[ -L "$dir/before/$key" ]] || { _error '命令链接恢复副本缺失'; return 1; }
             elif [[ "$key" = service || "$key" = logrotate ]]; then
@@ -150,8 +151,8 @@ sbd_snapshot() {
         if [[ -e "$path" || -L "$path" ]]; then
             [[ ! -L "$path" || "$key" = command ]] || { _error "受管资源不能是外部链接: $path"; return 1; }
             cp -a -- "$path" "$dir/before/$key" || { _error "快照失败: $key"; return 1; }
-            if [[ "$key" = engine ]]; then
-                sbd_tree_compare "$path" "$dir/before/$key" || { _error '核心包快照不完整'; return 1; }
+            if [[ "$key" = engine || "$key" = config_parts ]]; then
+                sbd_tree_compare "$path" "$dir/before/$key" || { _error "目录快照不完整: $key"; return 1; }
             elif [[ "$key" != exports && "$key" != app && "$key" != command ]]; then
                 cmp -s -- "$path" "$dir/before/$key" || { _error "快照字节不一致: $key"; return 1; }
             fi
@@ -170,14 +171,14 @@ sbd_snapshot() {
 
 sbd_directory_replace() {
     local source="$1" key="$2" target dir
-    case "$key" in app|exports|engine) ;; *) _error '未知目录资源'; return 1 ;; esac
+    case "$key" in app|exports|engine|config_parts) ;; *) _error '未知目录资源'; return 1 ;; esac
     target=$(sbd_resource_path "$key") || return 1
     dir="$SBD_WORK/active/$key-next"
     [[ -d "$source" && ! -L "$source" && ! -L "$target" ]] || { _error '发布目录无效'; return 1; }
-    [[ ! -e "$dir" ]] || { _error '导出暂存位置被占用'; return 1; }
-    cp -a -- "$source" "$dir" || { _error '导出暂存失败'; return 1; }
-    if [[ "$key" = engine ]]; then
-        sbd_tree_compare "$source" "$dir" || { _error '核心包复制不完整'; return 1; }
+    [[ ! -e "$dir" ]] || { _error '目录暂存位置被占用'; return 1; }
+    cp -a -- "$source" "$dir" || { _error '目录暂存失败'; return 1; }
+    if [[ "$key" = engine || "$key" = config_parts ]]; then
+        sbd_tree_compare "$source" "$dir" || { _error "目录复制不完整: $key"; return 1; }
     fi
     rm -rf -- "$target" || { _error "旧目录替换失败: $key"; return 1; }
     mv -- "$dir" "$target" || { _error "目录发布失败: $key"; return 1; }
@@ -201,7 +202,7 @@ sbd_restore_snapshot() {
         path=$(sbd_resource_path "$key") || return 1
         had=$(jq -r --arg key "$key" '.present[$key]' "$dir/journal.json") || return 1
         if [[ "$had" = true ]]; then
-            if [[ "$key" = exports || "$key" = app || "$key" = engine ]]; then
+            if [[ "$key" = exports || "$key" = app || "$key" = engine || "$key" = config_parts ]]; then
                 # 上次发布失败留下的候选可删除，恢复副本本身始终保留。
                 if [[ -e "$SBD_WORK/active/$key-next" ]]; then
                     rm -rf -- "$SBD_WORK/active/$key-next" || { _error '无法清理失败目录候选'; return 1; }
@@ -221,7 +222,7 @@ sbd_restore_snapshot() {
             fi
         else
             case "$key" in
-                app|exports|engine) rm -rf -- "$path" || { _error "移除本次新增目录失败: $key"; return 1; } ;;
+                app|exports|engine|config_parts) rm -rf -- "$path" || { _error "移除本次新增目录失败: $key"; return 1; } ;;
                 *) rm -f -- "$path" || { _error "移除本次新增资源失败: $key"; return 1; } ;;
             esac
         fi
@@ -290,15 +291,14 @@ sbd_apply_signal() {
 
 sbd_apply_locked() {
     local callback="$1"; shift
-    local dir="$SBD_WORK/active" stage="$SBD_WORK/active/after" runtime key source revision version core content
+    local dir="$SBD_WORK/active" stage="$SBD_WORK/active/after" runtime key revision version core content
     local config_changed=true compared=0
     sbd_directories || return 1
     sbd_recover_locked || return 1
     runtime=$(sbd_service_state) || return 1
     mkdir -p -- "$stage" || { _error '无法创建暂存目录'; return 1; }
     trap sbd_apply_signal INT TERM HUP
-    if [[ -e "$SBD_CONFIG" ]]; then source="$SBD_CONFIG"; else source="$SBD_APP/presets/base.json"; fi
-    cp -- "$source" "$stage/config.json" || { _error '暂存配置失败'; sbd_work_remove "$dir"; return 1; }
+    sbd_config_stage_current "$stage/config.json" || { _error '暂存配置失败'; sbd_work_remove "$dir"; return 1; }
     if [[ -e "$SBD_STATE" ]]; then
         cp -- "$SBD_STATE" "$stage/state.json" || { _error '暂存 state 失败'; sbd_work_remove "$dir"; return 1; }
     else
@@ -334,6 +334,7 @@ sbd_apply_locked() {
                 ;;
         esac
     fi
+    sbd_directory_replace "$stage/config" config_parts || { sbd_apply_abort; return 1; }
     for key in schema config registry; do
         sbd_atomic_file "$stage/$key.json" "$(sbd_resource_path "$key")" || { sbd_apply_abort; return 1; }
     done

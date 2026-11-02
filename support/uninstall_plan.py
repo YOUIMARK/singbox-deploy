@@ -26,17 +26,18 @@ def build(root, mode):
         else:
             raise ValueError("核心文件清单越界")
     if mode == "purge":
-        config = json.loads((root / "confs/config.json").read_text()) if (root / "confs/config.json").is_file() else {}
+        config = json.loads((root / "config.json").read_text()) if (root / "config.json").is_file() else {}
         registry = json.loads((root / "state/registry.json").read_text())
         for name in (
-            "confs/config.json",
-            "confs/schema.json",
-            "confs/input.json",
-            "confs/core-version",
+            "config.json",
+            "schema.json",
             "assets/cache.db",
             "logs/sing-box.log",
         ):
             files.add(str(root / name))
+        parts = root / "confs"
+        if parts.is_dir():
+            trees.add(str(parts))
         for p in (root / "exports").iterdir():
             if p.name in ("links.txt", "schema.json") or any(p.name == n["id"] + suffix for n in registry.get("nodes", []) for suffix in (".json", ".txt")):
                 files.add(str(p))

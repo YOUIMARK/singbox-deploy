@@ -20,8 +20,7 @@ sbd_service_file() {
 }
 
 # 服务名与路径都是本脚本专用的（/etc/systemd/system/singbox-deploy.service、/etc/init.d/singbox-deploy），
-# 所以只按路径认领，不比对单元内容：旧布局（engine/ + config/）留下的单元在升级后照样能读状态、
-# 被核心安装重写、被卸载删除，不会因为内容对不上就把整条链路卡死。
+# 所以只按路径认领，不比对单元内容，避免内容差异阻断状态读取、核心安装或卸载。
 sbd_service_claim() {
     local backend="$1" file
     file=$(sbd_service_file "$backend") || { _error '无法确定服务文件'; return 1; }
@@ -199,7 +198,8 @@ sbd_service_set_enabled() {
 }
 
 sbd_service_render() {
-    local backend="$1" target="$2"
+    local backend="$1" target="$2" memlimit
+    memlimit=$(sbd_go_memlimit_mb) || { _error '无法计算 Go 运行时内存限制'; return 1; }
     case "$backend" in
         systemd)
             cat > "$target" <<EOF
@@ -209,6 +209,7 @@ Documentation=https://sing-box.sagernet.org
 After=network.target nss-lookup.target network-online.target
 
 [Service]
+Environment="GOMEMLIMIT=${memlimit}MiB"
 ExecStart=$SBD_BINARY -D $SBD_ROOT -c $SBD_CONFIG run
 ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
@@ -225,6 +226,7 @@ EOF
 name=\$RC_SVCNAME
 description="sing-box service"
 supervisor="supervise-daemon"
+export GOMEMLIMIT="${memlimit}MiB"
 command="$SBD_BINARY"
 extra_commands="checkconfig"
 extra_started_commands="reload"
@@ -346,7 +348,7 @@ sbd_engine_commit_locked() {
     if [[ -L "$service" ]] || { [[ "$backend" = openrc ]] && [[ -L "$logrotate" ]]; }; then _error '服务或日志轮换路径是外部链接，拒绝覆盖'; return 1; fi
     mkdir -p -- "$stage" || { _error '创建核心事务候选失败'; return 1; }
     trap sbd_apply_signal INT TERM HUP
-    if [[ -f "$SBD_CONFIG" ]]; then cp "$SBD_CONFIG" "$stage/config.json"; else cp "$SBD_APP/presets/base.json" "$stage/config.json"; fi || { _error '暂存旧配置失败'; sbd_work_remove "$dir"; return 1; }
+    sbd_config_stage_current "$stage/config.json" || { _error '暂存旧配置失败'; sbd_work_remove "$dir"; return 1; }
     if ! version=$(cat "$candidate/version") || ! asset=$(cat "$candidate/asset") ||
         ! old_revision=$(jq -er '.revision' "$SBD_STATE") || ! old_revision=$(sbd_integer "$old_revision" 0 999999998); then
         _error '候选版本或管理器状态不可读'; sbd_work_remove "$dir"; return 1
@@ -367,6 +369,7 @@ sbd_engine_commit_locked() {
     sbd_engine_stopped || { sbd_apply_abort; return 1; }
     mode=644; [[ "$backend" != openrc ]] || mode=755
     if ! sbd_directory_replace "$candidate/engine" engine ||
+        ! sbd_directory_replace "$stage/config" config_parts ||
         ! sbd_atomic_file "$stage/schema.json" "$SBD_SCHEMA" ||
         ! sbd_atomic_file "$stage/config.json" "$SBD_CONFIG" ||
         ! sbd_atomic_file "$stage/service" "$service" "$mode"; then

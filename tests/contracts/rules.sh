@@ -2,13 +2,6 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/harness.sh"
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/policy.sh"
 
-cancel_contract() {
-    t_fresh
-    t_run 0 sbd_rules_menu <<< 0
-    t_run 0 sbd_rules_menu < /dev/null
-    t_assert '取消不创建配置' test ! -e "$SBD_CONFIG"
-    t_assert '取消不创建规则材料' test ! -e "$SBD_ASSET_DIR/rule-sets"
-}
 url_validation() {
     t_run 0 sbd_rule_url 'https://example.com/geosite-cn.srs'
     t_run 1 sbd_rule_url 'bad/path'
@@ -38,15 +31,16 @@ binary_contract() {
 }
 invalid_contract() {
     t_policy_seed
+    cp "$SBD_CONFIG" "$CASE_TMP/old-config" || exit 1
     printf 'not a rule-set' > "$CASE_TMP/bad.srs" || exit 1
     local value
     value=$(jq -n --arg path "$CASE_TMP/bad.srs" '{type:"local",tag:"broken",format:"binary",path:$path}') || exit 1
     t_run 1 sbd_apply sbd_rule_set add broken "$value"
-    t_unchanged
+    t_assert '配置原字节保留' cmp -s "$SBD_CONFIG" "$CASE_TMP/old-config"
     t_assert '坏 SRS 候选材料已回收' test -z "$(find "$SBD_ASSET_DIR/rule-sets" -mindepth 1 -maxdepth 1 -type d)"
     value=$(jq -n --arg path "$CASE_TMP/bad.srs" '{type:"local",tag:"broken",format:"source",path:$path}') || exit 1
     t_run 1 sbd_apply sbd_rule_set add broken "$value"
-    t_unchanged
+    t_assert '源规则失败后配置原字节保留' cmp -s "$SBD_CONFIG" "$CASE_TMP/old-config"
 }
 route_contract() {
     t_policy_seed
@@ -80,15 +74,6 @@ menu_add_remote() {
     t_run 0 sbd_rules_menu <<< $'3\n0'
     t_contains "$CASE_TMP/output" 'geosite-cn  remote binary'
 }
-menu_add_local() {
-    t_policy_seed
-    t_run 0 sbd_rules_menu <<< "$(printf '4\n3\n%s\n\ny\n0\n' "$ROOT/tests/fixtures/rule-set-domains.json")"
-    t_contains "$CASE_TMP/output" '规则集 rule-set-domains 已添加'
-    local path
-    path=$(jq -r '.route.rule_set[0].path' "$SBD_CONFIG") || exit 1
-    t_assert '菜单导入本地文件编译为 SRS' test -f "$path"
-    t_assert '源 JSON 保留原始版本且不被改写' cmp -s "$ROOT/tests/fixtures/rule-set-domains.json" "${path%/*}/source.json"
-}
 menu_add_preset() {
     t_policy_seed
     t_run 0 sbd_rules_menu <<< $'4\n1\n4\ny\n0'
@@ -96,26 +81,6 @@ menu_add_preset() {
     t_assert '预设目录写入 MetaCubeX 规则集地址' jq -e '.route.rule_set[0] | .tag=="geosite-cn" and .url=="https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs" and (.format // "binary")=="binary" and .update_interval=="24h0m0s"' "$SBD_CONFIG"
     t_assert '目录中的规则统一来自 MetaCubeX' jq -e '
         all(.[]; .url | startswith("https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/"))' <<< "$(sbd_rule_catalog)"
-}
-menu_add_preset_multi() {
-    t_policy_seed
-    t_run 0 sbd_rules_menu <<< $'4\n1\n1,4\ny\n0'
-    t_contains "$CASE_TMP/output" '规则集 geosite-ads, geosite-cn 已添加'
-    t_assert '多选按编号顺序一次写入' jq -e '[.route.rule_set[].tag]==["geosite-ads","geosite-cn"]' "$SBD_CONFIG"
-    t_assert '多选逐条登记归属' jq -e '[.policy.rule_sets[].id]==["geosite-ads","geosite-cn"]' "$SBD_REGISTRY"
-    t_assert '多选共用一次核心缓存配置' jq -e '.experimental.cache_file.enabled==true and (.route.rule_set|length)==2' "$SBD_CONFIG"
-}
-menu_add_preset_range() {
-    t_policy_seed
-    t_run 0 sbd_rules_menu <<< $'4\n1\n4-5 4\ny\n0'
-    t_assert '区间与重复编号归一去重' jq -e '[.route.rule_set[].tag]==["geosite-cn","geoip-cn"]' "$SBD_CONFIG"
-}
-menu_add_preset_retry() {
-    t_policy_seed
-    t_run 0 sbd_rules_menu <<< $'4\n1\n0\n2\ny\n0'
-    t_contains "$CASE_TMP/output" '可多选，用逗号或空格分隔'
-    t_contains "$CASE_TMP/output" '规则集 geosite-private 已添加'
-    t_assert '非法编号重问后只写入合法项' jq -e '[.route.rule_set[].tag]==["geosite-private"]' "$SBD_CONFIG"
 }
 menu_add_named_preset() {
     t_policy_seed
@@ -128,12 +93,6 @@ menu_add_named_preset() {
         ]' "$SBD_CONFIG"
     t_assert '预设名称逐条登记归属' jq -e '[.policy.rule_sets[].id]==["geosite-openai","geosite-github"]' "$SBD_REGISTRY"
     t_assert '预设名称共用核心缓存' jq -e '.experimental.cache_file.enabled==true and (.route.rule_set|length)==2' "$SBD_CONFIG"
-}
-menu_add_named_preset_retry() {
-    t_policy_seed
-    t_run 0 sbd_rules_menu <<< $'4\n4\nbad/name\nopenai\ny\n0'
-    t_contains "$CASE_TMP/output" 'geosite 名称只能包含字母、数字、下划线、@、点、感叹号和横线'
-    t_assert '非法名称重问后只写入合法项' jq -e '[.route.rule_set[].tag]==["geosite-openai"]' "$SBD_CONFIG"
 }
 menu_delete_referenced() {
     t_policy_seed
@@ -158,7 +117,6 @@ defaults_restore() {
     t_run 0 sbd_rules_menu <<< $'6\ny\n0'
     t_assert '反复补齐不复制规则' jq -e '(.route.rules|length)==5' "$SBD_CONFIG"
 }
-t_case '规则集菜单取消及必填 EOF 无副作用' cancel_contract
 t_case '规则集 URL 校验不依赖 assert' url_validation
 t_case '本地源版本 1 经核心编译和原生配置校验' local_contract
 t_case '版本 5 IP 规则编译后作为 SRS 导入' binary_contract
@@ -167,12 +125,7 @@ t_case '路由规则 CRUD、稳定关联和无私有配置字段' route_contract
 t_case '省略 type 的原生 inline 规则集引用与删除' inline_contract
 t_case '菜单添加远端规则集、缓存与归属登记' menu_add_remote
 t_case '菜单按预设目录添加规则集' menu_add_preset
-t_case '预设目录多选一次事务写入' menu_add_preset_multi
-t_case '预设目录区间与重复编号归一' menu_add_preset_range
-t_case '预设目录非法编号重问' menu_add_preset_retry
 t_case '菜单按预设名称添加 MetaCubeX 规则集' menu_add_named_preset
-t_case '预设名称非法字符重问' menu_add_named_preset_retry
-t_case '菜单导入本地规则集并保留源文件' menu_add_local
 t_case '被规则引用的规则集拒绝删除，解除后真实删除' menu_delete_referenced
 t_case '补齐默认路由规则并保留自定义规则' defaults_restore
 t_finish

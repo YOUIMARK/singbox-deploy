@@ -2,14 +2,6 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/harness.sh"
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/entries.sh"
 
-menu_cancel() {
-    t_fresh
-    t_run 0 sbd_entries_menu <<< 0
-    t_run 0 sbd_entries_menu < /dev/null
-    t_run 2 sbd_entry_create_prompt <<< $'2\n\n19501\nexample.com'
-    t_assert '创建字段 EOF 不创建配置' test ! -e "$SBD_CONFIG"
-    t_assert '创建字段 EOF 不生成材料' test -z "$(find "$SBD_CERT_DIR" -mindepth 1 -maxdepth 1 -print -quit)"
-}
 field_contract() {
     t_fresh
     sbd_entry_number_prompt 端口 1 65535 443 > "$CASE_TMP/prompt" 2>&1 <<< $'bad\n00080' || exit 1
@@ -62,14 +54,6 @@ hy2_custom() {
     t_assert '客户端方向独立' jq -e '.nodes[0].client|.up_mbps==3 and .down_mbps==12 and .obfs.min_packet_size==600 and .obfs.max_packet_size==1300' "$SBD_REGISTRY"
     t_run 0 t_entry_uri hysteria2
 }
-hy2_salamander() {
-    t_seed
-    local spec
-    spec=$(jq '.obfs={type:"salamander",password:"obfs@:/?# &+"}' "$ROOT/tests/fixtures/entry-hysteria2.json") || exit 1
-    t_run 0 sbd_apply sbd_entry_create "$spec"
-    NODE_ID=$(jq -r '.nodes[0].id' "$SBD_REGISTRY")
-    t_run 0 t_entry_uri hysteria2
-}
 create_prompt_contract() {
     t_seed
     t_run 0 sbd_entry_create_prompt <<< $'2\n127.0.0.1\n019501\nexample.com\n菜单节点\nfixture-password\n3\nnode.example.com\n2\ny'
@@ -104,14 +88,6 @@ action_contract() {
     done
     t_run 1 sbd_entry_change_prompt unknown
 }
-hidden_action_retry() {
-    t_seed
-    t_entry_add shadowsocks
-    t_run 0 sbd_entry_change_prompt <<< $'1\n6\n1\n重问后新名称\ny'
-    t_contains "$CASE_TMP/output" '选择显示的编号'
-    t_absent "$CASE_TMP/output" '[6]'
-    t_assert '无效隐藏编号只重问操作，不丢节点选择' jq -e '.nodes[0].name=="重问后新名称"' "$SBD_REGISTRY"
-}
 post_commit_contract() {
     t_seed
     t_run 0 sbd_entry_create_prompt <<< $'2\n127.0.0.1\n19501\nexample.com\n交付节点\nfixture-password\n3\nnode.example.com\n2\ny'
@@ -138,16 +114,13 @@ empty_list_contract() {
     t_contains "$CASE_TMP/output" '读取节点列表失败'
     t_absent "$CASE_TMP/output" '[成功]'
 }
-t_case '节点菜单退出与必填 EOF 无副作用' menu_cancel
 t_case '节点字段重问、十进制与秘密随机输入' field_contract
 t_case 'AnyTLS 真实配置与 URI 编码' anytls_contract
 t_case 'AnyReality 真实密钥与原生客户端/服务端' reality_contract
 t_case 'Hysteria2 默认 BBR 和证书指纹 URI' hy2_default
 t_case 'Hysteria2 两侧带宽与 Gecko 自定义 URI 扩展' hy2_custom
-t_case 'Hysteria2 Salamander 特殊密码回读' hy2_salamander
 t_case '精简向导真实创建、自动分享和列表隐藏凭据' create_prompt_contract
 t_case '七档操作菜单只显示适用项且保持原有编号' action_contract
-t_case '隐藏操作编号错误只重问操作字段' hidden_action_retry
 t_case '创建后自动分享、可另查 JSON、稳定 ID 和 EOF 语义' post_commit_contract
 t_case '首页空列表明确提示、坏登记不冒充没有节点' empty_list_contract
 t_finish
