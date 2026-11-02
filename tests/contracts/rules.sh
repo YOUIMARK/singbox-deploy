@@ -9,6 +9,12 @@ cancel_contract() {
     t_assert '取消不创建配置' test ! -e "$SBD_CONFIG"
     t_assert '取消不创建规则材料' test ! -e "$SBD_ASSET_DIR/rule-sets"
 }
+url_validation() {
+    t_run 0 sbd_rule_url 'https://example.com/geosite-cn.srs'
+    t_run 1 sbd_rule_url 'bad/path'
+    export PYTHONOPTIMIZE=1
+    t_run 1 sbd_rule_url 'https://example.com:0/geosite-cn.srs'
+}
 local_contract() {
     t_policy_seed
     t_policy_local
@@ -153,6 +159,7 @@ defaults_restore() {
     t_assert '反复补齐不复制规则' jq -e '(.route.rules|length)==5' "$SBD_CONFIG"
 }
 t_case '规则集菜单取消及必填 EOF 无副作用' cancel_contract
+t_case '规则集 URL 校验不依赖 assert' url_validation
 t_case '本地源版本 1 经核心编译和原生配置校验' local_contract
 t_case '版本 5 IP 规则编译后作为 SRS 导入' binary_contract
 t_case '坏 JSON/SRS 真实失败与材料回收' invalid_contract

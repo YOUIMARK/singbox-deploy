@@ -59,8 +59,10 @@ import sys
 from urllib.parse import urlsplit
 try:
     u = urlsplit(sys.argv[1])
-    assert u.scheme in ("http", "https") and u.hostname and u.port != 0
-except (ValueError, AssertionError):
+    valid = u.scheme in ("http", "https") and bool(u.hostname) and u.port != 0
+except ValueError:
+    raise SystemExit(1)
+if not valid:
     raise SystemExit(1)
 PY
 }
