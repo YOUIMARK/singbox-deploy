@@ -45,6 +45,7 @@ uninstall_purge() {
     printf 'fixture native state\n' > "$dir/state" || exit 1
     printf 'unknown user file\n' > "$SBD_ROOT/user-notes.txt" || exit 1
     printf 'unknown config file\n' > "$SBD_CONF_PARTS/user-notes.txt" || exit 1
+    printf '{"log":{"level":"warn"}}\n' > "$SBD_CONF_PARTS/00_base.json" || exit 1
     printf 'external keep\n' > "$CASE_TMP/external.pem" || exit 1
     mkdir -p "$SBD_STATE_DIR/tailscale/user-unmanaged" || exit 1
     printf 'unmanaged state\n' > "$SBD_STATE_DIR/tailscale/user-unmanaged/state" || exit 1
@@ -54,7 +55,8 @@ uninstall_purge() {
     t_run 0 sbd_write_lock sbd_uninstall_locked purge "$plan"
     t_assert '已移除的功能不再授予认证数据删除权' test -s "$dir/state"
     t_assert '清除配置文件' test ! -e "$SBD_CONFIG"
-    t_assert '清除已登记的配置分片' test ! -e "$SBD_CONF_PARTS/00_base.json"
+    t_assert '清除已登记的配置分片' test ! -e "$SBD_CONF_PARTS/01_log.json"
+    t_assert '清除旧布局分片' test ! -e "$SBD_CONF_PARTS/00_base.json"
     t_contains "$SBD_CONF_PARTS/user-notes.txt" 'unknown config file'
     t_assert '清除状态' test ! -e "$SBD_STATE"
     t_contains "$SBD_ROOT/user-notes.txt" 'unknown user'

@@ -6,15 +6,18 @@ prepare_valid() {
     mkdir "$CASE_TMP/stage" || exit 1
     cp "$ROOT/presets/base.json" "$CASE_TMP/stage/config.json" || exit 1
     t_run 0 sbd_prepare_config "$CASE_TMP/stage"
+    t_absent "$CASE_TMP/output" 'merged.json.raw'
+    t_absent "$CASE_TMP/output" '/tmp/'
     # $schema 是 JSON 属性名，不是 shell 变量。
     # shellcheck disable=SC2016
     t_assert '本地 schema 引用保留' jq -e '."$schema"=="./schema.json"' "$CASE_TMP/stage/config.json"
     t_run 0 sbd_validate_schema "$CASE_TMP/stage/schema.json" "$CASE_TMP/stage/config.json"
-    t_assert '按顶层域生成分片' test -s "$CASE_TMP/stage/config/00_base.json"
-    t_assert 'DNS 独立分片' test -s "$CASE_TMP/stage/config/10_dns.json"
-    t_assert 'outbounds 独立分片' test -s "$CASE_TMP/stage/config/40_outbounds.json"
-    t_assert 'route 独立分片' test -s "$CASE_TMP/stage/config/50_route.json"
-    t_assert '分片不含 $schema' jq -e 'has("$schema")|not' "$CASE_TMP/stage/config/00_base.json"
+    t_assert '按官方顶层字段生成日志分片' test -s "$CASE_TMP/stage/config/01_log.json"
+    t_assert 'DNS 独立分片' test -s "$CASE_TMP/stage/config/02_dns.json"
+    t_assert 'NTP 独立分片' test -s "$CASE_TMP/stage/config/03_ntp.json"
+    t_assert 'outbounds 独立分片' test -s "$CASE_TMP/stage/config/10_outbounds.json"
+    t_assert 'route 独立分片' test -s "$CASE_TMP/stage/config/11_route.json"
+    t_assert '分片不含 $schema' jq -e 'has("$schema")|not' "$CASE_TMP/stage/config/01_log.json"
 }
 certificate_paths_only() {
     t_fresh
@@ -47,6 +50,16 @@ semantic_failure() {
     t_run 1 sbd_prepare_config "$CASE_TMP/stage"
     t_contains "$CASE_TMP/output" '核心语义检查失败'
 }
+merge_failure_detail() {
+    t_fresh
+    mkdir "$CASE_TMP/parts" || exit 1
+    printf '{}\n' > "$CASE_TMP/parts/01_log.json" || exit 1
+    printf '#!/usr/bin/env bash\nprintf "mock merge failure\\n" >&2\nexit 1\n' > "$CASE_TMP/core" || exit 1
+    chmod +x "$CASE_TMP/core" || exit 1
+    t_run 1 sbd_config_merge "$CASE_TMP/core" "$CASE_TMP/parts" "$CASE_TMP/merged.json"
+    t_contains "$CASE_TMP/output" 'sing-box merge 失败'
+    t_contains "$CASE_TMP/output" 'mock merge failure'
+}
 check_boundary() {
     t_fresh
     mkdir "$CASE_TMP/stage" || exit 1
@@ -72,6 +85,7 @@ t_case '目标核心生成、校验和 format/check' prepare_valid
 t_case 'merge 展开证书后仍保留路径事实' certificate_paths_only
 t_case '真实 Schema 拒绝非法枚举值' wrong_type
 t_case '真实 check 拒绝非法 SS2022 密钥' semantic_failure
+t_case 'merge 失败时显示核心 stderr' merge_failure_detail
 t_case '如实记录 check 对路由引用的边界' check_boundary
 t_case '旧核心与缺核心明确拒绝' version_gate
 t_finish

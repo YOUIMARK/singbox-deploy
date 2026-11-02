@@ -145,7 +145,7 @@ keep_reinstall() {
     rm "$SBD_BINARY" || exit 1
     t_run 0 sbd_engine_commit "$CASE_TMP/candidate"
     t_assert '重装后核心已恢复' test -x "$SBD_BINARY"
-    t_assert '重装使用候选核心合并保留分片' jq -e '.log.level=="warn"' "$SBD_CONF_PARTS/00_base.json"
+    t_assert '重装使用候选核心合并保留分片' jq -e '.log.level=="warn"' "$SBD_CONF_PARTS/01_log.json"
 }
 running_upgrade() {
     e_fixture

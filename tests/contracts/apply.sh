@@ -6,8 +6,8 @@ commit_valid() {
     t_seed
     t_run 0 sbd_apply t_edit_debug
     t_assert '配置生效' jq -e '.log.level=="debug"' "$SBD_CONFIG"
-    t_assert '分片同步生效' jq -e '.log.level=="debug"' "$SBD_CONF_PARTS/00_base.json"
-    t_assert '分片不写本地 schema 引用' jq -e 'has("$schema")|not' "$SBD_CONF_PARTS/00_base.json"
+    t_assert '分片同步生效' jq -e '.log.level=="debug"' "$SBD_CONF_PARTS/01_log.json"
+    t_assert '分片不写本地 schema 引用' jq -e 'has("$schema")|not' "$SBD_CONF_PARTS/01_log.json"
     t_assert 'Schema 与运行配置同目录' test -s "$SBD_ROOT/schema.json"
     t_assert 'confs 只保留配置分片' test ! -e "$SBD_CONF_PARTS/schema.json"
     t_assert 'state 最后提交' jq -e '.revision==1 and .core_version=="1.14.4"' "$SBD_STATE"
@@ -18,12 +18,45 @@ commit_valid() {
 fragment_source() {
     t_seed
     producer() { :; }
-    jq '.log.level="debug"' "$SBD_CONF_PARTS/00_base.json" > "$CASE_TMP/part" || exit 1
-    cp "$CASE_TMP/part" "$SBD_CONF_PARTS/00_base.json" || exit 1
+    jq '.log.level="debug"' "$SBD_CONF_PARTS/01_log.json" > "$CASE_TMP/part" || exit 1
+    cp "$CASE_TMP/part" "$SBD_CONF_PARTS/01_log.json" || exit 1
     t_run 1 sbd_check_config
-    t_contains "$CASE_TMP/output" '配置分片与运行配置不一致'
+    t_contains "$CASE_TMP/output" '配置分片与运行配置内容不一致'
+    t_contains "$CASE_TMP/output" '仅排版差异不会触发'
     t_run 0 sbd_apply producer
     t_assert '分片是下一次事务的配置来源' jq -e '.log.level=="debug"' "$SBD_CONFIG"
+}
+format_only_drift() {
+    t_seed
+    jq --indent 4 . "$SBD_CONFIG" > "$CASE_TMP/pretty.json" || exit 1
+    if cmp -s "$CASE_TMP/pretty.json" "$SBD_CONFIG"; then
+        printf '测试未能制造纯排版差异\n' >&2
+        exit 1
+    fi
+    cp "$CASE_TMP/pretty.json" "$SBD_CONFIG" || exit 1
+    t_run 0 sbd_check_config
+    t_absent "$CASE_TMP/output" 'merged.json.raw'
+    t_absent "$CASE_TMP/output" '/tmp/'
+    t_assert '检查配置不重写运行配置' cmp -s "$CASE_TMP/pretty.json" "$SBD_CONFIG"
+}
+invalid_fragment_reported() {
+    t_seed
+    jq '{inbounds:.inbounds}' "$ROOT/tests/fixtures/invalid-key.json" > "$SBD_CONF_PARTS/09_inbounds.json" || exit 1
+    t_run 1 sbd_check_config
+    t_contains "$CASE_TMP/output" '配置分片核心语义检查失败'
+    t_absent "$CASE_TMP/output" '配置分片与运行配置内容不一致'
+}
+fragment_format_failure_reported() {
+    t_seed
+    # 变量由生成的窄包装器解释，其他动作仍调用真实核心。
+    # shellcheck disable=SC2016
+    printf '#!/usr/bin/env bash\nif [[ "$1" = format ]]; then printf "mock format failure\\n" >&2; exit 1; fi\nexec "%s" "$@"\n' "$SBD_TEST_BIN" > "$CASE_TMP/core-wrapper" || exit 1
+    chmod +x "$CASE_TMP/core-wrapper" || exit 1
+    # shellcheck disable=SC2034
+    SBD_BINARY="$CASE_TMP/core-wrapper"
+    t_run 1 sbd_check_config
+    t_contains "$CASE_TMP/output" '配置分片格式化失败'
+    t_contains "$CASE_TMP/output" 'mock format failure'
 }
 format_failure() {
     t_seed
@@ -97,6 +130,9 @@ lock_collision() {
 }
 t_case '完整提交与修订号' commit_valid
 t_case '分片编辑作为事务输入并重新合并' fragment_source
+t_case '运行配置仅重新排版不算内容漂移' format_only_drift
+t_case '检查配置真实校验分片候选' invalid_fragment_reported
+t_case '检查配置失败时显示格式化 stderr' fragment_format_failure_reported
 t_case 'format 失败不落盘' format_failure
 t_case 'state 提交失败整组回滚' state_failure
 t_case '启动失败恢复旧文件后再恢复服务' runtime_failure

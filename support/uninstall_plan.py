@@ -8,6 +8,23 @@ import sys
 
 
 CONFIG_PART_NAMES = (
+    # 当前布局：一个顶层字段一个分片，编号按 sing-box 官方顶层顺序。
+    "00_empty.json",
+    "01_log.json",
+    "02_dns.json",
+    "03_ntp.json",
+    "04_certificate.json",
+    "05_certificate_providers.json",
+    "06_http_clients.json",
+    "07_network_namespaces.json",
+    "08_endpoints.json",
+    "09_inbounds.json",
+    "10_outbounds.json",
+    "11_route.json",
+    "12_services.json",
+    "13_experimental.json",
+    "99_extra.json",
+    # 旧布局：升级后尚未重新分片的部署仍可能保留这些文件。
     "00_base.json",
     "10_dns.json",
     "20_endpoints.json",
