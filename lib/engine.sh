@@ -204,18 +204,16 @@ sbd_service_render() {
         systemd)
             cat > "$target" <<EOF
 [Unit]
-Description=sing-box (singbox-deploy)
-Wants=network-online.target
-After=network-online.target nss-lookup.target
-StartLimitIntervalSec=600
-StartLimitBurst=20
+Description=sing-box service (singbox-deploy)
+Documentation=https://sing-box.sagernet.org
+After=network.target nss-lookup.target network-online.target
 
 [Service]
-Type=simple
-UMask=0077
-ExecStart=$SBD_BINARY run -c $SBD_CONFIG -D $SBD_ROOT
+ExecStart=$SBD_BINARY -D $SBD_ROOT -c $SBD_CONFIG run
+ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
-RestartSec=3
+RestartSec=10s
+LimitNOFILE=infinity
 
 [Install]
 WantedBy=multi-user.target
@@ -224,26 +222,32 @@ EOF
         openrc)
             cat > "$target" <<EOF
 #!/sbin/openrc-run
-name="sing-box (singbox-deploy)"
-description="个人 NAT VPS sing-box 服务"
-supervisor=supervise-daemon
-respawn_delay=5
-respawn_max=20
-respawn_period=600
-pidfile="/run/\${RC_SVCNAME}.pid"
+name=\$RC_SVCNAME
+description="sing-box service"
+supervisor="supervise-daemon"
 command="$SBD_BINARY"
-command_args="run -c $SBD_CONFIG -D $SBD_ROOT"
-directory="$SBD_ROOT"
+extra_commands="checkconfig"
+extra_started_commands="reload"
+command_args="run --disable-color -D $SBD_ROOT -c $SBD_CONFIG"
 output_log="$SBD_LOG"
 error_log="$SBD_LOG"
-required_files="$SBD_CONFIG"
 depend() {
     after net dns
+}
+checkconfig() {
+    ebegin "Checking \$RC_SVCNAME configuration"
+    "\$command" check -D "$SBD_ROOT" -c "$SBD_CONFIG"
+    eend \$?
 }
 start_pre() {
     umask 077
     checkpath -f -m 0600 "$SBD_LOG" || return 1
-    "\$command" check -c "$SBD_CONFIG" -D "$SBD_ROOT"
+    checkconfig
+}
+reload() {
+    ebegin "Reloading \$RC_SVCNAME"
+    checkconfig && \$supervisor "\$RC_SVCNAME" --signal HUP
+    eend \$?
 }
 EOF
             ;;

@@ -185,7 +185,7 @@ takeover_service() {
     e_fixture
     printf 'ExecStart=/opt/singbox-deploy/engine/sing-box run -c /opt/singbox-deploy/config/config.json -D /opt/singbox-deploy\n' > "$CASE_TMP/etc/service" || exit 1
     t_run 0 sbd_engine_commit "$CASE_TMP/candidate"
-    t_assert '同名旧布局服务被重写为本部署定义' grep -Fxq "ExecStart=$SBD_BINARY run -c $SBD_CONFIG -D $SBD_ROOT" "$CASE_TMP/etc/service"
+    t_assert '同名旧布局服务被重写为本部署定义' grep -Fxq "ExecStart=$SBD_BINARY -D $SBD_ROOT -c $SBD_CONFIG run" "$CASE_TMP/etc/service"
 }
 schema_failure() {
     e_fixture

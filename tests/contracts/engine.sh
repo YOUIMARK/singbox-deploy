@@ -86,6 +86,22 @@ openrc_crashed_restart() {
     t_contains "$CASE_TMP/actions" 'restart'
     t_assert 'crashed 后重启恢复运行' test "$(cat "$CASE_TMP/runtime")" = running
 }
+service_render_alignment() {
+    t_fresh
+    sbd_service_render systemd "$CASE_TMP/systemd" || exit 1
+    t_contains "$CASE_TMP/systemd" 'Documentation=https://sing-box.sagernet.org'
+    t_contains "$CASE_TMP/systemd" "ExecStart=$SBD_BINARY -D $SBD_ROOT -c $SBD_CONFIG run"
+    t_contains "$CASE_TMP/systemd" 'ExecReload=/bin/kill -HUP $MAINPID'
+    t_contains "$CASE_TMP/systemd" 'RestartSec=10s'
+    t_contains "$CASE_TMP/systemd" 'LimitNOFILE=infinity'
+    sbd_service_render openrc "$CASE_TMP/openrc" || exit 1
+    t_contains "$CASE_TMP/openrc" 'extra_commands="checkconfig"'
+    t_contains "$CASE_TMP/openrc" 'extra_started_commands="reload"'
+    t_contains "$CASE_TMP/openrc" "--disable-color -D $SBD_ROOT -c $SBD_CONFIG"
+    t_contains "$CASE_TMP/openrc" '"$command" check -D'
+    t_contains "$CASE_TMP/openrc" '$supervisor "$RC_SVCNAME" --signal HUP'
+    t_run 0 sh -n "$CASE_TMP/openrc"
+}
 no_inherited_lock() {
     service_fixture
     action() { printf '%s' "$SBD_WRITE_FD" > "$CASE_TMP/fd"; sbd_service_action restart; }
@@ -105,6 +121,7 @@ t_case '重启必须持续运行' restart_window
 t_case 'stop 成功不等于已停止' stop_verified
 t_case 'OpenRC 按自有进程判活，crashed 不报未知' openrc_states
 t_case 'OpenRC crashed 后先 zap 再重启' openrc_crashed_restart
+t_case '服务定义与官方 systemd/OpenRC 对齐' service_render_alignment
 t_case '服务子进程不继承写锁' no_inherited_lock
 menu_cancel() {
     t_fresh
