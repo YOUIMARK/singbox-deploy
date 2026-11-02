@@ -58,14 +58,33 @@ openrc_states() {
     sbd_backend() { printf 'openrc\n'; }
     sbd_service_file() { printf '%s/unit\n' "$CASE_TMP"; }
     printf 'command="%s"\ncommand_args="run -c %s -D %s"\n' "$SBD_BINARY" "$SBD_CONFIG" "$SBD_ROOT" > "$CASE_TMP/unit" || exit 1
-    rc-service() { printf ' * status: started\n'; }
-    t_assert 'OpenRC started' test "$(sbd_service_state)" = running
-    rc-service() { printf ' * status: stopped\n'; return 3; }
-    t_assert 'OpenRC stopped' test "$(sbd_service_state)" = stopped
-    rc-service() { printf 'not started\n'; }
-    t_run 1 sbd_service_state
-    rc-service() { printf 'unknown\n'; return 1; }
-    t_run 1 sbd_service_state
+    sbd_service_process_running() { return 0; }
+    t_assert 'OpenRC 自有进程在运行' test "$(sbd_service_state)" = running
+    sbd_service_process_running() { return 1; }
+    t_assert 'OpenRC crashed 或未知文本按无自有进程判定停止' test "$(sbd_service_state)" = stopped
+}
+openrc_crashed_restart() {
+    t_fresh
+    sbd_backend() { printf 'openrc\n'; }
+    sbd_service_file() { printf '%s/unit\n' "$CASE_TMP"; }
+    printf 'command="%s"\ncommand_args="run -c %s -D %s"\n' "$SBD_BINARY" "$SBD_CONFIG" "$SBD_ROOT" > "$CASE_TMP/unit" || exit 1
+    printf 'crashed\n' > "$CASE_TMP/runtime" || exit 1
+    : > "$CASE_TMP/actions" || exit 1
+    sbd_service_process_running() { [[ "$(cat "$CASE_TMP/runtime")" = running ]]; }
+    rc-service() {
+        printf '%s\n' "$*" >> "$CASE_TMP/actions"
+        case "$2" in
+            zap) printf 'stopped\n' > "$CASE_TMP/runtime" ;;
+            restart|start) printf 'running\n' > "$CASE_TMP/runtime" ;;
+            stop) printf 'stopped\n' > "$CASE_TMP/runtime" ;;
+            *) return 1 ;;
+        esac
+    }
+    sleep() { :; }
+    t_run 0 sbd_service_restore running
+    t_contains "$CASE_TMP/actions" 'zap'
+    t_contains "$CASE_TMP/actions" 'restart'
+    t_assert 'crashed 后重启恢复运行' test "$(cat "$CASE_TMP/runtime")" = running
 }
 no_inherited_lock() {
     service_fixture
@@ -84,7 +103,8 @@ t_case 'systemd 运行、停止、未知三态' systemd_states
 t_case '同名旧布局单元按本部署认领' same_name_unit
 t_case '重启必须持续运行' restart_window
 t_case 'stop 成功不等于已停止' stop_verified
-t_case 'OpenRC 状态与失败可见' openrc_states
+t_case 'OpenRC 按自有进程判活，crashed 不报未知' openrc_states
+t_case 'OpenRC crashed 后先 zap 再重启' openrc_crashed_restart
 t_case '服务子进程不继承写锁' no_inherited_lock
 menu_cancel() {
     t_fresh
@@ -151,7 +171,23 @@ direct_control_failure() {
     t_contains "$CASE_TMP/output" '另一个操作'
     t_absent "$CASE_TMP/output" '[成功]'
 }
+direct_control_unknown_state() {
+    control_fixture
+    sbd_service_state() {
+        if [[ ! -e "$CASE_TMP/state-unknown" ]]; then
+            : > "$CASE_TMP/state-unknown"
+            return 1
+        fi
+        if grep -Fq 'MainPID=123' "$CASE_TMP/runtime"; then printf 'running\n'; else printf 'stopped\n'; fi
+    }
+    t_run 0 sbd_dispatch 10
+    t_contains "$CASE_TMP/output" '服务已持续运行'
+    sbd_service_state() { return 1; }
+    t_run 0 sbd_dispatch 14
+    t_assert '运行态未知不阻止启用自启' test "$(sbd_service_enabled)" = enabled
+}
 t_case '首页重启停止和自启直达真实加锁控制与复验' direct_controls
 t_case '首页重启前真实 Schema/check 失败不操作服务' direct_restart_failure
 t_case '首页服务控制失败或锁冲突明确报错、不假报成功' direct_control_failure
+t_case '运行态未知不阻止主动重启和自启切换' direct_control_unknown_state
 t_finish

@@ -29,8 +29,20 @@ sbd_service_claim() {
     [[ ! -L "$file" ]] || { _error '服务路径是外部链接，拒绝操作'; return 1; }
 }
 
+sbd_service_process_running() {
+    local path target
+    [[ -n "${SBD_BINARY:-}" ]] || return 1
+    for path in /proc/[0-9]*/exe; do
+        target=$(readlink "$path" 2>/dev/null) || continue
+        if [[ "$target" = "$SBD_BINARY" || "$target" = "$SBD_BINARY (deleted)" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 sbd_service_state() {
-    local backend file output rc=0 active='' sub='' pid='' line
+    local backend file output active='' sub='' pid='' line
     backend=$(sbd_backend) || return 1
     file=$(sbd_service_file "$backend") || return 1
     [[ -e "$file" || -L "$file" ]] || { printf 'stopped\n'; return 0; }
@@ -55,14 +67,12 @@ sbd_service_state() {
             fi
             ;;
         openrc)
-            output=$(rc-service "$SBD_SERVICE" status 2>&1) || rc=$?
-            if [[ "$rc" = 0 && "$output" =~ status:[[:space:]]+started([[:space:]]|$) ]]; then
+            # OpenRC 在 respawn 耗尽后报 crashed，且不同版本的 status 文本/返回码并不稳定。
+            # 以本部署二进制的真实进程为运行事实，未知文本不再阻断状态读取。
+            if sbd_service_process_running; then
                 printf 'running\n'
-            elif [[ "$rc" = 3 && "$output" =~ status:[[:space:]]+stopped([[:space:]]|$) ]]; then
-                printf 'stopped\n'
             else
-                _error '无法确认 OpenRC 服务状态'
-                return 1
+                printf 'stopped\n'
             fi
             ;;
     esac
@@ -77,13 +87,19 @@ sbd_service_action() (
     if [[ -n "${SBD_WRITE_FD:-}" ]]; then exec {SBD_WRITE_FD}>&-; fi
     case "$backend" in
         systemd) systemctl "$action" "$SBD_SERVICE" || { _error "服务 $action 失败"; return 1; } ;;
-        openrc) rc-service "$SBD_SERVICE" "$action" || { _error "服务 $action 失败"; return 1; } ;;
+        openrc)
+            # supervise-daemon respawn 耗尽后 service 处于 crashed，直接 start/restart 可能被拒。
+            # 仅在确无自有业务进程时清掉崩溃状态，避免误 zap 正常运行中的实例。
+            if [[ "$action" = start || "$action" = restart ]] && ! sbd_service_process_running; then
+                rc-service "$SBD_SERVICE" zap >/dev/null 2>&1 || :
+            fi
+            rc-service "$SBD_SERVICE" "$action" || { _error "服务 $action 失败"; return 1; }
+            ;;
     esac
 )
 
 sbd_service_restore() {
     local expected="$1" state i
-    state=$(sbd_service_state) || return 1
     case "$expected" in
         running)
             sbd_service_action restart || return 1
@@ -94,6 +110,7 @@ sbd_service_restore() {
             done
             ;;
         stopped)
+            state=$(sbd_service_state 2>/dev/null) || state=''
             if [[ "$state" != stopped ]]; then sbd_service_action stop || return 1; fi
             state=$(sbd_service_state) || return 1
             [[ "$state" = stopped ]] || { _error '服务未停止'; return 1; }
@@ -122,15 +139,11 @@ sbd_tree_compare() (
 )
 
 sbd_engine_stopped() {
-    local path target
     sbd_service_restore stopped || return 1
-    for path in /proc/[0-9]*/exe; do
-        target=$(readlink "$path" 2>/dev/null) || continue
-        if [[ "$target" = "$SBD_BINARY" || "$target" = "$SBD_BINARY (deleted)" ]]; then
-            _error '服务报告停止但自有核心仍存在，拒绝替换核心包'
-            return 1
-        fi
-    done
+    if sbd_service_process_running; then
+        _error '服务报告停止但自有核心仍存在，拒绝替换核心包'
+        return 1
+    fi
 }
 
 sbd_service_reload() {
@@ -407,12 +420,15 @@ sbd_engine_install() (
 sbd_engine_control_locked() {
     local action="$1" before after
     sbd_recover_locked || return 1
-    before=$(sbd_service_state) || return 1
     case "$action" in
         start|restart)
             sbd_check_config || return 1
+            # 运行态未知只影响失败后的原态恢复，不能阻止用户主动重启。
+            before=$(sbd_service_state 2>/dev/null) || before=''
             if ! sbd_service_restore running; then
-                sbd_service_restore "$before" || _error '服务原运行态恢复失败'
+                if [[ -n "$before" ]]; then
+                    sbd_service_restore "$before" || _error '服务原运行态恢复失败'
+                fi
                 return 1
             fi
             ;;
