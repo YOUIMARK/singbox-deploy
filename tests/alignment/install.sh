@@ -12,7 +12,7 @@ fresh_install() {
     t_assert '管理器事实已提交' jq -e '.manager_version=="0.1.0" and .revision==0' "$SBD_STATE"
     t_assert '空登记表' jq -e '.nodes==[]' "$SBD_REGISTRY"
     t_assert '不自动创建配置' test ! -e "$SBD_CONFIG"
-    t_assert '不自动创建配置分片' test -z "$(find "$SBD_CONF_PARTS" -name '*.json' -print -quit)"
+    t_assert '不自动创建旧布局配置' test ! -e "$SBD_LEGACY_CONFIG" -a ! -e "$SBD_LEGACY_SCHEMA"
     t_assert '不自动装核心' test ! -e "$SBD_ROOT/bin/sing-box"
     t_run 0 "$SBD_COMMAND" --version
     t_contains "$CASE_TMP/output" 0.1.0
@@ -85,7 +85,7 @@ main_local_install() {
     t_absent "$CASE_TMP/output" '业务模块仍未实现'
     t_assert '真实安装入口落地命令' test -L "$CASE_TMP/bin/sd"
     t_run 0 "$CASE_TMP/bin/sd" --help
-    t_assert '不自动初始化业务配置' test ! -e "$CASE_TMP/root/config.json"
+    t_assert '不自动初始化业务配置' test ! -e "$CASE_TMP/root/confs/config.json"
 }
 root_guard() {
     if [[ "$EUID" = 0 ]]; then

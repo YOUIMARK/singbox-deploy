@@ -25,7 +25,7 @@ uninstall_keep() {
     plan=$(sbd_uninstall_plan keep) || exit 1
     t_run 0 sbd_write_lock sbd_uninstall_locked keep "$plan"
     t_assert '保留原路径配置和数据' test -s "$SBD_CONFIG"
-    t_assert '保留模式保留多文件配置' test -d "$SBD_CONF_PARTS"
+    t_assert '保留模式保留配置目录' test -d "$SBD_CONF_DIR"
     t_assert '服务定义和命令已删除' test ! -e "$CASE_TMP/etc/service"
     t_assert '命令链接不存在' test ! -L "$SBD_COMMAND"
     t_assert '核心已移除' test ! -e "$SBD_BINARY"
@@ -44,8 +44,9 @@ uninstall_purge() {
     mkdir -p "$dir/Taildrop" || exit 1
     printf 'fixture native state\n' > "$dir/state" || exit 1
     printf 'unknown user file\n' > "$SBD_ROOT/user-notes.txt" || exit 1
-    printf 'unknown config file\n' > "$SBD_CONF_PARTS/user-notes.txt" || exit 1
-    printf '{"log":{"level":"warn"}}\n' > "$SBD_CONF_PARTS/00_base.json" || exit 1
+    printf 'unknown config file\n' > "$SBD_CONF_DIR/user-notes.txt" || exit 1
+    printf '{"log":{"level":"warn"}}\n' > "$SBD_CONF_DIR/01_log.json" || exit 1
+    printf '{"log":{"level":"warn"}}\n' > "$SBD_CONF_DIR/00_base.json" || exit 1
     printf 'external keep\n' > "$CASE_TMP/external.pem" || exit 1
     mkdir -p "$SBD_STATE_DIR/tailscale/user-unmanaged" || exit 1
     printf 'unmanaged state\n' > "$SBD_STATE_DIR/tailscale/user-unmanaged/state" || exit 1
@@ -54,10 +55,11 @@ uninstall_purge() {
     plan=$(sbd_uninstall_plan purge) || exit 1
     t_run 0 sbd_write_lock sbd_uninstall_locked purge "$plan"
     t_assert '已移除的功能不再授予认证数据删除权' test -s "$dir/state"
-    t_assert '清除配置文件' test ! -e "$SBD_CONFIG"
-    t_assert '清除已登记的配置分片' test ! -e "$SBD_CONF_PARTS/01_log.json"
-    t_assert '清除旧布局分片' test ! -e "$SBD_CONF_PARTS/00_base.json"
-    t_contains "$SBD_CONF_PARTS/user-notes.txt" 'unknown config file'
+    t_assert '清除单配置文件' test ! -e "$SBD_CONFIG"
+    t_assert '清除同目录 Schema' test ! -e "$SBD_SCHEMA"
+    t_assert '清除已登记的旧分片' test ! -e "$SBD_CONF_DIR/01_log.json"
+    t_assert '清除旧布局分片' test ! -e "$SBD_CONF_DIR/00_base.json"
+    t_contains "$SBD_CONF_DIR/user-notes.txt" 'unknown config file'
     t_assert '清除状态' test ! -e "$SBD_STATE"
     t_contains "$SBD_ROOT/user-notes.txt" 'unknown user'
     t_contains "$CASE_TMP/external.pem" 'external keep'

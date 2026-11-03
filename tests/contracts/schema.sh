@@ -12,12 +12,8 @@ prepare_valid() {
     # shellcheck disable=SC2016
     t_assert '本地 schema 引用保留' jq -e '."$schema"=="./schema.json"' "$CASE_TMP/stage/config.json"
     t_run 0 sbd_validate_schema "$CASE_TMP/stage/schema.json" "$CASE_TMP/stage/config.json"
-    t_assert '按官方顶层字段生成日志分片' test -s "$CASE_TMP/stage/config/01_log.json"
-    t_assert 'DNS 独立分片' test -s "$CASE_TMP/stage/config/02_dns.json"
-    t_assert 'NTP 独立分片' test -s "$CASE_TMP/stage/config/03_ntp.json"
-    t_assert 'outbounds 独立分片' test -s "$CASE_TMP/stage/config/10_outbounds.json"
-    t_assert 'route 独立分片' test -s "$CASE_TMP/stage/config/11_route.json"
-    t_assert '分片不含 $schema' jq -e 'has("$schema")|not' "$CASE_TMP/stage/config/01_log.json"
+    t_assert '单配置文件保留官方 format 结果' jq -e 'has("log") and has("dns") and has("outbounds") and has("route")' "$CASE_TMP/stage/config.json"
+    t_assert '不再生成配置分片目录' test ! -e "$CASE_TMP/stage/config"
 }
 certificate_paths_only() {
     t_fresh
@@ -34,8 +30,8 @@ certificate_paths_only() {
         route:{final:"direct"}
     }' > "$CASE_TMP/stage/config.json" || exit 1
     t_run 0 sbd_prepare_config "$CASE_TMP/stage"
-    t_assert '合并后仍使用证书文件路径' jq -e '.inbounds[0].tls|has("certificate_path") and has("key_path")' "$CASE_TMP/stage/config.json"
-    t_assert '合并后不保留旧内嵌证书' jq -e '.inbounds[0].tls|(has("certificate") or has("key"))|not' "$CASE_TMP/stage/config.json"
+    t_assert '格式化后仍使用证书文件路径' jq -e '.inbounds[0].tls|has("certificate_path") and has("key_path")' "$CASE_TMP/stage/config.json"
+    t_assert '格式化后不新增内嵌证书' jq -e '.inbounds[0].tls|(has("certificate") or has("key"))|not' "$CASE_TMP/stage/config.json"
 }
 wrong_type() {
     t_fresh
@@ -49,16 +45,6 @@ semantic_failure() {
     cp "$ROOT/tests/fixtures/invalid-key.json" "$CASE_TMP/stage/config.json" || exit 1
     t_run 1 sbd_prepare_config "$CASE_TMP/stage"
     t_contains "$CASE_TMP/output" '核心语义检查失败'
-}
-merge_failure_detail() {
-    t_fresh
-    mkdir "$CASE_TMP/parts" || exit 1
-    printf '{}\n' > "$CASE_TMP/parts/01_log.json" || exit 1
-    printf '#!/usr/bin/env bash\nprintf "mock merge failure\\n" >&2\nexit 1\n' > "$CASE_TMP/core" || exit 1
-    chmod +x "$CASE_TMP/core" || exit 1
-    t_run 1 sbd_config_merge "$CASE_TMP/core" "$CASE_TMP/parts" "$CASE_TMP/merged.json"
-    t_contains "$CASE_TMP/output" 'sing-box merge 失败'
-    t_contains "$CASE_TMP/output" 'mock merge failure'
 }
 check_boundary() {
     t_fresh
@@ -82,10 +68,9 @@ version_gate() {
     t_run 1 sbd_version
 }
 t_case '目标核心生成、校验和 format/check' prepare_valid
-t_case 'merge 展开证书后仍保留路径事实' certificate_paths_only
+t_case '格式化后仍保留证书路径事实' certificate_paths_only
 t_case '真实 Schema 拒绝非法枚举值' wrong_type
 t_case '真实 check 拒绝非法 SS2022 密钥' semantic_failure
-t_case 'merge 失败时显示核心 stderr' merge_failure_detail
 t_case '如实记录 check 对路由引用的边界' check_boundary
 t_case '旧核心与缺核心明确拒绝' version_gate
 t_finish

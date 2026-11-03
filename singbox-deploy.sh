@@ -53,6 +53,7 @@ sbd_bootstrap() {
         [[ -x "$SBD_APP/singbox-deploy.sh" ]] || { _error '安装已恢复为未安装状态，请重新运行安装器'; return 1; }
         exec "$SBD_APP/singbox-deploy.sh"
     fi
+    sbd_migrate_legacy_layout || return 1
     sbd_console
 }
 

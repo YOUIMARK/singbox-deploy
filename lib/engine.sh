@@ -369,7 +369,6 @@ sbd_engine_commit_locked() {
     sbd_engine_stopped || { sbd_apply_abort; return 1; }
     mode=644; [[ "$backend" != openrc ]] || mode=755
     if ! sbd_directory_replace "$candidate/engine" engine ||
-        ! sbd_directory_replace "$stage/config" config_parts ||
         ! sbd_atomic_file "$stage/schema.json" "$SBD_SCHEMA" ||
         ! sbd_atomic_file "$stage/config.json" "$SBD_CONFIG" ||
         ! sbd_atomic_file "$stage/service" "$service" "$mode"; then

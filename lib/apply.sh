@@ -2,7 +2,6 @@
 
 sbd_resource_path() {
     case "$1" in
-        config_parts) printf '%s\n' "$SBD_CONF_PARTS" ;;
         config) printf '%s\n' "$SBD_CONFIG" ;;
         schema) printf '%s\n' "$SBD_SCHEMA" ;;
         state) printf '%s\n' "$SBD_STATE" ;;
@@ -19,10 +18,10 @@ sbd_resource_path() {
 
 sbd_resources() {
     case "$1" in
-        config) printf '%s\n' config_parts schema config registry exports state ;;
+        config) printf '%s\n' schema config registry exports state ;;
         install) printf '%s\n' app registry state command ;;
         engine)
-            printf '%s\n' engine schema config_parts config service
+            printf '%s\n' engine schema config service
             local backend
             backend=$(sbd_backend) || return 1
             [[ "$backend" != openrc ]] || printf 'logrotate\n'
@@ -128,7 +127,7 @@ sbd_journal_valid() {
         jq -e --arg key "$key" '(.present[$key] | type) == "boolean"' "$dir/journal.json" >/dev/null || { _error '事务存在性记录无效'; return 1; }
         had=$(jq -r --arg key "$key" '.present[$key]' "$dir/journal.json") || return 1
         if [[ "$had" = true ]]; then
-            if [[ "$key" = exports || "$key" = app || "$key" = engine || "$key" = config_parts ]]; then
+            if [[ "$key" = exports || "$key" = app || "$key" = engine ]]; then
                 [[ -d "$dir/before/$key" && ! -L "$dir/before/$key" ]] || { _error "目录恢复副本缺失: $key"; return 1; }
             elif [[ "$key" = command ]]; then
                 [[ -L "$dir/before/$key" ]] || { _error '命令链接恢复副本缺失'; return 1; }
@@ -151,7 +150,7 @@ sbd_snapshot() {
         if [[ -e "$path" || -L "$path" ]]; then
             [[ ! -L "$path" || "$key" = command ]] || { _error "受管资源不能是外部链接: $path"; return 1; }
             cp -a -- "$path" "$dir/before/$key" || { _error "快照失败: $key"; return 1; }
-            if [[ "$key" = engine || "$key" = config_parts ]]; then
+            if [[ "$key" = engine ]]; then
                 sbd_tree_compare "$path" "$dir/before/$key" || { _error "目录快照不完整: $key"; return 1; }
             elif [[ "$key" != exports && "$key" != app && "$key" != command ]]; then
                 cmp -s -- "$path" "$dir/before/$key" || { _error "快照字节不一致: $key"; return 1; }
@@ -171,13 +170,13 @@ sbd_snapshot() {
 
 sbd_directory_replace() {
     local source="$1" key="$2" target dir
-    case "$key" in app|exports|engine|config_parts) ;; *) _error '未知目录资源'; return 1 ;; esac
+    case "$key" in app|exports|engine) ;; *) _error '未知目录资源'; return 1 ;; esac
     target=$(sbd_resource_path "$key") || return 1
     dir="$SBD_WORK/active/$key-next"
     [[ -d "$source" && ! -L "$source" && ! -L "$target" ]] || { _error '发布目录无效'; return 1; }
     [[ ! -e "$dir" ]] || { _error '目录暂存位置被占用'; return 1; }
     cp -a -- "$source" "$dir" || { _error '目录暂存失败'; return 1; }
-    if [[ "$key" = engine || "$key" = config_parts ]]; then
+    if [[ "$key" = engine ]]; then
         sbd_tree_compare "$source" "$dir" || { _error "目录复制不完整: $key"; return 1; }
     fi
     rm -rf -- "$target" || { _error "旧目录替换失败: $key"; return 1; }
@@ -202,7 +201,7 @@ sbd_restore_snapshot() {
         path=$(sbd_resource_path "$key") || return 1
         had=$(jq -r --arg key "$key" '.present[$key]' "$dir/journal.json") || return 1
         if [[ "$had" = true ]]; then
-            if [[ "$key" = exports || "$key" = app || "$key" = engine || "$key" = config_parts ]]; then
+            if [[ "$key" = exports || "$key" = app || "$key" = engine ]]; then
                 # 上次发布失败留下的候选可删除，恢复副本本身始终保留。
                 if [[ -e "$SBD_WORK/active/$key-next" ]]; then
                     rm -rf -- "$SBD_WORK/active/$key-next" || { _error '无法清理失败目录候选'; return 1; }
@@ -222,7 +221,7 @@ sbd_restore_snapshot() {
             fi
         else
             case "$key" in
-                app|exports|engine|config_parts) rm -rf -- "$path" || { _error "移除本次新增目录失败: $key"; return 1; } ;;
+                app|exports|engine) rm -rf -- "$path" || { _error "移除本次新增目录失败: $key"; return 1; } ;;
                 *) rm -f -- "$path" || { _error "移除本次新增资源失败: $key"; return 1; } ;;
             esac
         fi
@@ -334,7 +333,6 @@ sbd_apply_locked() {
                 ;;
         esac
     fi
-    sbd_directory_replace "$stage/config" config_parts || { sbd_apply_abort; return 1; }
     for key in schema config registry; do
         sbd_atomic_file "$stage/$key.json" "$(sbd_resource_path "$key")" || { sbd_apply_abort; return 1; }
     done
@@ -357,6 +355,130 @@ sbd_apply_locked() {
 }
 
 sbd_apply() { sbd_write_lock sbd_apply_locked "$@"; }
+
+sbd_legacy_config_parts() {
+    local name
+    local -a names=(
+        00_empty.json 01_log.json 02_dns.json 03_ntp.json 04_certificate.json
+        05_certificate_providers.json 06_http_clients.json 07_network_namespaces.json
+        08_endpoints.json 09_inbounds.json 10_outbounds.json 11_route.json
+        12_services.json 13_experimental.json 99_extra.json
+        00_base.json 10_dns.json 20_endpoints.json 30_inbounds.json
+        40_outbounds.json 50_route.json 60_services.json 70_experimental.json
+        90_extra.json
+    )
+    for name in "${names[@]}"; do
+        [[ ! -f "$SBD_CONF_DIR/$name" ]] || printf '%s\n' "$name"
+    done
+}
+
+sbd_legacy_layout_present() {
+    [[ ! -f "$SBD_LEGACY_CONFIG" && ! -f "$SBD_LEGACY_SCHEMA" ]] || return 0
+    [[ -z "$(sbd_legacy_config_parts)" ]] || return 0
+    return 1
+}
+
+sbd_layout_stage_remove() {
+    local path="$1"
+    case "$path" in "$SBD_WORK"/migration.*) rm -rf -- "$path" ;; *) return 1 ;; esac
+}
+
+sbd_legacy_archive() {
+    local backup="$1" name failed=false
+    mkdir -p -- "$backup/legacy" || { _error "旧布局备份目录创建失败: $backup"; return 1; }
+    if [[ -f "$SBD_LEGACY_CONFIG" ]] && ! mv -- "$SBD_LEGACY_CONFIG" "$backup/legacy/config.json"; then
+        failed=true
+    fi
+    if [[ -f "$SBD_LEGACY_SCHEMA" ]] && ! mv -- "$SBD_LEGACY_SCHEMA" "$backup/legacy/schema.json"; then
+        failed=true
+    fi
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        [[ -f "$SBD_CONF_DIR/$name" ]] || continue
+        mv -- "$SBD_CONF_DIR/$name" "$backup/legacy/$name" || failed=true
+    done < <(sbd_legacy_config_parts)
+    [[ "$failed" = false ]] || { _error "旧布局未完全归档，原文件仍在部署根或 confs: $backup"; return 1; }
+}
+
+sbd_migrate_legacy_layout_locked() {
+    local migrate_config=false rewrite_service=false cleanup_legacy=false
+    local backend='' service='' runtime='' mode stage backup backup_service=false migrated=false
+    sbd_directories || return 1
+    if [[ -e "$SBD_CONFIG" ]]; then
+        if sbd_legacy_layout_present; then cleanup_legacy=true; fi
+    elif [[ -f "$SBD_LEGACY_CONFIG" ]]; then
+        migrate_config=true
+    elif sbd_legacy_layout_present; then
+        _error '检测到旧布局残留，但找不到可迁移的配置源（confs/config.json 或部署根 config.json）；已保留原文件，请恢复配置后重新启动'
+        return 0
+    fi
+    backend=$(sbd_backend) || return 1
+    service=$(sbd_service_file "$backend") || return 1
+    if [[ -e "$service" || -L "$service" ]]; then
+        sbd_service_claim "$backend" || return 1
+        if grep -Fq -- "$SBD_LEGACY_CONFIG" "$service"; then rewrite_service=true; fi
+    fi
+    [[ "$migrate_config" = true || "$rewrite_service" = true || "$cleanup_legacy" = true ]] || return 0
+    if [[ ! -x "$SBD_BINARY" ]]; then
+        _error '检测到旧配置布局，但当前核心不可用；请先安装核心，候选校验通过后再迁移'
+        return 0
+    fi
+    stage=$(mktemp -d "$SBD_WORK/migration.XXXXXX") || { _error '无法创建配置迁移暂存目录'; return 1; }
+    if [[ "$migrate_config" = true ]]; then
+        if ! sbd_config_stage_current "$stage/config.json" || ! sbd_prepare_config "$stage"; then
+            sbd_layout_stage_remove "$stage"
+            _error '旧配置未能通过 Schema/format/check，未迁移'
+            return 1
+        fi
+    fi
+    if [[ "$rewrite_service" = true ]]; then
+        if ! runtime=$(sbd_service_state); then
+            sbd_layout_stage_remove "$stage"
+            return 1
+        fi
+        if ! sbd_service_render "$backend" "$stage/service"; then
+            sbd_layout_stage_remove "$stage"
+            return 1
+        fi
+    fi
+    backup=$(mktemp -d "$SBD_WORK/legacy-layout.XXXXXX") || { sbd_layout_stage_remove "$stage"; return 1; }
+    if [[ "$migrate_config" = true ]]; then
+        if ! sbd_atomic_file "$stage/config.json" "$SBD_CONFIG" ||
+            ! sbd_atomic_file "$stage/schema.json" "$SBD_SCHEMA"; then
+            sbd_layout_stage_remove "$stage"
+            return 1
+        fi
+        migrated=true
+    fi
+    if [[ "$rewrite_service" = true ]]; then
+        mode=644; [[ "$backend" != openrc ]] || mode=755
+        if ! cp -- "$service" "$backup/service" || ! sbd_atomic_file "$stage/service" "$service" "$mode"; then
+            sbd_layout_stage_remove "$stage"
+            return 1
+        fi
+        backup_service=true
+        if ! sbd_service_reload || { [[ "$runtime" = running ]] && ! sbd_service_restore running; }; then
+            _error '服务定义切换失败，正在恢复旧布局服务定义'
+            sbd_atomic_file "$backup/service" "$service" "$mode" || _error '旧服务定义恢复失败'
+            sbd_service_reload || _error '旧服务后端重新加载失败'
+            sbd_service_restore "$runtime" || _error '旧服务运行态恢复失败'
+            sbd_layout_stage_remove "$stage"
+            return 1
+        fi
+        migrated=true
+    fi
+    if [[ "$migrate_config" = true || "$rewrite_service" = true || "$cleanup_legacy" = true ]]; then
+        sbd_legacy_archive "$backup" || _error "旧布局备份未完成，新配置继续生效: $backup"
+    fi
+    sbd_layout_stage_remove "$stage" || _error "迁移暂存清理失败: $stage"
+    if [[ "$migrated" = true || "$cleanup_legacy" = true ]]; then
+        [[ "$migrated" = false ]] || sbd_info "配置已收敛到单文件: $SBD_CONFIG"
+        [[ "$backup_service" = false ]] || sbd_info '服务定义已切换到新路径，并按原运行态重新加载'
+        sbd_info "旧布局原文件已备份到: $backup"
+    fi
+}
+
+sbd_migrate_legacy_layout() { sbd_write_lock sbd_migrate_legacy_layout_locked; }
 
 sbd_history_restore_locked() {
     local previous="$SBD_WORK/previous" active="$SBD_WORK/active" destination="$SBD_WORK/active/target" kind runtime content revision binary

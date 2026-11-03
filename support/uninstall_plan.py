@@ -56,9 +56,16 @@ def build(root, mode):
         else:
             raise ValueError("核心文件清单越界")
     if mode == "purge":
-        config = json.loads((root / "config.json").read_text()) if (root / "config.json").is_file() else {}
+        config_path = root / "confs/config.json"
+        if not config_path.is_file():
+            config_path = root / "config.json"
+        config = json.loads(config_path.read_text()) if config_path.is_file() else {}
         registry = json.loads((root / "state/registry.json").read_text())
         for name in (
+            "confs/config.json",
+            "confs/schema.json",
+            "confs/input.json",
+            "confs/core-version",
             "config.json",
             "schema.json",
             "assets/cache.db",

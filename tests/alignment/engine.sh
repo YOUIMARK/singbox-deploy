@@ -73,7 +73,6 @@ e_fixture() {
         sbd_service_render "$backend" "$CASE_TMP/etc/service" || exit 1
         if [[ "$backend" = openrc ]]; then sbd_logrotate_render "$CASE_TMP/etc/logrotate" || exit 1; fi
         cp "$SBD_CONFIG" "$CASE_TMP/old-config" || exit 1
-        cp -a "$SBD_CONF_PARTS" "$CASE_TMP/old-parts" || exit 1
         cp "$SBD_SCHEMA" "$CASE_TMP/old-schema" || exit 1
         cp "$CASE_TMP/etc/service" "$CASE_TMP/old-service" || exit 1
     fi
@@ -84,7 +83,6 @@ e_old() {
     t_assert '核心恢复为真实旧文件' cmp -s "$SBD_BINARY" "$SBD_TEST_BIN"
     t_contains "$SBD_BIN_DIR/libcronet.so" old-runtime-library
     t_assert '配置还原原字节' cmp -s "$SBD_CONFIG" "$CASE_TMP/old-config"
-    t_assert '配置分片还原原字节' sbd_tree_compare "$CASE_TMP/old-parts" "$SBD_CONF_PARTS"
     t_assert 'Schema 还原原字节' cmp -s "$SBD_SCHEMA" "$CASE_TMP/old-schema"
     t_assert '服务定义还原' cmp -s "$CASE_TMP/etc/service" "$CASE_TMP/old-service"
     t_assert 'state 还原' cmp -s "$SBD_STATE" "$CASE_TMP/old-state"
@@ -138,14 +136,16 @@ fresh_install() {
     t_run 0 sbd_check_config
     t_contains "$SBD_BIN_DIR/libcronet.so" new-runtime-library
     t_assert '基线无业务节点' jq -e '(.inbounds // [])==[]' "$SBD_CONFIG"
-    t_assert '首次安装生成配置分片' test -n "$(find "$SBD_CONF_PARTS" -maxdepth 1 -name '*.json' -print -quit)"
+    t_assert '首次安装生成单配置' test -s "$SBD_CONFIG"
+    t_assert '首次安装生成匹配 Schema' test -s "$SBD_SCHEMA"
+    t_assert '首次安装不在部署根留下配置' test ! -e "$SBD_LEGACY_CONFIG" -a ! -e "$SBD_LEGACY_SCHEMA"
 }
 keep_reinstall() {
     e_fixture systemd yes
     rm "$SBD_BINARY" || exit 1
     t_run 0 sbd_engine_commit "$CASE_TMP/candidate"
     t_assert '重装后核心已恢复' test -x "$SBD_BINARY"
-    t_assert '重装使用候选核心合并保留分片' jq -e '.log.level=="warn"' "$SBD_CONF_PARTS/01_log.json"
+    t_assert '重装使用候选核心保留单配置' jq -e '.log.level=="warn"' "$SBD_CONFIG"
 }
 running_upgrade() {
     e_fixture
@@ -170,7 +170,7 @@ t_case '稳定版与 amd64/arm64 默认-musl 映射' asset_contract
 t_case '完整发行包解压与版本实测' unpack_contract
 t_case 'latest 与指定稳定版下载实际参数' fetch_contract
 t_case '首次核心安装自启但保持停止' fresh_install
-t_case '核心文件缺失时使用候选核心合并分片重装' keep_reinstall
+t_case '核心文件缺失时使用候选核心保留单配置重装' keep_reinstall
 t_case '运行升级停止后再启动验证' running_upgrade
 t_case '核心提交 SIGKILL 后自动恢复' kill_recover
 t_finish

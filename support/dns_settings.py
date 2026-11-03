@@ -101,7 +101,7 @@ def parse_address(address):
     if url.scheme not in PORTS or not url.hostname or url.username is not None or url.password is not None:
         raise ValueError("支持 local、IP、udp://、tcp://、tls://、quic://、https:// 地址")
     if "?" in address or "#" in address or url.netloc.endswith(":"):
-        raise ValueError("地址不能带查询参数、片段或空端口；特殊配置请编辑 confs/*.json 分片")
+        raise ValueError("地址不能带查询参数、片段或空端口；特殊配置请直接编辑 config.json")
     server = host_name(url.hostname)
     port = url.port if url.port is not None else PORTS[url.scheme]
     if not 1 <= port <= 65535:
@@ -128,7 +128,7 @@ def ensure_server(config, registry, value, fixed_tag=None):
                 parse_address("https://1.1.1.1/dns-query"), tag="cloudflare"
             ) and value == dict(parse_address("https://cloudflare-dns.com/dns-query"), domain_resolver="system"):
                 return fixed_tag
-            raise ValueError(f"预设 tag {fixed_tag} 已被不同配置占用；请先在 confs/*.json 中处理，不会覆盖")
+            raise ValueError(f"预设 tag {fixed_tag} 已被不同配置占用；请先在 config.json 中处理，不会覆盖")
         policy.edit(config, registry, {
             "area": "dns_servers", "action": "add", "id": fixed_tag, "value": dict(value, tag=fixed_tag),
         })

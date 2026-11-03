@@ -8,7 +8,6 @@ t_policy_seed() {
     cp "$ROOT/tests/fixtures/base-system.json" "$SBD_CONFIG" || exit 1
     t_prepare_live || exit 1
     cp "$SBD_CONFIG" "$CASE_TMP/old-config" || exit 1
-    cp -a "$SBD_CONF_PARTS" "$CASE_TMP/old-parts" || exit 1
     cp "$SBD_SCHEMA" "$CASE_TMP/old-schema" || exit 1
 }
 

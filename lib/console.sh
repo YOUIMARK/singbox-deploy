@@ -198,7 +198,7 @@ sbd_status() {
             printf '事务现场: %s\n' "$SBD_WORK/active"
         else _error '事务现场缺少可识别记录，请检查，不自动猜测'; printf '事务: 未知现场 %s\n' "$SBD_WORK/active"; rc=1; fi
     else printf '事务: 无待处理现场\n'; fi
-    printf '配置分片: %s\n运行配置: %s\n导出目录: %s\n' "$SBD_CONF_PARTS" "$SBD_CONFIG" "$SBD_EXPORTS"
+    printf '配置文件: %s\n导出目录: %s\n' "$SBD_CONFIG" "$SBD_EXPORTS"
     output=''
     if [[ -f "$SBD_CONFIG" ]]; then
         if ! output=$(jq -r '.log.output // empty' "$SBD_CONFIG"); then _error '无法读取日志路径配置'; rc=1; fi

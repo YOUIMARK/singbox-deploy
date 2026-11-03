@@ -389,14 +389,14 @@ sbd_rule_add_flow() {
 sbd_rule_set_remove() {
     local values tag count
     values=$(jq -c '[.policy.rule_sets[]? | {id, area:"rule_sets"}]' "$SBD_REGISTRY") || return 1
-    [[ "$(jq length <<< "$values")" != 0 ]] || { _error "没有脚本管理的规则集；手工写入的请直接编辑 $SBD_CONF_PARTS"; return 1; }
+    [[ "$(jq length <<< "$values")" != 0 ]] || { _error "没有脚本管理的规则集；手工写入的请直接编辑 $SBD_CONFIG"; return 1; }
     sbd_policy_pick "$values" '选择要删除的规则集' || return $?
     tag="$SBD_REPLY"
     count=$(jq --arg tag "$tag" '[(.route.rules // [])[], (.dns.rules // [])[]] |
         [.. | objects | .rule_set? | select(.!=null) | if type=="array" then .[] else . end |
          select(.==$tag)] | length' "$SBD_CONFIG") || { _error '读取规则集引用失败'; return 1; }
     if [[ "$count" != 0 ]]; then
-        _error "仍有 $count 条路由/DNS 规则引用 $tag；请先在 $SBD_CONF_PARTS 删除这些规则"
+        _error "仍有 $count 条路由/DNS 规则引用 $tag；请先在 $SBD_CONFIG 删除这些规则"
         return 1
     fi
     sbd_policy_confirm || return $?

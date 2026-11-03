@@ -86,8 +86,6 @@ t_prepare_live() {
     sbd_prepare_config "$stage" || exit 1
     cp -- "$stage/config.json" "$SBD_CONFIG" || exit 1
     cp -- "$stage/schema.json" "$SBD_SCHEMA" || exit 1
-    rm -rf -- "$SBD_CONF_PARTS" || exit 1
-    cp -a -- "$stage/config" "$SBD_CONF_PARTS" || exit 1
     chmod 600 -- "$SBD_CONFIG" "$SBD_SCHEMA" || exit 1
 }
 
@@ -98,7 +96,6 @@ t_seed() {
     t_prepare_live || exit 1
     printf '旧链接\n' > "$SBD_EXPORTS/node.txt" || exit 1
     cp -- "$SBD_CONFIG" "$CASE_TMP/old-config" || exit 1
-    cp -a -- "$SBD_CONF_PARTS" "$CASE_TMP/old-parts" || exit 1
     cp -- "$SBD_SCHEMA" "$CASE_TMP/old-schema" || exit 1
     cp -- "$SBD_STATE" "$CASE_TMP/old-state" || exit 1
     cp -- "$SBD_REGISTRY" "$CASE_TMP/old-registry" || exit 1
@@ -106,22 +103,16 @@ t_seed() {
 
 t_unchanged() {
     t_assert '配置原字节保留' cmp -s "$SBD_CONFIG" "$CASE_TMP/old-config"
-    t_assert '配置分片原字节保留' sbd_tree_compare "$CASE_TMP/old-parts" "$SBD_CONF_PARTS"
     t_assert 'Schema 原字节保留' cmp -s "$SBD_SCHEMA" "$CASE_TMP/old-schema"
     t_assert 'state 原字节保留' cmp -s "$SBD_STATE" "$CASE_TMP/old-state"
     t_assert 'registry 原字节保留' cmp -s "$SBD_REGISTRY" "$CASE_TMP/old-registry"
     t_contains "$SBD_EXPORTS/node.txt" '旧链接'
 }
 
-t_sync_config() {
-    sbd_config_split "$SBD_CONFIG" "$SBD_CONF_PARTS" || exit 1
-}
-
 t_patch_config() {
     local next="$CASE_TMP/config-patch.json"
     jq "$@" "$SBD_CONFIG" > "$next" || exit 1
     cp -- "$next" "$SBD_CONFIG" || exit 1
-    t_sync_config
 }
 
 t_edit_debug() {

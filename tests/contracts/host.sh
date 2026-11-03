@@ -21,9 +21,8 @@ arch_contract() {
 }
 context_contract() {
     t_fresh
-    t_assert '运行配置在部署根' test "$SBD_CONFIG" = "$CASE_TMP/root/config.json"
-    t_assert '多文件配置目录' test "$SBD_CONF_PARTS" = "$CASE_TMP/root/confs"
-    t_assert 'Schema 与运行配置同目录' test "$SBD_SCHEMA" = "$CASE_TMP/root/schema.json"
+    t_assert '单配置位于 confs' test "$SBD_CONFIG" = "$CASE_TMP/root/confs/config.json"
+    t_assert 'Schema 与配置同目录' test "$SBD_SCHEMA" = "$CASE_TMP/root/confs/schema.json"
     t_assert '命令为 sd' test "$SBD_COMMAND" = "$CASE_TMP/bin/sd"
     t_run 1 sbd_paths /
 }
