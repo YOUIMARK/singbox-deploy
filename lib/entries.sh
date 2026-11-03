@@ -16,7 +16,7 @@ sbd_entry_new_id() {
 }
 
 sbd_entry_tag() {
-    local stage="$1" profile="$2" port="$3" config="$1/config.json" base candidate index=2
+    local stage="$1" profile="$2" port="$3" exclude="${4:-}" config="$1/config.json" base candidate index=2
     case "$profile" in
         hysteria2) base="hysteria2-$port" ;;
         anytls) base="anytls-$port" ;;
@@ -30,7 +30,9 @@ sbd_entry_tag() {
     [[ -f "$config" ]] || config="$SBD_APP/presets/base.json"
     # 可读 tag 也必须唯一：同端口重复创建时按 -2、-3 递增，超出上限明确失败。
     candidate="$base"
-    while jq -e --arg tag "$candidate" 'any((.inbounds[]?,.outbounds[]?,.endpoints[]?,(.dns.servers? // [])[]);.tag==$tag)' "$config" >/dev/null 2>&1; do
+    while jq -e --arg tag "$candidate" --arg exclude "$exclude" '
+        any((.inbounds[]? | select(.tag!=$exclude)),(.outbounds[]?),(.endpoints[]?),((.dns.servers? // [])[]);.tag==$tag)
+    ' "$config" >/dev/null 2>&1; do
         candidate="$base-$index"
         index=$((index+1))
         (( index <= 99 )) || { _error '同端口可读 tag 冲突过多，请更换端口'; return 1; }
@@ -482,7 +484,7 @@ sbd_entry_create() {
 }
 
 sbd_entry_change() {
-    local stage="$1" id="$2" action="$3" value="$4" content tag source tls scope=all profile
+    local stage="$1" id="$2" action="$3" value="$4" content tag new_tag='' source tls scope=all profile
     case "$action" in tls) scope=replace_tls ;; delete) scope=delete ;; esac
     sbd_entry_lookup "$stage" "$id" || return 1
     profile=$(sbd_entry_text "$stage/entry-node.json" .profile 配置档) || return 1
@@ -513,9 +515,24 @@ sbd_entry_change() {
             tls=tcp; [[ "$(jq -r '.profile' "$stage/entry-node.json")" != hysteria2 ]] || tls=udp
             [[ "$profile" != shadowsocks ]] || tls=$(jq -r '.client.network // "both"' "$stage/entry-node.json")
             sbd_entry_port "$stage" "$(jq -r '.listen' <<< "$value")" "$source" "$tls" "$tag" || return 1
-            content=$(jq --argjson value "$value" --argjson port "$source" --arg tag "$tag" '(.inbounds[]|select(.tag==$tag)) |= (.listen=$value.listen | .listen_port=$port)' "$stage/config.json") || return 1
+            new_tag=$(sbd_entry_tag "$stage" "$profile" "$source" "$tag") || return 1
+            content=$(jq --argjson value "$value" --argjson port "$source" --arg tag "$tag" --arg new_tag "$new_tag" '
+                def rename_inbound($old; $new):
+                    if type=="array" then map(rename_inbound($old; $new))
+                    elif type=="object" then
+                        (if has("inbound") then
+                            .inbound |= (if type=="array" then map(if .==$old then $new else . end)
+                                         elif .==$old then $new else . end)
+                         else . end)
+                        | with_entries(.value |= rename_inbound($old; $new))
+                    else . end;
+                (.inbounds[]|select(.tag==$tag)) |= (.listen=$value.listen | .listen_port=$port | .tag=$new_tag) |
+                (.inbounds[]|select(.tag!=$tag and .detour?==$tag)|.detour) = $new_tag |
+                (if .route?.rules? != null then .route.rules |= rename_inbound($tag; $new_tag) else . end) |
+                (if .dns?.rules? != null then .dns.rules |= rename_inbound($tag; $new_tag) else . end)
+            ' "$stage/config.json") || return 1
             sbd_record_write "$stage/config.json" "$content" || return 1
-            content=$(cat "$stage/entry-node.json") || return 1 ;;
+            content=$(jq --arg new_tag "$new_tag" '.inbound_tag=$new_tag' "$stage/entry-node.json") || return 1 ;;
         hy2)
             [[ "$(jq -r '.profile' "$stage/entry-node.json")" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
             content=$(jq --arg tag "$tag" --argjson value "$value" '(.inbounds[]|select(.tag==$tag)) |=
@@ -576,7 +593,22 @@ sbd_entry_change() {
         *) _error '未知节点操作'; return 1 ;;
     esac
     sbd_record_write "$stage/entry-node.json" "$content" || return 1
-    content=$(jq --slurpfile node "$stage/entry-node.json" --arg id "$id" '.nodes |= map(if .id==$id then $node[0] else . end)' "$stage/registry.json") || return 1
+    content=$(jq --slurpfile node "$stage/entry-node.json" --arg id "$id" --arg tag "$tag" --arg new_tag "$new_tag" '
+        def rename_inbound($old; $new):
+            if type=="array" then map(rename_inbound($old; $new))
+            elif type=="object" then
+                (if has("inbound") then
+                    .inbound |= (if type=="array" then map(if .==$old then $new else . end)
+                                 elif .==$old then $new else . end)
+                 else . end)
+                | with_entries(.value |= rename_inbound($old; $new))
+            else . end;
+        .nodes |= map(if .id==$id then $node[0] else . end) |
+        if $new_tag != "" and $new_tag != $tag and (.policy?|type)=="object" then
+            (if .policy.route_rules? != null then .policy.route_rules |= map(.expected |= rename_inbound($tag; $new_tag)) else . end) |
+            (if .policy.dns_rules? != null then .policy.dns_rules |= map(.expected |= rename_inbound($tag; $new_tag)) else . end)
+        else . end
+    ' "$stage/registry.json") || return 1
     sbd_record_write "$stage/registry.json" "$content" || return 1
     sbd_export_rebuild "$stage"
 }
