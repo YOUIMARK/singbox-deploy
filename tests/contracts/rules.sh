@@ -119,52 +119,58 @@ menu_delete_referenced() {
 menu_add_route_rule_set() {
     t_policy_seed
     t_run 0 sbd_apply sbd_rule_set add inline-managed '{"tag":"inline-managed","rules":[{"domain_suffix":"managed.example"}]}'
-    t_patch_config '.inbounds=[{type:"mixed",tag:"mixed-in",listen:"127.0.0.1",listen_port:2080}]
-        | .route.rule_set = ((.route.rule_set // []) + [{type:"inline",tag:"inline-manual",rules:[{domain_suffix:"manual.example"}]}])'
-    t_run 0 sbd_rules_menu <<< $'2\n1\n1,2\n1\n1\ny\n0'
+    t_patch_config '.route.rule_set = ((.route.rule_set // []) + [{type:"inline",tag:"inline-manual",rules:[{domain_suffix:"manual.example"}]}])'
+    t_run 0 sbd_rules_menu <<< $'2\n1\n1,2\n1\ny\n0'
     t_contains "$CASE_TMP/output" '[2] 添加路由规则'
     t_contains "$CASE_TMP/output" '路由规则已添加'
     t_assert '脚本与手工规则集都出现在选择列表并可多选引用' jq -e '
-        .route.rules[-1] == {rule_set:["inline-managed","inline-manual"],inbound:"mixed-in",outbound:"direct"}' "$SBD_CONFIG"
+        .route.rules[-1] == {rule_set:["inline-managed","inline-manual"],outbound:"direct"}' "$SBD_CONFIG"
     t_assert '新路由规则登记为脚本托管' jq -e --slurpfile config "$SBD_CONFIG" '
         .policy.route_rules[-1].index == (($config[0].route.rules|length)-1)
         and .policy.route_rules[-1].expected.rule_set == ["inline-managed","inline-manual"]' "$SBD_REGISTRY"
 }
 menu_add_route_custom() {
     t_policy_seed
-    t_patch_config '.inbounds=[
-        {type:"mixed",tag:"mixed-in",listen:"127.0.0.1",listen_port:2080},
-        {type:"mixed",tag:"mixed-in-2",listen:"127.0.0.1",listen_port:2081}
-      ]'
-    t_run 0 sbd_rules_menu <<< $'2\n2\nExample.COM, 1.2.3.0/24\n1,2\n2\ny\n0'
+    t_run 0 sbd_rules_menu <<< $'2\n2\nExample.COM, 1.2.3.0/24\n2\ny\n0'
     t_contains "$CASE_TMP/output" '[3] 自定义出站'
     t_contains "$CASE_TMP/output" '路由规则已添加'
-    t_assert '域名与 CIDR 用逻辑 OR，多 inbound 进入子规则，拒绝动作为 drop' jq -e '
+    t_assert '域名与 CIDR 用逻辑 OR，拒绝动作为 drop' jq -e '
         .route.rules[-1] == {
           type:"logical",mode:"or",
           rules:[
-            {domain_suffix:"example.com",inbound:["mixed-in","mixed-in-2"]},
-            {ip_cidr:"1.2.3.0/24",inbound:["mixed-in","mixed-in-2"]}
+            {domain_suffix:"example.com"},
+            {ip_cidr:"1.2.3.0/24"}
           ],
           action:"reject",method:"drop"
         }' "$SBD_CONFIG"
 }
+menu_add_route_inbound() {
+    t_policy_seed
+    t_patch_config '.inbounds=[
+        {type:"mixed",tag:"mixed-in",listen:"127.0.0.1",listen_port:2080},
+        {type:"mixed",tag:"mixed-in-2",listen:"127.0.0.1",listen_port:2081}
+      ]'
+    t_run 0 sbd_rules_menu <<< $'2\n3\n1,2\n1\ny\n0'
+    t_contains "$CASE_TMP/output" '[1] 规则集   [2] 自定义域名/IP   [3] inbound'
+    t_contains "$CASE_TMP/output" '路由规则已添加'
+    t_assert '匹配方式 [3] 只按 inbound 多选匹配' jq -e '
+        .route.rules[-1] == {inbound:["mixed-in","mixed-in-2"],outbound:"direct"}' "$SBD_CONFIG"
+}
 menu_add_route_warp_and_custom() {
     t_policy_seed
-    t_patch_config '.inbounds=[{type:"mixed",tag:"mixed-in",listen:"127.0.0.1",listen_port:2080}]
-        | .outbounds += [{type:"socks",tag:"socks-out",server:"127.0.0.1",server_port:1080}]'
+    t_patch_config '.outbounds += [{type:"socks",tag:"socks-out",server:"127.0.0.1",server_port:1080}]'
     local key value
     key=$(python3 -c 'import base64; print(base64.b64encode(b"\0"*32).decode())') || exit 1
     value=$(jq -n --arg key "$key" '
         {type:"wireguard",tag:"warp",system:false,address:["172.16.0.2/32"],private_key:$key,mtu:1408,listen_port:0,
          peers:[{address:"162.159.192.1",port:2408,public_key:$key,allowed_ips:["0.0.0.0/0","::/0"],reserved:[0,0,0]}]}') || exit 1
     t_run 0 sbd_apply sbd_peer_change endpoints add warp "$value"
-    t_run 0 sbd_rules_menu <<< $'2\n2\nexample.org\n\n3\ny\n0'
+    t_run 0 sbd_rules_menu <<< $'2\n2\nexample.org\n3\ny\n0'
     t_contains "$CASE_TMP/output" '[3] WARP（warp）'
     t_contains "$CASE_TMP/output" '[4] 自定义出站'
     t_assert '已添加 WARP 时可选 WARP 作为路由出口' jq -e '
         .route.rules[-1] == {domain_suffix:"example.org",outbound:"warp"}' "$SBD_CONFIG"
-    t_run 0 sbd_rules_menu <<< $'2\n2\nexample.net\n\n4\ny\n0'
+    t_run 0 sbd_rules_menu <<< $'2\n2\nexample.net\n4\ny\n0'
     t_contains "$CASE_TMP/output" '使用唯一自定义出口: socks-out'
     t_assert 'WARP 存在时仍可选 outbounds 中的自定义出口' jq -e '
         .route.rules[-1] == {domain_suffix:"example.net",outbound:"socks-out"}' "$SBD_CONFIG"
@@ -219,8 +225,9 @@ t_case '菜单添加远端规则集、缓存与归属登记' menu_add_remote
 t_case '菜单按预设目录添加规则集' menu_add_preset
 t_case '菜单按预设名称添加 MetaCubeX 规则集' menu_add_named_preset
 t_case '被规则引用的规则集拒绝删除，解除后真实删除' menu_delete_referenced
-t_case '菜单用脚本与手工规则集添加带 inbound 的路由规则' menu_add_route_rule_set
+t_case '菜单用脚本与手工规则集添加路由规则' menu_add_route_rule_set
 t_case '菜单添加域名+CIDR 逻辑 OR 与 reject drop 规则' menu_add_route_custom
+t_case '菜单按 inbound 匹配方式添加路由规则' menu_add_route_inbound
 t_case '菜单添加 WARP 与自定义 outbound 出口规则' menu_add_route_warp_and_custom
 t_case '菜单删除托管路由规则并保留手工规则' menu_delete_route_rule
 t_case '补齐默认路由规则并保留自定义规则' defaults_restore

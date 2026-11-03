@@ -507,12 +507,31 @@ sbd_route_custom_prompt() {
     done
 }
 
-sbd_route_match_prompt() {
-    local config="$1" pick
-    sbd_ui_options '[1] 规则集' '[2] 自定义域名/IP'
-    sbd_read_integer '选择匹配方式' 1 2 || return $?
+sbd_route_match_type_prompt() {
+    local pick
+    # sbd_ui_prompt 在 lib/input.sh 读取此跨文件标记。
+    # shellcheck disable=SC2034
+    SBD_UI_AFTER_PROMPT=false
+    printf '  '; sbd_ui_item '[1] 规则集'
+    printf '   '; sbd_ui_item '[2] 自定义域名/IP'
+    printf '   '; sbd_ui_item '[3] inbound'
+    printf '\n'
+    sbd_read_integer '选择匹配方式' 1 3 || return $?
     pick="$SBD_REPLY"
-    if [[ "$pick" = 1 ]]; then sbd_route_rule_set_prompt "$config"; else sbd_route_custom_prompt; fi
+    SBD_ROUTE_MATCH_KIND="$pick"
+}
+
+sbd_route_match_value_prompt() {
+    local config="$1"
+    case "${SBD_ROUTE_MATCH_KIND:-}" in
+        1) sbd_route_rule_set_prompt "$config" ;;
+        2) sbd_route_custom_prompt ;;
+        3)
+            sbd_route_inbound_prompt "$config" || return $?
+            SBD_ROUTE_MATCH=$(jq -cn --argjson inbound "$SBD_ROUTE_INBOUND" '
+                {inbound:(if ($inbound|length)==1 then $inbound[0] else $inbound end)}') || return 1 ;;
+        *) _error '匹配方式未选择'; return 1 ;;
+    esac
 }
 
 sbd_route_inbound_prompt() {
@@ -521,16 +540,15 @@ sbd_route_inbound_prompt() {
     values=$(sbd_route_inbound_values "$config") || return 1
     count=$(jq 'length' <<< "$values") || return 1
     if (( count == 0 )); then
-        sbd_info '当前没有 inbound/endpoint 可供限制，规则将匹配所有入站'
-        return 0
+        _error '当前没有 inbound/endpoint，无法添加仅 inbound 匹配'
+        return 1
     fi
     for ((i=0; i<count; i++)); do
         sbd_ui_rows "[$((i+1))] $(jq -r --argjson i "$i" '.[$i]' <<< "$values")" || return 1
     done
     while true; do
-        sbd_read_optional '限制 inbound（可多选；留空表示不限制）' || return $?
+        sbd_read_required '选择 inbound（可多选：1,3 或 1-3）' || return $?
         raw="$SBD_REPLY"
-        [[ -n "$raw" && "$raw" != 0 ]] || return 0
         if ! tags=$(sbd_rule_selection "$raw" "$count"); then
             _error "请输入 1 到 $count 的编号；可多选，用逗号或空格分隔，也支持 1-3 这样的范围"
             continue
@@ -587,35 +605,31 @@ sbd_route_outbound_prompt() {
 }
 
 sbd_route_rule_value() {
-    local match="$1" inbound="$2" action="$3"
-    jq -cn --argjson match "$match" --argjson inbound "$inbound" --argjson action "$action" '
-        def add_inbound:
-            if ($inbound|length)==0 then .
-            elif ($inbound|length)==1 then . + {inbound:$inbound[0]}
-            else . + {inbound:$inbound} end;
+    local match="$1" action="$2"
+    jq -cn --argjson match "$match" --argjson action "$action" '
         if (($match|has("domain_suffix")) and ($match|has("ip_cidr"))) then
             {type:"logical",mode:"or",
-             rules:[({domain_suffix:$match.domain_suffix}|add_inbound),
-                    ({ip_cidr:$match.ip_cidr}|add_inbound)]} + $action
+             rules:[{domain_suffix:$match.domain_suffix},
+                    {ip_cidr:$match.ip_cidr}]} + $action
         else
-            ($match|add_inbound) + $action
+            $match + $action
         end'
 }
 
 sbd_route_rule_add_flow() {
     local config="$1" rc rule
     [[ -f "$config" ]] || { _error '请先创建配置'; return 1; }
-    sbd_info '向导只支持规则集、域名/IP 和 inbound 匹配；其他匹配字段请直接编辑配置文件'
-    rc=0; sbd_route_match_prompt "$config" || rc=$?
+    sbd_info '向导支持规则集、域名/IP、inbound 和出口；其他匹配字段请直接编辑配置文件'
+    rc=0; sbd_route_match_type_prompt || rc=$?
     [[ "$rc" != 2 ]] || return 2
     [[ "$rc" = 0 ]] || return 1
-    rc=0; sbd_route_inbound_prompt "$config" || rc=$?
+    rc=0; sbd_route_match_value_prompt "$config" || rc=$?
     [[ "$rc" != 2 ]] || return 2
     [[ "$rc" = 0 ]] || return 1
     rc=0; sbd_route_outbound_prompt "$config" || rc=$?
     [[ "$rc" != 2 ]] || return 2
     [[ "$rc" = 0 ]] || return 1
-    rule=$(sbd_route_rule_value "$SBD_ROUTE_MATCH" "$SBD_ROUTE_INBOUND" "$SBD_ROUTE_ACTION") || { _error '构造路由规则失败'; return 1; }
+    rule=$(sbd_route_rule_value "$SBD_ROUTE_MATCH" "$SBD_ROUTE_ACTION") || { _error '构造路由规则失败'; return 1; }
     sbd_info "新规则: $rule"
     sbd_info '规则会追加到 route.rules 末尾；如需调整匹配顺序请编辑配置文件'
     rc=0; sbd_policy_confirm || rc=$?
