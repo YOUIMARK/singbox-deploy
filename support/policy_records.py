@@ -197,6 +197,29 @@ def delete_at(values, owned, rec):
             r["index"] -= 1
 
 
+def prepend_defaults(config, registry, defaults):
+    """补齐默认规则并重算托管规则位置；与默认规则完全相同的旧登记不再保留。"""
+    align(config, registry)
+    values, owned = array(config, "route_rules"), records(registry, "route_rules")
+    kept, indexes = [], {}
+    for index, rule in enumerate(values):
+        if rule in defaults:
+            continue
+        indexes[index] = len(defaults) + len(kept)
+        kept.append(rule)
+    config.setdefault("route", {})["rules"] = list(defaults) + kept
+    updated = []
+    for rec in owned:
+        index = rec.get("index")
+        if index not in indexes:
+            continue
+        rec = dict(rec)
+        rec["index"] = indexes[index]
+        updated.append(rec)
+    owned[:] = updated
+    align(config, registry)
+
+
 def tags(value):
     return [value] if isinstance(value, str) else value if isinstance(value, list) else []
 
@@ -349,6 +372,10 @@ def main():
             return 0
         if command == "refs":
             references(config)
+            return 0
+        if command == "defaults":
+            prepend_defaults(config, registry, json.loads(sys.argv[3]))
+            print(json.dumps({"config": config, "registry": registry}, ensure_ascii=False))
             return 0
         if command == "edit":
             edit(config, registry, json.loads(sys.argv[3]))

@@ -404,18 +404,258 @@ sbd_rule_set_remove() {
     sbd_success "规则集 $tag 已删除"
 }
 
+# 列出可被路由规则引用的规则集；脚本托管与手工写入的都包括。
+sbd_route_rule_set_values() {
+    jq -c '[.route.rule_set[]? | .tag | if type=="array" then .[] else . end
+        | select(type=="string" and length>0)] | unique' "$1"
+}
+
+# 列出可用于 inbound 匹配的入站与 endpoint 标识。
+sbd_route_inbound_values() {
+    jq -c '[(.inbounds[]?),(.endpoints[]?)] | map(.tag)
+        | map(select(type=="string" and length>0)) | unique' "$1"
+}
+
+# WARP 是 endpoints 中的 wireguard；兼容旧版 outbounds 与 warp-N 标识。
+sbd_route_warp_tags() {
+    jq -c '[(.outbounds[]?),(.endpoints[]?)]
+        | map(select(.type=="wireguard") | .tag)
+        | map(select(type=="string") | select(test("^warp(-[0-9]+)?$")))
+        | unique' "$1"
+}
+
+sbd_route_custom_outbounds() {
+    local config="$1" warp="$2"
+    jq -c --argjson warp "$warp" '[.outbounds[]? | .tag
+        | select(type=="string" and length>0 and .!="direct")
+        | select(. as $tag | ($warp | index($tag)) == null)] | unique' "$config"
+}
+
+# 解析混输的域名与 IP/CIDR：域名转小写和 Punycode，裸 IP 补全前缀。
+sbd_route_custom_parse() {
+    python3 - "$1" <<'PY'
+import ipaddress
+import json
+import re
+import sys
+
+tokens = [t for t in re.split(r"[\s,，、；;]+", sys.argv[1]) if t]
+domains, networks = [], []
+for raw in tokens:
+    value = raw.strip().rstrip(".")
+    if not value:
+        continue
+    try:
+        network = ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        if any(c in value for c in "*/:@?[]#"):
+            raise SystemExit(1)
+        try:
+            name = value.encode("idna").decode("ascii").lower()
+        except (UnicodeError, ValueError):
+            raise SystemExit(1)
+        if len(name) > 253 or not all(
+            re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+            for label in name.split(".")
+        ):
+            raise SystemExit(1)
+        if name not in domains:
+            domains.append(name)
+    else:
+        text = str(network)
+        if text not in networks:
+            networks.append(text)
+if not domains and not networks:
+    raise SystemExit(1)
+match = {}
+if domains:
+    match["domain_suffix"] = domains
+if networks:
+    match["ip_cidr"] = networks
+print(json.dumps(match, separators=(",", ":")))
+PY
+}
+
+sbd_route_rule_set_prompt() {
+    local config="$1" values count raw i tags
+    values=$(sbd_route_rule_set_values "$config") || return 1
+    count=$(jq 'length' <<< "$values") || return 1
+    (( count > 0 )) || { _error "当前没有规则集；请先用 [4] 添加规则集，或直接编辑 $SBD_CONFIG"; return 1; }
+    for ((i=0; i<count; i++)); do
+        sbd_ui_rows "[$((i+1))] $(jq -r --argjson i "$i" '.[$i]' <<< "$values")" || return 1
+    done
+    sbd_read_selection '选择规则集（可多选：1,3 或 1-3）' "$count" || return $?
+    raw="$SBD_REPLY"
+    tags=$(jq -Rsc --argjson values "$values" '
+        split("\n") | map(select(length>0) | tonumber - 1)
+        | [.[] as $i | $values[$i]]' <<< "$raw") || return 1
+    if [[ "$(jq length <<< "$tags")" = 1 ]]; then
+        SBD_ROUTE_MATCH=$(jq -c '{rule_set:.[0]}' <<< "$tags") || return 1
+    else
+        SBD_ROUTE_MATCH=$(jq -c '{rule_set:.}' <<< "$tags") || return 1
+    fi
+}
+
+sbd_route_custom_prompt() {
+    local value
+    while true; do
+        sbd_read_optional '自定义域名/IP（多个用逗号或空格分隔；域名按后缀匹配）' || return $?
+        value="$SBD_REPLY"
+        [[ -n "$value" ]] || { _error '请至少输入一个域名或 IP/CIDR'; continue; }
+        if SBD_ROUTE_MATCH=$(sbd_route_custom_parse "$value"); then return 0; fi
+        _error '请输入有效域名或 IP/CIDR；域名不能包含协议、端口、路径或通配符'
+    done
+}
+
+sbd_route_match_prompt() {
+    local config="$1" pick
+    sbd_ui_options '[1] 规则集' '[2] 自定义域名/IP'
+    sbd_read_integer '选择匹配方式' 1 2 || return $?
+    pick="$SBD_REPLY"
+    if [[ "$pick" = 1 ]]; then sbd_route_rule_set_prompt "$config"; else sbd_route_custom_prompt; fi
+}
+
+sbd_route_inbound_prompt() {
+    local config="$1" values count raw i tags
+    SBD_ROUTE_INBOUND='[]'
+    values=$(sbd_route_inbound_values "$config") || return 1
+    count=$(jq 'length' <<< "$values") || return 1
+    if (( count == 0 )); then
+        sbd_info '当前没有 inbound/endpoint 可供限制，规则将匹配所有入站'
+        return 0
+    fi
+    for ((i=0; i<count; i++)); do
+        sbd_ui_rows "[$((i+1))] $(jq -r --argjson i "$i" '.[$i]' <<< "$values")" || return 1
+    done
+    while true; do
+        sbd_read_optional '限制 inbound（可多选；留空表示不限制）' || return $?
+        raw="$SBD_REPLY"
+        [[ -n "$raw" && "$raw" != 0 ]] || return 0
+        if ! tags=$(sbd_rule_selection "$raw" "$count"); then
+            _error "请输入 1 到 $count 的编号；可多选，用逗号或空格分隔，也支持 1-3 这样的范围"
+            continue
+        fi
+        SBD_ROUTE_INBOUND=$(jq -Rsc --argjson values "$values" '
+            split("\n") | map(select(length>0) | tonumber - 1)
+            | [.[] as $i | $values[$i]]' <<< "$tags") || return 1
+        return 0
+    done
+}
+
+sbd_route_custom_outbound_prompt() {
+    local values="$1" count tag
+    count=$(jq 'length' <<< "$values") || return 1
+    (( count > 0 )) || { _error 'outbounds 中没有除 direct/WARP 外的自定义出口；请先添加出站，或直接编辑配置文件'; return 1; }
+    if (( count == 1 )); then
+        tag=$(jq -r '.[0]' <<< "$values") || return 1
+        sbd_info "使用唯一自定义出口: $tag"
+    else
+        sbd_policy_pick "$values" '选择自定义出口' || return $?
+        tag="$SBD_REPLY"
+    fi
+    SBD_ROUTE_ACTION=$(jq -cn --arg tag "$tag" '{action:"route",outbound:$tag}') || return 1
+}
+
+sbd_route_outbound_prompt() {
+    local config="$1" warp custom count i index label tag pick
+    warp=$(sbd_route_warp_tags "$config") || return 1
+    custom=$(sbd_route_custom_outbounds "$config" "$warp") || return 1
+    sbd_ui_options '[1] direct' '[2] 拒绝（reject，drop）'
+    index=3
+    count=$(jq 'length' <<< "$warp") || return 1
+    for ((i=0; i<count; i++)); do
+        tag=$(jq -r --argjson i "$i" '.[$i]' <<< "$warp") || return 1
+        sbd_ui_rows "[$index] WARP（$tag）" || return 1
+        index=$((index+1))
+    done
+    label='自定义出站（outbounds，排除 direct）'
+    (( count == 0 )) || label='自定义出站（outbounds，排除 direct 与 WARP）'
+    sbd_ui_rows "[$index] $label" || return 1
+    sbd_read_integer '选择出口' 1 "$index" || return $?
+    pick="$SBD_REPLY"
+    case "$pick" in
+        1) SBD_ROUTE_ACTION='{"action":"route","outbound":"direct"}' ;;
+        2) SBD_ROUTE_ACTION='{"action":"reject","method":"drop"}' ;;
+        *)
+            if (( pick < index )); then
+                tag=$(jq -r --argjson i "$((pick-3))" '.[$i]' <<< "$warp") || return 1
+                SBD_ROUTE_ACTION=$(jq -cn --arg tag "$tag" '{action:"route",outbound:$tag}') || return 1
+            else
+                sbd_route_custom_outbound_prompt "$custom" || return $?
+            fi ;;
+    esac
+}
+
+sbd_route_rule_value() {
+    local match="$1" inbound="$2" action="$3"
+    jq -cn --argjson match "$match" --argjson inbound "$inbound" --argjson action "$action" '
+        def add_inbound:
+            if ($inbound|length)==0 then .
+            elif ($inbound|length)==1 then . + {inbound:$inbound[0]}
+            else . + {inbound:$inbound} end;
+        if (($match|has("domain_suffix")) and ($match|has("ip_cidr"))) then
+            {type:"logical",mode:"or",
+             rules:[({domain_suffix:$match.domain_suffix}|add_inbound),
+                    ({ip_cidr:$match.ip_cidr}|add_inbound)]} + $action
+        else
+            ($match|add_inbound) + $action
+        end'
+}
+
+sbd_route_rule_add_flow() {
+    local config="$1" rc rule
+    [[ -f "$config" ]] || { _error '请先创建配置'; return 1; }
+    sbd_info '向导只支持规则集、域名/IP 和 inbound 匹配；其他匹配字段请直接编辑配置文件'
+    rc=0; sbd_route_match_prompt "$config" || rc=$?
+    [[ "$rc" != 2 ]] || return 2
+    [[ "$rc" = 0 ]] || return 1
+    rc=0; sbd_route_inbound_prompt "$config" || rc=$?
+    [[ "$rc" != 2 ]] || return 2
+    [[ "$rc" = 0 ]] || return 1
+    rc=0; sbd_route_outbound_prompt "$config" || rc=$?
+    [[ "$rc" != 2 ]] || return 2
+    [[ "$rc" = 0 ]] || return 1
+    rule=$(sbd_route_rule_value "$SBD_ROUTE_MATCH" "$SBD_ROUTE_INBOUND" "$SBD_ROUTE_ACTION") || { _error '构造路由规则失败'; return 1; }
+    sbd_info "新规则: $rule"
+    sbd_info '规则会追加到 route.rules 末尾；如需调整匹配顺序请编辑配置文件'
+    rc=0; sbd_policy_confirm || rc=$?
+    [[ "$rc" != 2 ]] || return 2
+    [[ "$rc" = 0 ]] || return 1
+    sbd_apply sbd_policy_rule route_rules add '' "$rule" || return 1
+    sbd_success '路由规则已添加'
+}
+
+sbd_route_rule_remove() {
+    local values count i index rule choice id
+    values=$(jq -c '[.policy.route_rules[]? as $rec | {id:$rec.id, index:$rec.index, rule:$rec.expected}]
+        | sort_by(.index)' "$SBD_REGISTRY") || return 1
+    count=$(jq 'length' <<< "$values") || return 1
+    if (( count == 0 )); then
+        _error "没有脚本管理的路由规则；手工规则可在 [18] 脚本维护中接管，或直接编辑 $SBD_CONFIG"
+        return 1
+    fi
+    sbd_info "只列出脚本托管的路由规则；手工规则可在 [18] 脚本维护中接管，或直接编辑 $SBD_CONFIG"
+    for ((i=0; i<count; i++)); do
+        index=$(jq -r --argjson i "$i" '.[$i].index' <<< "$values") || return 1
+        rule=$(jq -c --argjson i "$i" '.[$i].rule' <<< "$values") || return 1
+        sbd_ui_rows "[$((i+1))] 位置 $index" "$rule" || return 1
+    done
+    sbd_read_integer '选择要删除的路由规则' 1 "$count" || return $?
+    choice="$SBD_REPLY"
+    id=$(jq -r --argjson i "$((choice-1))" '.[$i].id' <<< "$values") || return 1
+    sbd_policy_confirm || return $?
+    sbd_apply sbd_policy_rule route_rules delete "$id" || return 1
+    sbd_success '路由规则已删除'
+}
+
 sbd_route_defaults() {
     local stage="$1" defaults content
     defaults=$(jq -c '.route.rules // []' "$SBD_APP/presets/base.json") || { _error '读取默认路由规则失败'; return 1; }
     jq -e 'type=="array" and length>0' <<< "$defaults" >/dev/null || { _error '默认路由规则缺失'; return 1; }
-    # 路由规则归用户所有：先放弃旧向导的位置登记，避免旧登记阻塞补齐。
-    content=$(jq 'if .policy.route_rules then .policy.route_rules = [] else . end' "$stage/registry.json") || return 1
-    sbd_record_write "$stage/registry.json" "$content" || return 1
     sbd_policy_begin "$stage" || return 1
-    content=$(jq --argjson defaults "$defaults" '
-        (.route.rules // []) as $current |
-        .route.rules = ($defaults + [$current[] | select(. as $rule | ($defaults | index($rule)) == null)])' "$stage/config.json") || { _error '构造默认路由规则失败'; return 1; }
-    sbd_record_write "$stage/config.json" "$content" || return 1
+    content=$(python3 "$SBD_APP/support/policy_records.py" defaults "$stage" "$defaults") || { _error '补齐默认路由规则失败'; return 1; }
+    sbd_record_write "$stage/config.json" "$(jq -c '.config' <<< "$content")" || return 1
+    sbd_record_write "$stage/registry.json" "$(jq -c '.registry' <<< "$content")" || return 1
     sbd_policy_finish "$stage"
 }
 
@@ -481,26 +721,35 @@ sbd_policy_confirm() {
 sbd_rules_menu() {
     local choice rc page config
     while true; do
-        sbd_ui_menu '分流设置' '[1] 查看路由规则' '[2] 查看 DNS 规则' '[3] 查看规则集' \
-            '[4] 添加规则集' '[5] 删除规则集' '[6] 恢复默认路由规则' '[0] 返回'
+        sbd_ui_menu '分流设置' '[1] 查看路由规则' '[2] 添加路由规则' '[3] 删除路由规则' \
+            '[4] 查看 DNS 规则' '[5] 查看规则集' '[6] 添加规则集' \
+            '[7] 删除规则集' '[8] 恢复默认路由规则' '[0] 返回'
         sbd_config_hint
         page="$SBD_UI_PAGE"
-        sbd_read_integer '请选择' 0 6 || return 0; choice="$SBD_REPLY"
+        sbd_read_integer '请选择' 0 8 || return 0; choice="$SBD_REPLY"
         [[ "$choice" != 0 ]] || return 0
         config="$SBD_CONFIG"; [[ -f "$config" ]] || config="$SBD_APP/presets/base.json"
         case "$choice" in
             1) jq '.route.rules // []' "$config" || { _error '读取路由规则失败'; return 1; } ;;
-            2) jq '.dns.rules // []' "$config" || { _error '读取 DNS 规则失败'; return 1; } ;;
-            3) sbd_rule_set_list "$config" || return 1 ;;
-            4)
+            2)
+                [[ -f "$SBD_CONFIG" ]] || { _error '请先创建配置'; continue; }
+                rc=0; sbd_route_rule_add_flow "$SBD_CONFIG" || rc=$?
+                [[ "$rc" = 2 ]] || sbd_ui_pause "$page"; continue ;;
+            3)
+                [[ -f "$SBD_CONFIG" ]] || { _error '请先创建配置'; continue; }
+                rc=0; sbd_route_rule_remove || rc=$?
+                [[ "$rc" = 2 ]] || sbd_ui_pause "$page"; continue ;;
+            4) jq '.dns.rules // []' "$config" || { _error '读取 DNS 规则失败'; return 1; } ;;
+            5) sbd_rule_set_list "$config" || return 1 ;;
+            6)
                 [[ -f "$SBD_CONFIG" ]] || { _error '请先创建配置'; continue; }
                 rc=0; sbd_rule_add_flow || rc=$?
                 [[ "$rc" = 2 ]] || sbd_ui_pause "$page"; continue ;;
-            5)
+            7)
                 [[ -f "$SBD_CONFIG" ]] || { _error '请先创建配置'; continue; }
                 rc=0; sbd_rule_set_remove || rc=$?
                 [[ "$rc" = 2 ]] || sbd_ui_pause "$page"; continue ;;
-            6)
+            8)
                 [[ -f "$SBD_CONFIG" ]] || { _error '请先创建配置'; continue; }
                 rc=0; sbd_rule_defaults_prompt || rc=$?
                 [[ "$rc" = 2 ]] || sbd_ui_pause "$page"; continue ;;
