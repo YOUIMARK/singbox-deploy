@@ -102,15 +102,15 @@ control_fixture() {
 direct_controls() {
     control_fixture
     cp "$SBD_STATE" "$CASE_TMP/state-before" || exit 1
-    t_run 0 sbd_dispatch 11
+    t_run 0 sbd_dispatch 12
     t_assert '首页停止确实确认运行态' test "$(sbd_service_state)" = stopped
     t_contains "$CASE_TMP/output" '已确认服务停止'
-    t_run 0 sbd_dispatch 10
+    t_run 0 sbd_dispatch 11
     t_assert '首页重启确实确认运行态' test "$(sbd_service_state)" = running
     t_contains "$CASE_TMP/output" '服务已持续运行'
-    t_run 0 sbd_dispatch 14
-    t_assert '首页启用自启复验' test "$(sbd_service_enabled)" = enabled
     t_run 0 sbd_dispatch 15
+    t_assert '首页启用自启复验' test "$(sbd_service_enabled)" = enabled
+    t_run 0 sbd_dispatch 16
     t_assert '首页关闭自启复验' test "$(sbd_service_enabled)" = disabled
     t_assert '服务入口不伪造配置修订' cmp -s "$SBD_STATE" "$CASE_TMP/state-before"
     t_run 1 sbd_engine_control unsupported

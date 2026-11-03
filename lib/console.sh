@@ -224,21 +224,22 @@ sbd_dispatch() {
         3) sbd_entry_change_prompt edit ;;
         4) sbd_entry_change_prompt delete ;;
         5) sbd_export_menu ;;
-        6) sbd_resolver_menu ;;
-        7) sbd_rules_menu ;;
-        8) sbd_tls_menu ;;
-        9) sbd_peers_menu ;;
-        10) sbd_engine_control restart ;;
-        11) sbd_engine_control stop ;;
-        12) sbd_status ;;
-        13) sbd_observe_logs ;;
-        14) sbd_engine_control enable ;;
-        15) sbd_engine_control disable ;;
-        16) sbd_check_config_tidy && sbd_success 'Schema 与核心检查通过；未验证网络连通' ;;
-        17) sbd_observe_menu ;;
-        18) sbd_maintenance_menu ;;
-        19) sbd_engine_menu ;;
-        20) sbd_uninstall_menu ;;
+        6) sbd_outbound_add_prompt ;;
+        7) sbd_resolver_menu ;;
+        8) sbd_rules_menu ;;
+        9) sbd_tls_menu ;;
+        10) sbd_peers_menu ;;
+        11) sbd_engine_control restart ;;
+        12) sbd_engine_control stop ;;
+        13) sbd_status ;;
+        14) sbd_observe_logs ;;
+        15) sbd_engine_control enable ;;
+        16) sbd_engine_control disable ;;
+        17) sbd_check_config_tidy && sbd_success 'Schema 与核心检查通过；未验证网络连通' ;;
+        18) sbd_observe_menu ;;
+        19) sbd_maintenance_menu ;;
+        20) sbd_engine_menu ;;
+        21) sbd_uninstall_menu ;;
         *) _error '无效菜单编号'; return 1 ;;
     esac
 }
@@ -248,13 +249,13 @@ sbd_console() {
     while true; do
         sbd_ui_begin 'sing-box 部署管理脚本 (singbox-deploy)' true || return 1
         sbd_status brief || _error '状态摘要读取不完整；仍可选择检查或维护，不将未知状态当作停止'
-        sbd_ui_options --compact --zero-separate '@节点管理' '[1] 添加节点' '[2] 查看节点' '[3] 修改节点' '[4] 删除节点' '[5] 节点链接' \
-            '@网络设置' '[6] DNS 设置' '[7] 分流设置' '[8] 证书管理' '[9] 隧道管理' \
-            '@服务控制' '[10] 重启服务' '[11] 停止服务' '[12] 查看状态' '[13] 查看日志' '[14] 启用自启' '[15] 关闭自启' \
-            '@配置与维护' '[16] 检查配置' '[17] 日志设置' '[18] 脚本维护' \
-            '@核心管理' '[19] sing-box 核心' '[20] 卸载脚本' '[0] 退出'
+        sbd_ui_options --compact --zero-separate '@节点管理' '[1] 添加节点' '[2] 查看节点' '[3] 修改节点' '[4] 删除节点' '[5] 节点链接' '[6] 添加出口' \
+            '@网络设置' '[7] DNS 设置' '[8] 分流设置' '[9] 证书管理' '[10] 隧道管理' \
+            '@服务控制' '[11] 重启服务' '[12] 停止服务' '[13] 查看状态' '[14] 查看日志' '[15] 启用自启' '[16] 关闭自启' \
+            '@配置与维护' '[17] 检查配置' '[18] 日志设置' '[19] 脚本维护' \
+            '@核心管理' '[20] sing-box 核心' '[21] 卸载脚本' '[0] 退出'
         page="$SBD_UI_PAGE"
-        sbd_read_integer '请选择' 0 20 || return 0
+        sbd_read_integer '请选择' 0 21 || return 0
         choice="$SBD_REPLY"
         [[ "$choice" != 0 ]] || return 0
         if sbd_dispatch "$choice"; then

@@ -645,10 +645,10 @@ sbd_route_rule_remove() {
         | sort_by(.index)' "$SBD_REGISTRY") || return 1
     count=$(jq 'length' <<< "$values") || return 1
     if (( count == 0 )); then
-        _error "没有脚本管理的路由规则；手工规则可在 [18] 脚本维护中接管，或直接编辑 $SBD_CONFIG"
+        _error "没有脚本管理的路由规则；手工规则可在 [19] 脚本维护中接管，或直接编辑 $SBD_CONFIG"
         return 1
     fi
-    sbd_info "只列出脚本托管的路由规则；手工规则可在 [18] 脚本维护中接管，或直接编辑 $SBD_CONFIG"
+    sbd_info "只列出脚本托管的路由规则；手工规则可在 [19] 脚本维护中接管，或直接编辑 $SBD_CONFIG"
     for ((i=0; i<count; i++)); do
         index=$(jq -r --argjson i "$i" '.[$i].index' <<< "$values") || return 1
         rule=$(jq -c --argjson i "$i" '.[$i].rule' <<< "$values") || return 1

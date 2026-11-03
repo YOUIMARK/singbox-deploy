@@ -478,7 +478,7 @@ sbd_service_after_change() {
             if sbd_read_required '是否立即启动服务？输入 y 启动，其他输入跳过' && [[ "$SBD_REPLY" = y ]]; then
                 sbd_engine_control restart || { _error '服务启动失败；配置已保存但未生效'; return 1; }
             else
-                sbd_info '服务仍未启动：可在 [10] 重启服务或 [19] sing-box 核心里启动'
+                sbd_info '服务仍未启动：可在 [11] 重启服务或 [20] sing-box 核心里启动'
             fi
             ;;
         *)

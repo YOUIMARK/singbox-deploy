@@ -10,6 +10,7 @@ lib/engine.sh
 lib/apply.sh
 lib/export.sh
 lib/entries.sh
+lib/outbounds.sh
 lib/rules.sh
 lib/resolver.sh
 lib/peers.sh
@@ -20,5 +21,6 @@ presets/base.json
 support/validate_schema.py
 support/policy_records.py
 support/dns_settings.py
+support/outbound_link.py
 support/warp.py
 support/uninstall_plan.py
