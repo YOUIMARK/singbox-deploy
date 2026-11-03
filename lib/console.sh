@@ -114,7 +114,7 @@ sbd_maintenance_menu() {
         sbd_read_integer '请选择' 0 6 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
-            1) sbd_check_config || return 1; sbd_success 'Schema/check 通过，不代表联网验证' ;;
+            1) sbd_check_config_tidy || return 1; sbd_success 'Schema/check 通过，不代表联网验证' ;;
             2) sbd_adopt_menu; case "$?" in 0|2) ;; *) return 1 ;; esac ;;
             3)
                 sbd_policy_pick '["nodes","rules_dns","peers","tls"]' '选择 reset 类别' || return $?; category="$SBD_REPLY"
@@ -234,7 +234,7 @@ sbd_dispatch() {
         13) sbd_observe_logs ;;
         14) sbd_engine_control enable ;;
         15) sbd_engine_control disable ;;
-        16) sbd_check_config && sbd_success 'Schema 与核心检查通过；未验证网络连通' ;;
+        16) sbd_check_config_tidy && sbd_success 'Schema 与核心检查通过；未验证网络连通' ;;
         17) sbd_observe_menu ;;
         18) sbd_maintenance_menu ;;
         19) sbd_engine_menu ;;

@@ -35,6 +35,27 @@ format_only_manual() {
     t_absent "$CASE_TMP/output" '/tmp/'
     t_assert '检查配置不重写单配置文件' cmp -s "$CASE_TMP/pretty.json" "$SBD_CONFIG"
 }
+check_tidy_formatting() {
+    t_seed
+    jq --indent 4 . "$SBD_CONFIG" > "$CASE_TMP/pretty.json" || exit 1
+    cp "$CASE_TMP/pretty.json" "$SBD_CONFIG" || exit 1
+    t_run 0 sbd_check_config_tidy
+    t_contains "$CASE_TMP/output" '配置缩进已整理'
+    jq -S . "$SBD_CONFIG" > "$CASE_TMP/tidied-sorted.json" || exit 1
+    jq -S . "$CASE_TMP/pretty.json" > "$CASE_TMP/pretty-sorted.json" || exit 1
+    t_assert '整理只改排版' cmp -s "$CASE_TMP/tidied-sorted.json" "$CASE_TMP/pretty-sorted.json"
+    cp "$SBD_CONFIG" "$CASE_TMP/tidied.json" || exit 1
+    t_run 0 sbd_check_config_tidy
+    t_contains "$CASE_TMP/output" '配置缩进已符合核心格式'
+    t_assert '重复检查不再改写' cmp -s "$SBD_CONFIG" "$CASE_TMP/tidied.json"
+}
+check_tidy_invalid_untouched() {
+    t_seed
+    cp "$ROOT/tests/fixtures/invalid-key.json" "$SBD_CONFIG" || exit 1
+    cp "$SBD_CONFIG" "$CASE_TMP/bad-config" || exit 1
+    t_run 1 sbd_check_config_tidy
+    t_assert '检查失败时不整理' cmp -s "$SBD_CONFIG" "$CASE_TMP/bad-config"
+}
 invalid_single_reported() {
     t_seed
     cp "$ROOT/tests/fixtures/invalid-key.json" "$SBD_CONFIG" || exit 1
@@ -126,6 +147,8 @@ lock_collision() {
 t_case '完整提交与修订号' commit_valid
 t_case '手工编辑单配置作为事务输入' manual_edit_source
 t_case '单配置仅重新排版仍可检查' format_only_manual
+t_case '检查配置成功时整理缩进且幂等' check_tidy_formatting
+t_case '检查配置失败时不整理' check_tidy_invalid_untouched
 t_case '单配置非法语义由真实 check 拒绝' invalid_single_reported
 t_case '检查配置失败时显示核心 stderr' check_failure_reported
 t_case 'format 失败不落盘' format_failure

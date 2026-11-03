@@ -63,3 +63,31 @@ sbd_check_config() {
     sbd_validate_schema "$SBD_SCHEMA" "$SBD_CONFIG" || return 1
     "$SBD_BINARY" check -c "$SBD_CONFIG" -D "$SBD_ROOT" || { _error '核心语义检查失败'; return 1; }
 }
+
+sbd_check_config_tidy_locked() {
+    local stage rc=0
+    [[ -n "${SBD_WORK:-}" ]] || { _error '整理暂存目录未初始化'; return 1; }
+    stage="$SBD_WORK/config-tidy"
+    sbd_check_config || return 1
+    sbd_directories || return 1
+    rm -rf -- "$stage" || { _error '无法清理整理暂存目录'; return 1; }
+    mkdir -p -- "$stage" || { _error '无法创建整理暂存目录'; return 1; }
+    if ! cp -- "$SBD_CONFIG" "$stage/config.json"; then
+        _error '配置暂存失败'
+        rc=1
+    elif ! sbd_prepare_config "$stage"; then
+        _error '配置整理校验失败'
+        rc=1
+    elif cmp -s -- "$stage/config.json" "$SBD_CONFIG"; then
+        sbd_info '配置缩进已符合核心格式'
+    elif ! sbd_atomic_file "$stage/config.json" "$SBD_CONFIG"; then
+        rc=1
+    else
+        sbd_info '配置缩进已整理；运行中的服务不会自动重载'
+    fi
+    rm -rf -- "$stage" || { _error "整理临时目录清理失败: $stage"; return 1; }
+    return "$rc"
+}
+
+# 菜单“检查配置”在校验通过后顺带整理缩进；事务前的内部检查仍保持只读。
+sbd_check_config_tidy() { sbd_write_lock sbd_check_config_tidy_locked; }
