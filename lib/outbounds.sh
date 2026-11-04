@@ -146,7 +146,7 @@ sbd_outbound_read_links() {
     SBD_OUTBOUND_INPUTS=("${SBD_REPLY%$'\r'}")
     while true; do
         line=''
-        IFS= read -r -t "${SBD_OUTBOUND_DRAIN_TIMEOUT:-0.2}" line
+        IFS= read -r -t "${SBD_OUTBOUND_DRAIN_TIMEOUT:-1.0}" line
         rc=$?
         line="${line%$'\r'}"
         if [[ -n "$line" ]]; then

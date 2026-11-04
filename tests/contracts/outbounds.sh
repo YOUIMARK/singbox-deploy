@@ -276,6 +276,28 @@ plain_batch_contract() {
     t_run 0 sbd_check_config
 }
 
+delayed_plain_batch_contract() {
+    t_seed
+    local first second final
+    first='hysteria2://one@hy2.example.com:443?sni=hy2.example.com#Delayed-First'
+    second='anytls://two@any.example.com:443#Delayed-Second'
+    final=$(jq -r '.route.final' "$SBD_CONFIG") || exit 1
+    t_run 0 sbd_outbound_add_prompt < <(
+        printf '%s\n' "$first"
+        sleep 0.4
+        printf '%s\n' "$second"
+        printf '\n\ny\n'
+    )
+    t_contains "$CASE_TMP/output" '共识别 2 个出口'
+    t_contains "$CASE_TMP/output" '已添加 2 个出口'
+    t_assert '延迟到达的多行链接全部写入' jq -e '
+        ([.outbounds[].tag] | index("Delayed-First") != null) and
+        ([.outbounds[].tag] | index("Delayed-Second") != null)
+    ' "$SBD_CONFIG"
+    t_assert '延迟批量添加不改默认路由' test "$(jq -r '.route.final' "$SBD_CONFIG")" = "$final"
+    t_run 0 sbd_check_config
+}
+
 chinese_tag_contract() {
     t_seed
     local json payload link
@@ -416,6 +438,7 @@ t_case 'Shadowsocks/AnyTLS 映射与真实配置检查' ss_anytls_contract
 t_case 'SOCKS/SOCKS5 映射与真实配置检查' socks_contract
 t_case '整串 Base64 批量添加且不改默认路由' base64_batch_contract
 t_case '普通多行链接一次粘贴批量添加（CRLF）' plain_batch_contract
+t_case '后续分享链接延迟到达时仍能批量识别' delayed_plain_batch_contract
 t_case 'VMess ps 中文默认 tag' chinese_tag_contract
 t_case '非 VMess 整串 Base64 与不支持协议拒绝' base64_non_vmess_contract
 t_case 'v2rayN 导出格式兼容补充' v2rayn_formats_contract
