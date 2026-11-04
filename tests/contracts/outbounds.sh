@@ -9,13 +9,13 @@ parse_link() {
     printf '%s\n' "$1" | python3 "$ROOT/support/outbound_link.py"
 }
 
+parse_links() {
+    printf '%s\n' "$@" | python3 "$ROOT/support/outbound_link.py" --batch
+}
+
 add_outbound() {
     local link="$1" tag="$2" answer="${3:-n}"
-    if [[ -n "$tag" ]]; then
-        t_run 0 sbd_outbound_add_prompt <<< "$link"$'\n'"$tag"$'\ny\n'"$answer"$'\n'
-    else
-        t_run 0 sbd_outbound_add_prompt <<< "$link"$'\n\ny\n'"$answer"$'\n'
-    fi
+    t_run 0 sbd_outbound_add_prompt <<< "$link"$'\n\n'"$tag"$'\ny\n'"$answer"$'\n'
 }
 
 hy2_example_contract() {
@@ -57,7 +57,7 @@ tag_prompt_contract() {
 
     cp "$SBD_CONFIG" "$CASE_TMP/config-before" || exit 1
     cp "$SBD_STATE" "$CASE_TMP/state-before" || exit 1
-    t_run 2 sbd_outbound_add_prompt <<< "$HY2_LINK"$'\n\n'
+    t_run 2 sbd_outbound_add_prompt <<< "$HY2_LINK"$'\n\n\n'
     t_contains "$CASE_TMP/output" '出口 tag 已存在: NL-Hy2'
     t_assert '重复 tag 不改配置' cmp -s "$SBD_CONFIG" "$CASE_TMP/config-before"
     t_assert '重复 tag 不改修订' cmp -s "$SBD_STATE" "$CASE_TMP/state-before"
@@ -98,6 +98,10 @@ reject_contract() {
 
     t_run 1 sbd_outbound_add_prompt <<< 'vmess://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?encryption=auto&security=tls&sni=example.com&type=grpc#gRPC'$'\n'
     t_contains "$CASE_TMP/output" '暂不支持 gRPC'
+    t_unchanged
+
+    t_run 1 sbd_outbound_add_prompt <<< 'ss://YWVzLTI1Ni1nY206cGFzcw==@example.com:8388?plugin=v2ray-plugin%3Bmode%3Dwebsocket#SS-Plugin'$'\n'
+    t_contains "$CASE_TMP/output" 'Shadowsocks 插件链接暂不支持'
     t_unchanged
 }
 
@@ -233,6 +237,150 @@ socks_contract() {
     ' "$SBD_CONFIG"
 }
 
+base64_batch_contract() {
+    t_seed
+    local links blob final
+    final=$(jq -r '.route.final' "$SBD_CONFIG") || exit 1
+    links=$(printf '%s\n' \
+        "$HY2_LINK" \
+        'anytls://anytls-secret@any.example.com:443?security=none&type=tcp&headerType=none#AnyTLS-v2rayN' \
+        'socks://YWxpY2U6c2VjcmV0@example.com:1080#SOCKS-B64') || exit 1
+    blob=$(printf '%s\n' "$links" | openssl base64 -A) || exit 1
+    t_run 0 sbd_outbound_add_prompt <<< "$blob"$'\n\n\n\n\ny\n'
+    t_contains "$CASE_TMP/output" '共识别 3 个出口'
+    t_contains "$CASE_TMP/output" '已添加 3 个出口'
+    t_assert 'Base64 批量出口全部写入' jq -e '
+        ([.outbounds[].tag] | index("NL-Hy2") != null) and
+        ([.outbounds[].tag] | index("AnyTLS-v2rayN") != null) and
+        ([.outbounds[].tag] | index("SOCKS-B64") != null)
+    ' "$SBD_CONFIG"
+    t_assert '批量添加不改默认路由' test "$(jq -r '.route.final' "$SBD_CONFIG")" = "$final"
+    t_run 0 sbd_check_config
+}
+
+chinese_tag_contract() {
+    t_seed
+    local json payload link
+    json=$(jq -cn '{
+        v:"2",ps:"新加坡-优化2-GPT",add:"m.cnmjin.net",port:"16618",
+        id:"899954a1-86c4-4db7-b7a3-8b6f196a890e",aid:"0",scy:"auto",
+        net:"ws",type:"none",host:"x.mobgslb.tbcache.com",path:"/",
+        tls:"",sni:"",alpn:"",fp:"",insecure:"0",vcn:"",pcs:""
+    }') || exit 1
+    payload=$(printf '%s' "$json" | openssl base64 -A) || exit 1
+    link="vmess://$payload"
+    t_run 0 parse_link "$link"
+    t_assert 'VMess JSON ps 作为默认 tag' jq -e '.tag=="新加坡-优化2-GPT"' "$CASE_TMP/output"
+    t_run 0 sbd_outbound_add_prompt <<< "$link"$'\n\n\ny\n'
+    t_contains "$CASE_TMP/output" '默认 新加坡-优化2-GPT'
+    t_assert '中文 tag 写入配置' jq -e '.outbounds[-1].tag=="新加坡-优化2-GPT"' "$SBD_CONFIG"
+    t_run 0 sbd_check_config
+}
+
+base64_non_vmess_contract() {
+    t_seed
+    local blob
+    blob=$(printf '%s\n' "$HY2_LINK" | openssl base64 -A) || exit 1
+    t_run 0 parse_links "$blob"
+    t_assert '非 VMess 整串 Base64 可解析' jq -e '
+        .[0].tag=="NL-Hy2" and .[0].outbound.type=="hysteria2"
+    ' "$CASE_TMP/output"
+
+    blob=$(printf '%s\n' 'trojan://secret@example.com:443#Trojan' | openssl base64 -A) || exit 1
+    t_run 1 sbd_outbound_add_prompt <<< "$blob"$'\n'
+    t_contains "$CASE_TMP/output" '暂不支持 trojan://'
+    t_unchanged
+}
+
+v2rayn_formats_contract() {
+    t_seed
+    local body vless_hu vmess_hu
+    t_run 0 parse_link 'socks://YWxpY2U6c2VjcmV0@example.com:1080#SOCKS-B64'
+    t_assert 'v2rayN SOCKS Base64 认证' jq -e '
+        .outbound.type=="socks" and .outbound.username=="alice" and
+        .outbound.password=="secret"
+    ' "$CASE_TMP/output"
+
+    body=$(printf '%s' 'bob:pass@example.com:1080' | openssl base64 -A) || exit 1
+    t_run 0 parse_link "socks://$body#SOCKS-Legacy"
+    t_assert '旧式 SOCKS 整串 Base64' jq -e '
+        .outbound.username=="bob" and .outbound.password=="pass"
+    ' "$CASE_TMP/output"
+
+    t_run 0 parse_link 'anytls://anytls-secret@any.example.com:443?security=none&type=tcp&headerType=none#AnyTLS-v2rayN'
+    t_assert 'v2rayN AnyTLS 默认参数兼容' jq -e '
+        .outbound.type=="anytls" and .outbound.tls.enabled and
+        .outbound.tls.server_name=="any.example.com"
+    ' "$CASE_TMP/output"
+
+    t_run 0 parse_link 'hysteria2://secret@hy2.example.com?sni=hy2.example.com#Hy2-NoPort'
+    t_assert 'Hysteria2 缺省端口 443' jq -e '.outbound.server_port==443' "$CASE_TMP/output"
+
+    vless_hu='vless://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?encryption=none&security=tls&sni=example.com&type=httpupgrade&host=cdn.example.com&path=%2Fup#VLESS-HU'
+    t_run 0 parse_link "$vless_hu"
+    t_assert 'VLESS HTTPUpgrade 映射' jq -e '
+        .outbound.transport.type=="httpupgrade" and
+        .outbound.transport.host=="cdn.example.com" and
+        .outbound.transport.path=="/up"
+    ' "$CASE_TMP/output"
+
+    vmess_hu='vmess://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?type=httpupgrade&security=tls&sni=cdn.example.com&host=cdn.example.com&path=%2Fup&scy=auto#VMess-HU'
+    t_run 0 parse_link "$vmess_hu"
+    t_assert 'VMess HTTPUpgrade 映射' jq -e '
+        .outbound.transport.type=="httpupgrade" and
+        .outbound.tls.server_name=="cdn.example.com"
+    ' "$CASE_TMP/output"
+    t_run 0 sbd_apply sbd_outbound_add "$(jq -c '.outbound + {tag:.tag}' "$CASE_TMP/output")"
+    t_run 0 sbd_check_config
+    t_assert 'HTTPUpgrade 出口进入配置' jq -e '
+        .outbounds[-1].tag=="VMess-HU" and
+        .outbounds[-1].transport.type=="httpupgrade"
+    ' "$SBD_CONFIG"
+
+    t_run 0 parse_link 'vless://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?encryption=none&security=tls&sni=example.com&type=h2&host=cdn.example.com&path=%2Fh2#VLESS-H2'
+    t_assert 'VLESS HTTP/2 映射' jq -e '
+        .outbound.transport.type=="http" and
+        .outbound.transport.host=="cdn.example.com" and
+        .outbound.transport.path=="/h2"
+    ' "$CASE_TMP/output"
+    t_run 0 sbd_apply sbd_outbound_add "$(jq -c '.outbound + {tag:.tag}' "$CASE_TMP/output")"
+    t_run 0 sbd_check_config
+    t_assert 'HTTP/2 出口进入配置' jq -e '
+        .outbounds[-1].tag=="VLESS-H2" and
+        .outbounds[-1].transport.type=="http"
+    ' "$SBD_CONFIG"
+}
+
+batch_duplicate_tag_contract() {
+    t_seed
+    local first second
+    first='hysteria2://one@hy2.example.com:443?sni=hy2.example.com#Same'
+    second='anytls://two@any.example.com:443#Same'
+    t_run 0 sbd_outbound_add_prompt <<< "$first"$'\n'"$second"$'\n\n\n\nSecond\ny\n'
+    t_contains "$CASE_TMP/output" '本次添加的出口 tag 重复: Same'
+    t_contains "$CASE_TMP/output" '已添加 2 个出口'
+    t_assert '批量 tag 重复后可用自定义 tag 继续' jq -e '
+        ([.outbounds[].tag] | index("Same") != null) and
+        ([.outbounds[].tag] | index("Second") != null)
+    ' "$SBD_CONFIG"
+}
+
+invalid_batch_contract() {
+    t_seed
+    t_run 1 sbd_apply sbd_outbound_add_many '[
+        {"type":"socks","tag":"Dup","server":"a.example.com","server_port":1},
+        {"type":"socks","tag":"Dup","server":"b.example.com","server_port":2}
+    ]'
+    t_contains "$CASE_TMP/output" '候选出口请求无效或 tag 重复'
+    t_unchanged
+
+    t_run 1 sbd_apply sbd_outbound_add_many '[
+        {"type":"socks","tag":"bad/tag","server":"a.example.com","server_port":1}
+    ]'
+    t_contains "$CASE_TMP/output" "出口 tag 不能包含 / 或 \\"
+    t_unchanged
+}
+
 dispatch_contract() {
     t_fresh
     t_run 2 sbd_dispatch 6 < /dev/null
@@ -248,5 +396,11 @@ t_case 'VMess Base64 与 URL 形式映射' vmess_contract
 t_case 'Hysteria2 Gecko 自定义包长导入' gecko_contract
 t_case 'Shadowsocks/AnyTLS 映射与真实配置检查' ss_anytls_contract
 t_case 'SOCKS/SOCKS5 映射与真实配置检查' socks_contract
+t_case '整串 Base64 批量添加且不改默认路由' base64_batch_contract
+t_case 'VMess ps 中文默认 tag' chinese_tag_contract
+t_case '非 VMess 整串 Base64 与不支持协议拒绝' base64_non_vmess_contract
+t_case 'v2rayN 导出格式兼容补充' v2rayn_formats_contract
+t_case '批量添加内 tag 重复可重新命名' batch_duplicate_tag_contract
+t_case '候选出口 tag 重复时整批拒绝' invalid_batch_contract
 t_case '主菜单 [6] 直达添加出口' dispatch_contract
 t_finish

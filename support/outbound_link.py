@@ -12,7 +12,7 @@ from urllib.parse import unquote_to_bytes, urlsplit
 
 
 SUPPORTED_TEXT = "Hysteria2/Hy2、AnyTLS、VLESS、VMess、Shadowsocks、SOCKS"
-TAG_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+MAX_TAG_LENGTH = 128
 UUID_RE = re.compile(
     r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
     r"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
@@ -106,6 +106,22 @@ def decode_base64_text(raw, label):
         fail("%s不是有效 UTF-8" % label)
 
 
+def try_decode_base64_text(raw):
+    if not raw or not re.fullmatch(r"[A-Za-z0-9+/=_-]+", raw):
+        return None
+    try:
+        return decode_base64_text(raw, "Base64")
+    except LinkError:
+        return None
+
+
+def maybe_unwrap_base64(text):
+    compact = re.sub(r"\s+", "", text)
+    if "://" in compact:
+        return None
+    return try_decode_base64_text(compact)
+
+
 def parse_query(query):
     params = {}
     seen = set()
@@ -173,7 +189,7 @@ def validate_host(value, label="服务器地址"):
     return value
 
 
-def endpoint(url):
+def endpoint(url, default_port=None):
     host = url.hostname
     if not host:
         fail("链接缺少服务器地址")
@@ -183,7 +199,9 @@ def endpoint(url):
     except ValueError:
         fail("链接端口无效")
     if port is None:
-        fail("链接缺少服务器端口")
+        if default_port is None:
+            fail("链接缺少服务器端口")
+        port = default_port
     if not 1 <= port <= 65535:
         fail("链接端口须在 1-65535")
     return host, port
@@ -325,12 +343,26 @@ def port_ranges(value):
     return result
 
 
+def valid_tag(value):
+    if not value or value == "direct" or len(value) > MAX_TAG_LENGTH:
+        return False
+    if value != value.strip():
+        return False
+    for char in value:
+        code = ord(char)
+        if code < 0x20 or code == 0x7F or char in "/\\":
+            return False
+    return True
+
+
 def tag_value(fragment=None, fallback=None):
     value = fragment if fragment not in (None, "") else fallback
     if value in (None, ""):
         return None
+    if not isinstance(value, str):
+        value = str(value)
     value = decode_component(value, "tag")
-    if value == "direct" or not TAG_RE.fullmatch(value):
+    if not valid_tag(value):
         return None
     return value
 
@@ -351,6 +383,34 @@ def transport_value(kind, params, server, sni):
         host = params.get("host") or sni or server
         validate_host(host, "WebSocket Host")
         return {"type": "ws", "path": path, "headers": {"Host": host}}
+    if kind in ("http", "h2"):
+        if "servicename" in params:
+            fail("HTTP/2 传输不支持 serviceName")
+        result = {"type": "http"}
+        path = params.get("path", "")
+        if path:
+            if not path.startswith("/"):
+                path = "/" + path
+            result["path"] = path
+        host = params.get("host", "")
+        if host:
+            validate_host(host, "HTTP/2 Host")
+            result["host"] = host
+        return result
+    if kind == "httpupgrade":
+        if "servicename" in params:
+            fail("HTTPUpgrade 传输不支持 serviceName")
+        result = {"type": "httpupgrade"}
+        path = params.get("path", "")
+        if path:
+            if not path.startswith("/"):
+                path = "/" + path
+            result["path"] = path
+        host = params.get("host", "")
+        if host:
+            validate_host(host, "HTTPUpgrade Host")
+            result["host"] = host
+        return result
     if kind == "grpc":
         fail("暂不支持 gRPC 传输")
     fail("不支持的传输类型: %s" % kind)
@@ -367,7 +427,7 @@ def packet_encoding_value(params):
 
 def parse_hysteria2(link):
     url = split_url(link)
-    host, port = endpoint(url)
+    host, port = endpoint(url, 443)
     password = userinfo_password(url, "Hysteria2 ")
     params = parse_query(url.query)
     reject_unknown(
@@ -468,7 +528,7 @@ def parse_hysteria2(link):
 
 def parse_anytls(link):
     url = split_url(link)
-    host, port = endpoint(url)
+    host, port = endpoint(url, 443)
     password = userinfo_password(url, "AnyTLS ")
     params = parse_query(url.query)
     reject_unknown(
@@ -485,6 +545,10 @@ def parse_anytls(link):
             "fp",
             "alpn",
             "pcs",
+            "type",
+            "headertype",
+            "host",
+            "path",
         },
     )
     if params.get("pcs"):
@@ -493,8 +557,18 @@ def parse_anytls(link):
             "只支持公钥 pin，不能无损导入"
         )
     security = params.get("security", "tls").strip().lower()
-    if security not in ("", "tls", "reality"):
-        fail("AnyTLS security 只支持 tls 或 reality")
+    if security in ("", "none"):
+        security = "tls"
+    if security not in ("tls", "reality"):
+        fail("AnyTLS security 只支持 none、tls 或 reality")
+    kind = params.get("type", "").strip().lower()
+    if kind not in ("", "tcp", "raw"):
+        fail("AnyTLS 只支持原生 TCP 传输")
+    header_type = params.get("headertype", "").strip().lower()
+    if header_type not in ("", "none"):
+        fail("AnyTLS 不支持 headerType 伪装")
+    if params.get("host") or params.get("path"):
+        fail("AnyTLS 不支持 host/path 传输参数")
     reality = security == "reality"
     sni = choose_sni(params, host, required=reality)
     tls = {"enabled": True, "server_name": sni}
@@ -582,8 +656,8 @@ def parse_vless(link):
         kind = "tcp"
     elif kind == "grpc":
         fail("暂不支持 gRPC 传输")
-    elif kind != "ws":
-        fail("VLESS 只支持 TCP 或 WebSocket 传输")
+    elif kind not in ("ws", "httpupgrade", "http", "h2"):
+        fail("VLESS 只支持 TCP、WebSocket、HTTPUpgrade 或 HTTP/2 传输")
     header_type = params.get("headertype", "").strip().lower()
     if header_type not in ("", "none"):
         fail("VLESS 不支持 headerType 伪装")
@@ -789,8 +863,8 @@ def parse_vmess_legacy(raw, fragment):
         kind = "tcp"
     elif kind == "grpc":
         fail("VMess 暂不支持 gRPC 传输")
-    elif kind != "ws":
-        fail("VMess 只支持 TCP 或 WebSocket 传输")
+    elif kind not in ("ws", "httpupgrade", "http", "h2"):
+        fail("VMess 只支持 TCP、WebSocket、HTTPUpgrade 或 HTTP/2 传输")
     header_type = str(data.get("type", "none") or "none").strip().lower()
     params = {}
     for key in ("host", "path", "sni", "alpn", "fp"):
@@ -871,8 +945,8 @@ def parse_vmess(link):
         kind = "tcp"
     elif kind == "grpc":
         fail("暂不支持 gRPC 传输")
-    elif kind != "ws":
-        fail("VMess 只支持 TCP 或 WebSocket 传输")
+    elif kind not in ("ws", "httpupgrade", "http", "h2"):
+        fail("VMess 只支持 TCP、WebSocket、HTTPUpgrade 或 HTTP/2 传输")
     header_type = params.get("headertype", "").strip().lower()
     if header_type not in ("", "none"):
         fail("VMess 不支持 headerType 伪装")
@@ -947,6 +1021,8 @@ def parse_ss(link):
     body, separator, query = body.partition("?")
     if query:
         params = parse_query(query)
+        if "plugin" in params:
+            fail("Shadowsocks 插件链接暂不支持")
         reject_unknown(params, set())
     if not body:
         fail("Shadowsocks 链接为空")
@@ -995,6 +1071,21 @@ def parse_ss(link):
 
 
 def parse_socks(link):
+    scheme, separator, raw = link.partition("://")
+    if not separator:
+        fail("SOCKS 链接格式无效")
+    body, separator, fragment = raw.partition("#")
+    body, query_separator, query = body.partition("?")
+    if "@" not in body and ":" not in body:
+        decoded = try_decode_base64_text(body)
+        if decoded is not None:
+            if "@" not in decoded:
+                fail("SOCKS 整串 Base64 内容缺少服务器地址")
+            link = scheme + "://" + decoded
+            if query_separator:
+                link += "?" + query
+            if separator:
+                link += "#" + fragment
     url = split_url(link)
     host, port = endpoint(url)
     params = parse_query(url.query)
@@ -1009,15 +1100,20 @@ def parse_socks(link):
     }
     if url.username is not None:
         username = decode_component(url.username, "SOCKS 用户名")
-        if not username:
-            fail("SOCKS 用户名不能为空")
-        if url.password is None:
-            fail("SOCKS 认证缺少密码")
-        password = decode_component(url.password, "SOCKS 密码")
-        if not password:
-            fail("SOCKS 密码不能为空")
-        outbound["username"] = username
-        outbound["password"] = password
+        if url.password is not None:
+            password = decode_component(url.password, "SOCKS 密码")
+        else:
+            decoded = try_decode_base64_text(username)
+            if decoded is None or ":" not in decoded:
+                fail("SOCKS 认证缺少密码")
+            username, password = decoded.split(":", 1)
+        if not username and not password:
+            username = ""
+        elif not username or not password:
+            fail("SOCKS 用户名和密码不能为空")
+        if username:
+            outbound["username"] = username
+            outbound["password"] = password
     return (
         tag_value(url.fragment),
         outbound,
@@ -1058,22 +1154,72 @@ def parse(link):
     fail("无法识别分享链接协议；当前支持 %s" % SUPPORTED_TEXT)
 
 
+def split_links(text):
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return [line.strip() for line in normalized.split("\n") if line.strip()]
+
+
+def parse_many(text, depth=0):
+    if depth > 3:
+        fail("Base64 分享链接嵌套层数过多")
+    if text is None:
+        fail("分享链接不能为空")
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    text = text.strip()
+    if not text:
+        fail("分享链接不能为空")
+
+    decoded = maybe_unwrap_base64(text)
+    if decoded is not None:
+        if "://" not in decoded:
+            fail("Base64 内容不是分享链接")
+        text = decoded
+
+    links = split_links(text)
+    if not links:
+        fail("分享链接不能为空")
+    multiple = len(links) > 1
+    results = []
+    for index, link in enumerate(links, 1):
+        try:
+            nested = maybe_unwrap_base64(link)
+            if nested is not None:
+                results.extend(parse_many(nested, depth + 1))
+            else:
+                results.append(parse(link))
+        except LinkError as exc:
+            if multiple:
+                fail("第 %d 条: %s" % (index, exc))
+            raise
+    return results
+
+
+def result_item(result):
+    tag, outbound, summary = result
+    return {
+        "tag": tag,
+        "protocol": summary["protocol"],
+        "server": summary["server"],
+        "port": summary["port"],
+        "outbound": outbound,
+    }
+
+
 def main():
     try:
         data = sys.stdin.read()
-        if data.endswith("\n"):
-            data = data[:-1]
-        if "\n" in data or "\r" in data:
-            fail("一次只能输入一条分享链接")
-        tag, outbound, summary = parse(data)
-        result = {
-            "tag": tag,
-            "protocol": summary["protocol"],
-            "server": summary["server"],
-            "port": summary["port"],
-            "outbound": outbound,
-        }
-        print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+        if "--batch" in sys.argv[1:]:
+            results = parse_many(data)
+            output = [result_item(result) for result in results]
+            print(json.dumps(output, ensure_ascii=False, separators=(",", ":")))
+        else:
+            if data.endswith("\n"):
+                data = data[:-1]
+            if "\n" in data or "\r" in data:
+                fail("一次只能输入一条分享链接")
+            result = result_item(parse(data))
+            print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
         return 0
     except LinkError as exc:
         print("链接解析失败: %s" % exc, file=sys.stderr)

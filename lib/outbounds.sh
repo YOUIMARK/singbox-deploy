@@ -1,5 +1,21 @@
 #!/usr/bin/env bash
 
+SBD_OUTBOUND_ACCEPTED=()
+
+sbd_outbound_tag() {
+    local tag="$1"
+    [[ -n "$tag" ]] || { _error '出口 tag 不能为空'; return 1; }
+    ((${#tag} <= 128)) || { _error '出口 tag 最长 128 个字符'; return 1; }
+    case "$tag" in
+        *[\\/]*) _error "出口 tag 不能包含 / 或 \\"; return 1 ;;
+        [[:space:]]*|*[[:space:]]) _error '出口 tag 首尾不能有空白'; return 1 ;;
+    esac
+    if printf '%s' "$tag" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+        _error '出口 tag 不能包含控制字符'
+        return 1
+    fi
+}
+
 sbd_outbound_tag_exists() {
     local config="$1" tag="$2"
     jq -e --arg tag "$tag" '
@@ -8,65 +24,109 @@ sbd_outbound_tag_exists() {
     ' "$config" >/dev/null
 }
 
-sbd_outbound_parse() {
-    local link="$1" content
-    content=$(printf '%s\n' "$link" | python3 "$SBD_APP/support/outbound_link.py") || return 1
+sbd_outbound_parse_batch() {
+    local content
+    if (($# == 0)); then
+        _error '分享链接不能为空'
+        return 1
+    fi
+    content=$(printf '%s\n' "$@" | python3 "$SBD_APP/support/outbound_link.py" --batch) || return 1
     jq -e '
-        (.tag == null or (.tag | type == "string")) and
-        (.protocol | type == "string" and length > 0) and
-        (.server | type == "string" and length > 0) and
-        (.port | type == "number") and
-        (.outbound | type == "object") and
-        (.outbound.type | type == "string" and length > 0) and
-        (.outbound | has("tag") | not)
+        type == "array" and length > 0 and
+        all(.[];
+            (.tag == null or (.tag | type == "string")) and
+            (.protocol | type == "string" and length > 0) and
+            (.server | type == "string" and length > 0) and
+            (.port | type == "number") and
+            (.outbound | type == "object") and
+            (.outbound.type | type == "string" and length > 0) and
+            (.outbound | has("tag") | not)
+        )
     ' <<< "$content" >/dev/null || { _error '链接解析结果无效'; return 1; }
-    SBD_OUTBOUND_DEFAULT_TAG=$(jq -r '.tag // empty' <<< "$content") || return 1
-    SBD_OUTBOUND_PROTOCOL=$(jq -r '.protocol' <<< "$content") || return 1
-    SBD_OUTBOUND_SERVER=$(jq -r '.server' <<< "$content") || return 1
-    SBD_OUTBOUND_PORT=$(jq -r '.port' <<< "$content") || return 1
-    SBD_OUTBOUND_VALUE=$(jq -c '.outbound' <<< "$content") || return 1
+    SBD_OUTBOUND_BATCH="$content"
+    SBD_OUTBOUND_COUNT=$(jq 'length' <<< "$content") || return 1
+    mapfile -t SBD_OUTBOUND_DEFAULT_TAGS < <(jq -r '.[].tag // ""' <<< "$content")
+    mapfile -t SBD_OUTBOUND_PROTOCOLS < <(jq -r '.[].protocol' <<< "$content")
+    mapfile -t SBD_OUTBOUND_SERVERS < <(jq -r '.[].server' <<< "$content")
+    mapfile -t SBD_OUTBOUND_PORTS < <(jq -r '.[].port' <<< "$content")
 }
 
 sbd_outbound_accept_tag() {
-    local config="$1" tag="$2"
-    sbd_tls_tag "$tag" || return 1
+    local config="$1" tag="$2" seen
+    sbd_outbound_tag "$tag" || return 1
     [[ "$tag" != direct ]] || { _error 'direct 是保留出口 tag，请换一个'; return 1; }
     if sbd_outbound_tag_exists "$config" "$tag"; then
         _error "出口 tag 已存在: $tag，请换一个"
         return 1
     fi
+    if ((${#SBD_OUTBOUND_ACCEPTED[@]})); then
+        for seen in "${SBD_OUTBOUND_ACCEPTED[@]}"; do
+            if [[ "$seen" = "$tag" ]]; then
+                _error "本次添加的出口 tag 重复: $tag，请换一个"
+                return 1
+            fi
+        done
+    fi
 }
 
-sbd_outbound_add() {
-    local stage="$1" outbound="$2" tag content
-    sbd_record_write "$stage/outbound-request.json" "$outbound" || return 1
-    tag=$(jq -er '.tag | select(type=="string" and length>0)' "$stage/outbound-request.json") || {
-        _error '候选出口缺少 tag'
+sbd_outbound_add_many() {
+    local stage="$1" request="$2" tag content record
+    record=$(jq -c '{outbounds: .}' <<< "$request") || { _error '候选出口请求无效'; return 1; }
+    sbd_record_write "$stage/outbound-request.json" "$record" || return 1
+    jq -e '
+        (.outbounds | type == "array" and length > 0 and all(.[];
+            (.tag | type == "string" and length > 0) and
+            (.type | type == "string" and length > 0) and
+            (.server | type == "string" and length > 0) and
+            (.server_port | type == "number")
+        )) and
+        (([.outbounds[].tag] | length) == ([.outbounds[].tag] | unique | length))
+    ' "$stage/outbound-request.json" >/dev/null || {
+        _error '候选出口请求无效或 tag 重复'
         return 1
     }
-    sbd_tls_tag "$tag" || return 1
-    [[ "$tag" != direct ]] || { _error 'direct 是保留出口 tag'; return 1; }
     jq -e '(.outbounds // []) | type == "array"' "$stage/config.json" >/dev/null || {
         _error '当前配置的 outbounds 不是数组，不能追加出口'
         return 1
     }
-    if sbd_outbound_tag_exists "$stage/config.json" "$tag"; then
-        _error "出口 tag 已存在: $tag"
-        return 1
-    fi
-    content=$(jq --slurpfile outbound "$stage/outbound-request.json" \
-        '.outbounds = ((.outbounds // []) + $outbound)' "$stage/config.json") || {
+    while IFS= read -r tag; do
+        sbd_outbound_tag "$tag" || return 1
+        [[ "$tag" != direct ]] || { _error 'direct 是保留出口 tag'; return 1; }
+        if sbd_outbound_tag_exists "$stage/config.json" "$tag"; then
+            _error "出口 tag 已存在: $tag"
+            return 1
+        fi
+    done < <(jq -r '.outbounds[].tag' "$stage/outbound-request.json")
+    content=$(jq --slurpfile request "$stage/outbound-request.json" \
+        '.outbounds = ((.outbounds // []) + $request[0].outbounds)' "$stage/config.json") || {
         _error '追加出口失败'
         return 1
     }
     sbd_record_write "$stage/config.json" "$content"
 }
 
+sbd_outbound_add() {
+    local stage="$1" outbound="$2" request
+    request=$(jq -c '[.]' <<< "$outbound") || { _error '候选出口无效'; return 1; }
+    sbd_outbound_add_many "$stage" "$request"
+}
+
+sbd_outbound_read_more() {
+    local rc=0
+    sbd_ui_prompt '继续粘贴分享链接（直接回车结束）'
+    SBD_REPLY=''
+    sbd_ui_read_line || rc=$?
+    [[ "$rc" = 0 || -n "$SBD_REPLY" ]] || return 1
+    return 0
+}
+
 sbd_outbound_add_prompt() {
-    local link tag config outbound
+    local config tag i count joined request tags_json
+    local -a inputs tags
     sbd_ui_begin '添加出口'
     sbd_info '识别分享链接后只追加 outbounds，不修改 route.final 或现有分流规则'
     sbd_info '支持 Hysteria2/Hy2、AnyTLS、VLESS、VMess、Shadowsocks、SOCKS'
+    sbd_info '支持一条或多条链接，也支持 v2rayN 导出的 Base64 整段'
     sbd_version >/dev/null || return 1
     if [[ -f "$SBD_CONFIG" ]]; then
         sbd_check_config || return 1
@@ -75,31 +135,62 @@ sbd_outbound_add_prompt() {
         config="$SBD_APP/presets/base.json"
     fi
     sbd_read_required '分享链接' || return $?
-    link="$SBD_REPLY"
-    sbd_outbound_parse "$link" || return 1
-    sbd_info "已识别 $SBD_OUTBOUND_PROTOCOL: $SBD_OUTBOUND_SERVER:$SBD_OUTBOUND_PORT"
-
-    if [[ -n "$SBD_OUTBOUND_DEFAULT_TAG" ]]; then
-        while true; do
-            sbd_entry_default '出口 tag' "$SBD_OUTBOUND_DEFAULT_TAG" || return $?
-            sbd_outbound_accept_tag "$config" "$SBD_REPLY" && break
-        done
+    inputs=("$SBD_REPLY")
+    while sbd_outbound_read_more; do
+        [[ -n "$SBD_REPLY" ]] || break
+        inputs+=("$SBD_REPLY")
+    done
+    sbd_outbound_parse_batch "${inputs[@]}" || return 1
+    count=$SBD_OUTBOUND_COUNT
+    if ((count == 1)); then
+        sbd_info "已识别 ${SBD_OUTBOUND_PROTOCOLS[0]}: ${SBD_OUTBOUND_SERVERS[0]}:${SBD_OUTBOUND_PORTS[0]}"
     else
-        while true; do
-            sbd_read_required '出口 tag（链接没有可用 tag）' || return $?
-            sbd_outbound_accept_tag "$config" "$SBD_REPLY" && break
+        sbd_info "共识别 $count 个出口"
+        for ((i = 0; i < count; i++)); do
+            sbd_info "[$((i + 1))/$count] ${SBD_OUTBOUND_PROTOCOLS[$i]}: ${SBD_OUTBOUND_SERVERS[$i]}:${SBD_OUTBOUND_PORTS[$i]}"
         done
     fi
-    tag="$SBD_REPLY"
-    outbound=$(jq --arg tag "$tag" '. + {tag:$tag}' <<< "$SBD_OUTBOUND_VALUE") || {
-        _error '构造出口失败'
+
+    tags=()
+    SBD_OUTBOUND_ACCEPTED=()
+    for ((i = 0; i < count; i++)); do
+        local default="${SBD_OUTBOUND_DEFAULT_TAGS[$i]}" label='出口 tag'
+        ((count == 1)) || label="出口 tag [$((i + 1))/$count]"
+        while true; do
+            if [[ -n "$default" ]]; then
+                sbd_entry_default "$label" "$default" || return $?
+            else
+                sbd_read_required "$label（链接没有可用 tag）" || return $?
+            fi
+            sbd_outbound_accept_tag "$config" "$SBD_REPLY" && break
+        done
+        tag="$SBD_REPLY"
+        tags+=("$tag")
+        SBD_OUTBOUND_ACCEPTED+=("$tag")
+    done
+
+    tags_json=$(jq -n '$ARGS.positional' --args "${tags[@]}") || {
+        _error '构造出口 tag 列表失败'
         return 1
     }
-    sbd_info "将添加出口: $tag；不会修改默认路由，可在 [8] 分流设置中选择"
+    request=$(jq -cn --argjson batch "$SBD_OUTBOUND_BATCH" --argjson tags "$tags_json" '
+        [range(0; ($batch | length)) as $i | $batch[$i].outbound + {tag: $tags[$i]}]
+    ') || { _error '构造出口失败'; return 1; }
+    joined=$(printf '%s, ' "${tags[@]}") || return 1
+    joined=${joined%, }
+    if ((count == 1)); then
+        sbd_info "将添加出口: $joined；不会修改默认路由，可在 [8] 分流设置中选择"
+    else
+        sbd_info "将添加 $count 个出口: $joined；不会修改默认路由，可在 [8] 分流设置中选择"
+    fi
     sbd_read_required '确认添加并按需重启？输入 y 确认，其他输入取消' || return $?
     [[ "$SBD_REPLY" = y ]] || return 2
-    sbd_apply sbd_outbound_add "$outbound" || return 1
-    sbd_success "出口已添加: $tag；route.final 未改变"
+    sbd_apply sbd_outbound_add_many "$request" || return 1
+    if ((count == 1)); then
+        sbd_success "出口已添加: $joined；route.final 未改变"
+    else
+        sbd_success "已添加 $count 个出口: $joined；route.final 未改变"
+    fi
     sbd_service_after_change || sbd_info '出口已保存，但服务尚未运行；按上方提示处理后才会生效'
     sbd_ui_pause
 }
