@@ -646,6 +646,7 @@ def parse_vless(link):
             "ed",
             "earlydataheadername",
             "spx",
+            "pqv",
         },
     )
     encryption = params.get("encryption", "").strip().lower()

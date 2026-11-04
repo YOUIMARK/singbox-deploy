@@ -108,14 +108,15 @@ reject_contract() {
 vless_contract() {
     t_seed
     local link
-    link="vless://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?encryption=none&security=reality&sni=www.example.com&fp=chrome&pbk=$REALITY_PBK&sid=ab12&flow=xtls-rprx-vision&type=tcp&spx=%2F#VLESS-R"
+    link="vless://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?encryption=none&security=reality&sni=www.example.com&fp=chrome&pbk=$REALITY_PBK&sid=ab12&flow=xtls-rprx-vision&type=tcp&spx=%2F&pqv=1#VLESS-R"
     t_run 0 parse_link "$link"
     t_assert 'VLESS Reality 映射' jq -e '
         (.tag=="VLESS-R") and (.outbound |
         .type=="vless" and .uuid=="899954a1-86c4-4db7-b7a3-8b6f196a890e" and
         .flow=="xtls-rprx-vision" and .tls.reality.public_key=="'"$REALITY_PBK"'" and
         .tls.reality.short_id=="ab12" and .tls.utls.fingerprint=="chrome" and
-        (has("transport")|not))
+        (has("transport")|not) and
+        (has("spx")|not) and (has("pqv")|not))
     ' "$CASE_TMP/output"
     t_run 0 sbd_apply sbd_outbound_add "$(jq -c '.outbound + {tag:.tag}' "$CASE_TMP/output")"
     t_run 0 sbd_check_config
