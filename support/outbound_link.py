@@ -54,6 +54,10 @@ UTLS_FINGERPRINTS = {
     "random",
     "randomized",
 }
+LINK_START_RE = re.compile(
+    r"(?i)(?:hysteria2|hy2|anytls|vless|vmess|ss|socks5?|"
+    r"trojan|tuic|hysteria|shadowtls|naive\+https)://"
+)
 
 
 class LinkError(Exception):
@@ -1157,7 +1161,26 @@ def parse(link):
 
 def split_links(text):
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-    return [line.strip() for line in normalized.split("\n") if line.strip()]
+    parts = []
+    for line in normalized.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        matches = list(LINK_START_RE.finditer(line))
+        if not matches:
+            parts.append(line.strip(" \t,;，；"))
+            continue
+        start = 0
+        for match in matches:
+            if match.start() > start:
+                part = line[start:match.start()].strip(" \t,;，；")
+                if part:
+                    parts.append(part)
+            start = match.start()
+        tail = line[start:].strip(" \t,;，；")
+        if tail:
+            parts.append(tail)
+    return [part for part in parts if part]
 
 
 def parse_many_collect(text, depth=0, skip_errors=False, prefix=""):

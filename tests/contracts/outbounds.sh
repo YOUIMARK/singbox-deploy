@@ -318,6 +318,46 @@ delayed_plain_batch_contract() {
     t_run 0 sbd_check_config
 }
 
+concatenated_scheme_batch_contract() {
+    t_seed
+    local first second third final
+    first='hysteria2://one@hy2.example.com:443?sni=hy2.example.com#Concatenated-First'
+    second='vmess://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?type=ws&security=tls&sni=cdn.example.com&host=cdn.example.com&path=%2Fws&scy=auto#Concatenated-VMess'
+    third='vless://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?encryption=none&security=tls&sni=example.com#Concatenated-VLESS'
+    final=$(jq -r '.route.final' "$SBD_CONFIG") || exit 1
+    t_run 0 sbd_outbound_add_prompt <<< "$first$second$third"$'\n\n\n\ny\n'
+    t_contains "$CASE_TMP/output" '共识别 3 个出口'
+    t_contains "$CASE_TMP/output" '已添加 3 个出口'
+    t_assert '协议头连续拼接时全部写入' jq -e '
+        ([.outbounds[].tag] | index("Concatenated-First") != null) and
+        ([.outbounds[].tag] | index("Concatenated-VMess") != null) and
+        ([.outbounds[].tag] | index("Concatenated-VLESS") != null)
+    ' "$SBD_CONFIG"
+    t_assert '连续拼接不改默认路由' test "$(jq -r '.route.final' "$SBD_CONFIG")" = "$final"
+    t_run 0 sbd_check_config
+}
+
+separator_batch_contract() {
+    t_seed
+    local hy2 anytls vless vmess socks ss hy2_second all
+    hy2='hysteria2://one@hy2.example.com:443?sni=hy2.example.com#Sep-Hy2'
+    anytls='anytls://two@any.example.com:443#Sep-AnyTLS'
+    vless='vless://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?encryption=none&security=tls&sni=example.com#Sep-VLESS'
+    vmess='vmess://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?type=ws&security=tls&sni=cdn.example.com&host=cdn.example.com&path=%2Fws&scy=auto#Sep-VMess'
+    socks='socks://example.com:1080#Sep-SOCKS'
+    ss='ss://YWVzLTI1Ni1nY206cGFzcw==@example.com:8388#Sep-SS'
+    hy2_second='hysteria2://three@hy2.example.com:443?sni=hy2.example.com#Sep-Hy2-2'
+    all="$hy2 $anytls"$'\n'"$vless,$vmess;$socks，$ss；$hy2_second"
+    t_run 0 parse_links "$all"
+    t_assert '空格/换行/中英文逗号分号均可分隔链接' jq -e '
+        length == 7 and
+        (map(.tag) == [
+            "Sep-Hy2", "Sep-AnyTLS", "Sep-VLESS", "Sep-VMess",
+            "Sep-SOCKS", "Sep-SS", "Sep-Hy2-2"
+        ])
+    ' "$CASE_TMP/output"
+}
+
 chinese_tag_contract() {
     t_seed
     local json payload link
@@ -460,6 +500,8 @@ t_case '整串 Base64 批量添加且不改默认路由' base64_batch_contract
 t_case '普通多行链接一次粘贴批量添加（CRLF）' plain_batch_contract
 t_case '批量解析跳过失败项并添加成功项' batch_skip_invalid_contract
 t_case '后续分享链接延迟到达时仍能批量识别' delayed_plain_batch_contract
+t_case '无换行连续协议头链接批量识别' concatenated_scheme_batch_contract
+t_case '空格/换行/中英文逗号分号分隔批量解析' separator_batch_contract
 t_case 'VMess ps 中文默认 tag' chinese_tag_contract
 t_case '非 VMess 整串 Base64 与不支持协议拒绝' base64_non_vmess_contract
 t_case 'v2rayN 导出格式兼容补充' v2rayn_formats_contract
