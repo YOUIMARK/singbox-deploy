@@ -641,6 +641,7 @@ def parse_vless(link):
             "packetencoding",
             "ed",
             "earlydataheadername",
+            "spx",
         },
     )
     encryption = params.get("encryption", "").strip().lower()
@@ -1159,7 +1160,7 @@ def split_links(text):
     return [line.strip() for line in normalized.split("\n") if line.strip()]
 
 
-def parse_many(text, depth=0):
+def parse_many_collect(text, depth=0, skip_errors=False, prefix=""):
     if depth > 3:
         fail("Base64 分享链接嵌套层数过多")
     if text is None:
@@ -1181,17 +1182,32 @@ def parse_many(text, depth=0):
         fail("分享链接不能为空")
     multiple = len(links) > 1
     results = []
+    failures = []
     for index, link in enumerate(links, 1):
+        label = "%s%d" % (prefix, index)
         try:
             nested = maybe_unwrap_base64(link)
             if nested is not None:
-                results.extend(parse_many(nested, depth + 1))
+                nested_results, nested_failures = parse_many_collect(
+                    nested, depth + 1, skip_errors, label + "."
+                )
+                results.extend(nested_results)
+                failures.extend(nested_failures)
             else:
                 results.append(parse(link))
         except LinkError as exc:
-            if multiple:
+            if skip_errors:
+                failures.append((label, str(exc)))
+                print("已跳过第 %s 条: %s" % (label, exc), file=sys.stderr)
+            elif multiple:
                 fail("第 %d 条: %s" % (index, exc))
-            raise
+            else:
+                raise
+    return results, failures
+
+
+def parse_many(text, depth=0):
+    results, _ = parse_many_collect(text, depth)
     return results
 
 
@@ -1210,7 +1226,11 @@ def main():
     try:
         data = sys.stdin.read()
         if "--batch" in sys.argv[1:]:
-            results = parse_many(data)
+            results, failures = parse_many_collect(data, skip_errors=True)
+            if not results:
+                fail("没有可导入的有效链接")
+            if failures:
+                print("已跳过 %d 条无法解析的链接" % len(failures), file=sys.stderr)
             output = [result_item(result) for result in results]
             print(json.dumps(output, ensure_ascii=False, separators=(",", ":")))
         else:

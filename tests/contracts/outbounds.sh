@@ -108,7 +108,7 @@ reject_contract() {
 vless_contract() {
     t_seed
     local link
-    link="vless://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?encryption=none&security=reality&sni=www.example.com&fp=chrome&pbk=$REALITY_PBK&sid=ab12&flow=xtls-rprx-vision&type=tcp#VLESS-R"
+    link="vless://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?encryption=none&security=reality&sni=www.example.com&fp=chrome&pbk=$REALITY_PBK&sid=ab12&flow=xtls-rprx-vision&type=tcp&spx=%2F#VLESS-R"
     t_run 0 parse_link "$link"
     t_assert 'VLESS Reality 映射' jq -e '
         (.tag=="VLESS-R") and (.outbound |
@@ -276,6 +276,26 @@ plain_batch_contract() {
     t_run 0 sbd_check_config
 }
 
+batch_skip_invalid_contract() {
+    t_seed
+    local first bad second final
+    first='hysteria2://one@hy2.example.com:443?sni=hy2.example.com#Batch-First'
+    bad='tuic://secret@example.com:443#Batch-Bad'
+    second='anytls://two@any.example.com:443#Batch-Second'
+    final=$(jq -r '.route.final' "$SBD_CONFIG") || exit 1
+    t_run 0 sbd_outbound_add_prompt <<< "$first"$'\n'"$bad"$'\n'"$second"$'\n\n\ny\n'
+    t_contains "$CASE_TMP/output" '已跳过第 2 条'
+    t_contains "$CASE_TMP/output" '共识别 2 个出口'
+    t_contains "$CASE_TMP/output" '已添加 2 个出口'
+    t_assert '批量失败项被跳过，成功项全部写入' jq -e '
+        ([.outbounds[].tag] | index("Batch-First") != null) and
+        ([.outbounds[].tag] | index("Batch-Second") != null) and
+        ([.outbounds[].tag] | index("Batch-Bad") == null)
+    ' "$SBD_CONFIG"
+    t_assert '跳过失败项不改默认路由' test "$(jq -r '.route.final' "$SBD_CONFIG")" = "$final"
+    t_run 0 sbd_check_config
+}
+
 delayed_plain_batch_contract() {
     t_seed
     local first second final
@@ -438,6 +458,7 @@ t_case 'Shadowsocks/AnyTLS 映射与真实配置检查' ss_anytls_contract
 t_case 'SOCKS/SOCKS5 映射与真实配置检查' socks_contract
 t_case '整串 Base64 批量添加且不改默认路由' base64_batch_contract
 t_case '普通多行链接一次粘贴批量添加（CRLF）' plain_batch_contract
+t_case '批量解析跳过失败项并添加成功项' batch_skip_invalid_contract
 t_case '后续分享链接延迟到达时仍能批量识别' delayed_plain_batch_contract
 t_case 'VMess ps 中文默认 tag' chinese_tag_contract
 t_case '非 VMess 整串 Base64 与不支持协议拒绝' base64_non_vmess_contract
