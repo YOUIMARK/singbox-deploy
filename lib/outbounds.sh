@@ -74,7 +74,7 @@ sbd_outbound_add_prompt() {
     else
         config="$SBD_APP/presets/base.json"
     fi
-    sbd_read_secret '分享链接（含凭据）' || return $?
+    sbd_read_required '分享链接' || return $?
     link="$SBD_REPLY"
     sbd_outbound_parse "$link" || return 1
     sbd_info "已识别 $SBD_OUTBOUND_PROTOCOL: $SBD_OUTBOUND_SERVER:$SBD_OUTBOUND_PORT"

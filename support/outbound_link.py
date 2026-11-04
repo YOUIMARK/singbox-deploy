@@ -64,6 +64,10 @@ def fail(message):
     raise LinkError(message)
 
 
+def empty_value(value):
+    return value is None or value == "" or value == [] or value == {}
+
+
 def decode_component(raw, label, plus=False):
     if raw is None:
         return ""
@@ -104,6 +108,7 @@ def decode_base64_text(raw, label):
 
 def parse_query(query):
     params = {}
+    seen = set()
     if not query:
         return params
     for part in query.split("&"):
@@ -115,14 +120,19 @@ def parse_query(query):
         key = decode_component(raw_key, "查询参数名", plus=True).lower()
         if not re.fullmatch(r"[a-z0-9_.-]+", key):
             fail("查询参数名无效")
-        if key in params:
+        if key in seen:
             fail("查询参数重复: %s" % key)
-        params[key] = decode_component(raw_value, "查询参数 %s" % key, plus=True)
+        seen.add(key)
+        value = decode_component(raw_value, "查询参数 %s" % key, plus=True)
+        if not empty_value(value):
+            params[key] = value
     return params
 
 
 def reject_unknown(params, allowed):
-    unknown = sorted(set(params) - set(allowed))
+    unknown = sorted(
+        name for name in set(params) - set(allowed) if not empty_value(params[name])
+    )
     if unknown:
         fail("链接包含暂不支持的查询参数: %s" % ", ".join(unknown))
 
@@ -383,7 +393,7 @@ def parse_hysteria2(link):
             "fp",
         },
     )
-    if "pinsha256" in params:
+    if params.get("pinsha256"):
         fail(
             "链接包含 pinSHA256（整证书 SHA-256）；sing-box 1.14.4 "
             "只支持公钥 pin，不能无损导入"
@@ -477,7 +487,7 @@ def parse_anytls(link):
             "pcs",
         },
     )
-    if "pcs" in params:
+    if params.get("pcs"):
         fail(
             "链接包含 pcs（整证书 SHA-256）；sing-box 1.14.4 "
             "只支持公钥 pin，不能无损导入"
@@ -720,7 +730,7 @@ def parse_vmess_legacy(raw, fragment):
     if (
         str(data.get("net", "")).strip().lower() == "grpc"
         or str(data.get("type", "")).strip().lower() == "gun"
-        or "mode" in data
+        or not empty_value(data.get("mode"))
     ):
         fail("VMess 暂不支持 gRPC 传输")
     allowed = {
@@ -739,11 +749,14 @@ def parse_vmess_legacy(raw, fragment):
         "sni",
         "alpn",
         "fp",
+        "insecure",
         "allowinsecure",
         "skip-cert-verify",
         "packetencoding",
     }
-    unknown = sorted(set(data) - allowed)
+    unknown = sorted(
+        name for name in set(data) - allowed if not empty_value(data[name])
+    )
     if unknown:
         fail("VMess JSON 包含暂不支持的字段: %s" % ", ".join(unknown))
     host = data.get("add")
@@ -784,7 +797,11 @@ def parse_vmess_legacy(raw, fragment):
         value = data.get(key)
         if value not in (None, ""):
             params[key] = str(value)
-    insecure = data.get("allowinsecure", data.get("skip-cert-verify"))
+    insecure = None
+    for name in ("insecure", "allowinsecure", "skip-cert-verify"):
+        if name in data and not empty_value(data[name]):
+            insecure = data[name]
+            break
     if insecure is not None:
         params["insecure"] = "1" if insecure in (True, 1, "1", "true") else "0"
     if data.get("packetencoding"):

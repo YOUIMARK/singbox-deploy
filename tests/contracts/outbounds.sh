@@ -40,6 +40,9 @@ hy2_example_contract() {
          .outbounds[-1].server_ports=="10011:10080")
     ' "$SBD_CONFIG"
     t_assert '默认路由不变' test "$(jq -r '.route.final' "$SBD_CONFIG")" = "$final"
+
+    t_run 0 parse_link 'hysteria2://demo-secret@hy2.example.com:10010?sni=hy2.example.com&insecure=1&pinSHA256=&vcn=&unknown-empty=#Hy2-Insecure'
+    t_assert 'Hysteria2 insecure 映射且空字段忽略' jq -e '.outbound.tls.insecure==true' "$CASE_TMP/output"
 }
 
 tag_prompt_contract() {
@@ -113,6 +116,9 @@ vless_contract() {
     t_run 0 sbd_apply sbd_outbound_add "$(jq -c '.outbound + {tag:.tag}' "$CASE_TMP/output")"
     t_run 0 sbd_check_config
     t_assert 'VLESS Reality 进入配置' jq -e '.outbounds[-1].tag=="VLESS-R" and .outbounds[-1].tls.reality.enabled' "$SBD_CONFIG"
+
+    t_run 0 parse_link 'vless://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?encryption=none&security=tls&sni=example.com&insecure=1&pcs=&vcn=#VLESS-TLS'
+    t_assert 'VLESS insecure 映射且空字段忽略' jq -e '.outbound.tls.insecure==true' "$CASE_TMP/output"
 }
 
 vmess_contract() {
@@ -122,7 +128,8 @@ vmess_contract() {
         v:"2",ps:"VMess Legacy",add:"example.com",port:"443",
         id:"899954a1-86c4-4db7-b7a3-8b6f196a890e",aid:"0",scy:"auto",
         net:"ws",type:"none",host:"cdn.example.com",path:"/ws",tls:"tls",
-        sni:"cdn.example.com",alpn:"h2,http/1.1",fp:"chrome"
+        sni:"cdn.example.com",alpn:"h2,http/1.1",fp:"chrome",
+        insecure:true,pcs:"",vcn:"",unknown_empty:""
     }') || exit 1
     payload=$(printf '%s' "$json" | openssl base64 -A | tr '+/' '-_' | tr -d '=') || exit 1
     link="vmess://$payload#VMess-Test"
@@ -130,7 +137,7 @@ vmess_contract() {
     t_assert 'VMess Base64 映射' jq -e '
         (.tag=="VMess-Test") and (.outbound |
         .type=="vmess" and .security=="auto" and .alter_id==0 and
-        .tls.server_name=="cdn.example.com" and
+        .tls.server_name=="cdn.example.com" and .tls.insecure==true and
         .transport.type=="ws" and .transport.path=="/ws" and
         .transport.headers.Host=="cdn.example.com")
     ' "$CASE_TMP/output"
@@ -138,8 +145,18 @@ vmess_contract() {
     t_run 0 sbd_check_config
     t_assert 'VMess 进入配置' jq -e '.outbounds[-1].tag=="VMess-Test"' "$SBD_CONFIG"
 
-    t_run 0 parse_link "vmess://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?type=ws&security=tls&sni=cdn.example.com&host=cdn.example.com&path=%2Fws&scy=auto#VMess-URL"
-    t_assert 'VMess URL 形式映射' jq -e '.outbound.type=="vmess" and .outbound.transport.type=="ws"' "$CASE_TMP/output"
+    t_run 0 parse_link "vmess://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?type=ws&security=tls&sni=cdn.example.com&host=cdn.example.com&path=%2Fws&scy=auto&insecure=1&pcs=&vcn=#VMess-URL"
+    t_assert 'VMess URL 形式映射' jq -e '.outbound.type=="vmess" and .outbound.transport.type=="ws" and .outbound.tls.insecure==true' "$CASE_TMP/output"
+
+    json=$(jq -cn '{
+        v:"2",ps:"VMess Bad Pin",add:"example.com",port:"443",
+        id:"899954a1-86c4-4db7-b7a3-8b6f196a890e",aid:"0",scy:"auto",
+        net:"ws",type:"none",pcs:"cert-pin",vcn:"example.org"
+    }') || exit 1
+    payload=$(printf '%s' "$json" | openssl base64 -A | tr '+/' '-_' | tr -d '=') || exit 1
+    t_run 1 parse_link "vmess://$payload"
+    t_contains "$CASE_TMP/output" 'pcs'
+    t_contains "$CASE_TMP/output" 'vcn'
 }
 
 gecko_contract() {
@@ -175,8 +192,8 @@ ss_anytls_contract() {
     t_run 0 parse_link "$ss2022"
     t_assert 'SS2022 密钥保留' jq -e --arg key "$key" '.outbound.password==$key and .outbound.method=="2022-blake3-aes-256-gcm"' "$CASE_TMP/output"
 
-    t_run 0 parse_link 'anytls://anytls-secret@example.com:443?sni=example.com&insecure=1#AnyTLS'
-    t_assert 'AnyTLS TLS 映射' jq -e '.outbound.type=="anytls" and .outbound.tls.enabled and .outbound.tls.insecure' "$CASE_TMP/output"
+    t_run 0 parse_link 'anytls://anytls-secret@example.com:443?sni=example.com&insecure=1&pcs=&vcn=&unknown-empty=#AnyTLS'
+    t_assert 'AnyTLS TLS 映射且空字段忽略' jq -e '.outbound.type=="anytls" and .outbound.tls.enabled and .outbound.tls.insecure' "$CASE_TMP/output"
     t_run 0 sbd_apply sbd_outbound_add "$(jq -c '.outbound + {tag:.tag}' "$CASE_TMP/output")"
     t_run 0 sbd_check_config
 
@@ -219,7 +236,7 @@ socks_contract() {
 dispatch_contract() {
     t_fresh
     t_run 2 sbd_dispatch 6 < /dev/null
-    t_contains "$CASE_TMP/output" '分享链接（含凭据）（不回显）'
+    t_contains "$CASE_TMP/output" '分享链接:'
 }
 
 t_case 'Hysteria2 示例解析、默认 tag 与真实配置检查' hy2_example_contract
