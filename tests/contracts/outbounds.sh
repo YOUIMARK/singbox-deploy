@@ -15,7 +15,7 @@ parse_links() {
 
 add_outbound() {
     local link="$1" tag="$2" answer="${3:-n}"
-    t_run 0 sbd_outbound_add_prompt <<< "$link"$'\n\n'"$tag"$'\ny\n'"$answer"$'\n'
+    t_run 0 sbd_outbound_add_prompt <<< "$link"$'\n'"$tag"$'\ny\n'"$answer"$'\n'
 }
 
 hy2_example_contract() {
@@ -57,7 +57,7 @@ tag_prompt_contract() {
 
     cp "$SBD_CONFIG" "$CASE_TMP/config-before" || exit 1
     cp "$SBD_STATE" "$CASE_TMP/state-before" || exit 1
-    t_run 2 sbd_outbound_add_prompt <<< "$HY2_LINK"$'\n\n\n'
+    t_run 2 sbd_outbound_add_prompt <<< "$HY2_LINK"$'\n\n'
     t_contains "$CASE_TMP/output" '出口 tag 已存在: NL-Hy2'
     t_assert '重复 tag 不改配置' cmp -s "$SBD_CONFIG" "$CASE_TMP/config-before"
     t_assert '重复 tag 不改修订' cmp -s "$SBD_STATE" "$CASE_TMP/state-before"
@@ -246,7 +246,7 @@ base64_batch_contract() {
         'anytls://anytls-secret@any.example.com:443?security=none&type=tcp&headerType=none#AnyTLS-v2rayN' \
         'socks://YWxpY2U6c2VjcmV0@example.com:1080#SOCKS-B64') || exit 1
     blob=$(printf '%s\n' "$links" | openssl base64 -A) || exit 1
-    t_run 0 sbd_outbound_add_prompt <<< "$blob"$'\n\n\n\n\ny\n'
+    t_run 0 sbd_outbound_add_prompt <<< "$blob"$'\n\n\n\ny\n'
     t_contains "$CASE_TMP/output" '共识别 3 个出口'
     t_contains "$CASE_TMP/output" '已添加 3 个出口'
     t_assert 'Base64 批量出口全部写入' jq -e '
@@ -255,6 +255,24 @@ base64_batch_contract() {
         ([.outbounds[].tag] | index("SOCKS-B64") != null)
     ' "$SBD_CONFIG"
     t_assert '批量添加不改默认路由' test "$(jq -r '.route.final' "$SBD_CONFIG")" = "$final"
+    t_run 0 sbd_check_config
+}
+
+plain_batch_contract() {
+    t_seed
+    local first second final
+    first='hysteria2://one@hy2.example.com:443?sni=hy2.example.com#First'
+    second='anytls://two@any.example.com:443#Second'
+    final=$(jq -r '.route.final' "$SBD_CONFIG") || exit 1
+    t_run 0 sbd_outbound_add_prompt <<< "$first"$'\r\n'"$second"$'\r\n\r\n\r\ny\r\n'
+    t_contains "$CASE_TMP/output" '共识别 2 个出口'
+    t_contains "$CASE_TMP/output" '已添加 2 个出口'
+    t_absent "$CASE_TMP/output" '继续粘贴分享链接'
+    t_assert '普通多行链接全部写入' jq -e '
+        ([.outbounds[].tag] | index("First") != null) and
+        ([.outbounds[].tag] | index("Second") != null)
+    ' "$SBD_CONFIG"
+    t_assert '普通多行链接不改默认路由' test "$(jq -r '.route.final' "$SBD_CONFIG")" = "$final"
     t_run 0 sbd_check_config
 }
 
@@ -271,7 +289,7 @@ chinese_tag_contract() {
     link="vmess://$payload"
     t_run 0 parse_link "$link"
     t_assert 'VMess JSON ps 作为默认 tag' jq -e '.tag=="新加坡-优化2-GPT"' "$CASE_TMP/output"
-    t_run 0 sbd_outbound_add_prompt <<< "$link"$'\n\n\ny\n'
+    t_run 0 sbd_outbound_add_prompt <<< "$link"$'\n\ny\n'
     t_contains "$CASE_TMP/output" '默认 新加坡-优化2-GPT'
     t_assert '中文 tag 写入配置' jq -e '.outbounds[-1].tag=="新加坡-优化2-GPT"' "$SBD_CONFIG"
     t_run 0 sbd_check_config
@@ -356,7 +374,7 @@ batch_duplicate_tag_contract() {
     local first second
     first='hysteria2://one@hy2.example.com:443?sni=hy2.example.com#Same'
     second='anytls://two@any.example.com:443#Same'
-    t_run 0 sbd_outbound_add_prompt <<< "$first"$'\n'"$second"$'\n\n\n\nSecond\ny\n'
+    t_run 0 sbd_outbound_add_prompt <<< "$first"$'\n'"$second"$'\n\n\nSecond\ny\n'
     t_contains "$CASE_TMP/output" '本次添加的出口 tag 重复: Same'
     t_contains "$CASE_TMP/output" '已添加 2 个出口'
     t_assert '批量 tag 重复后可用自定义 tag 继续' jq -e '
@@ -397,6 +415,7 @@ t_case 'Hysteria2 Gecko 自定义包长导入' gecko_contract
 t_case 'Shadowsocks/AnyTLS 映射与真实配置检查' ss_anytls_contract
 t_case 'SOCKS/SOCKS5 映射与真实配置检查' socks_contract
 t_case '整串 Base64 批量添加且不改默认路由' base64_batch_contract
+t_case '普通多行链接一次粘贴批量添加（CRLF）' plain_batch_contract
 t_case 'VMess ps 中文默认 tag' chinese_tag_contract
 t_case '非 VMess 整串 Base64 与不支持协议拒绝' base64_non_vmess_contract
 t_case 'v2rayN 导出格式兼容补充' v2rayn_formats_contract

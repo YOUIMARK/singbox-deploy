@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
 SBD_OUTBOUND_ACCEPTED=()
+SBD_OUTBOUND_PREFETCH=''
+SBD_OUTBOUND_PREFETCH_SET=false
+SBD_OUTBOUND_INPUTS=()
 
 sbd_outbound_tag() {
     local tag="$1"
@@ -111,22 +114,65 @@ sbd_outbound_add() {
     sbd_outbound_add_many "$stage" "$request"
 }
 
-sbd_outbound_read_more() {
-    local rc=0
-    sbd_ui_prompt '继续粘贴分享链接（直接回车结束）'
-    SBD_REPLY=''
-    sbd_ui_read_line || rc=$?
-    [[ "$rc" = 0 || -n "$SBD_REPLY" ]] || return 1
-    return 0
+sbd_outbound_read_tag() {
+    local label="$1" default="$2" prompt
+    if [[ -n "$default" ]]; then
+        prompt="$label（默认 $default）"
+    else
+        prompt="$label（链接没有可用 tag）"
+    fi
+    if [[ "$SBD_OUTBOUND_PREFETCH_SET" = true ]]; then
+        sbd_ui_prompt "$prompt"
+        SBD_REPLY="${SBD_OUTBOUND_PREFETCH%$'\r'}"
+        SBD_OUTBOUND_PREFETCH=''
+        SBD_OUTBOUND_PREFETCH_SET=false
+        if [[ -z "$SBD_REPLY" && -n "$default" ]]; then
+            SBD_REPLY="$default"
+        fi
+        return 0
+    fi
+    if [[ -n "$default" ]]; then
+        sbd_read_optional "$prompt" || return $?
+        SBD_REPLY="${SBD_REPLY%$'\r'}"
+        SBD_REPLY="${SBD_REPLY:-$default}"
+    else
+        sbd_read_required "$prompt" || return $?
+        SBD_REPLY="${SBD_REPLY%$'\r'}"
+    fi
+}
+
+sbd_outbound_read_links() {
+    local line='' rc=0
+    SBD_OUTBOUND_INPUTS=("${SBD_REPLY%$'\r'}")
+    while true; do
+        line=''
+        IFS= read -r -t "${SBD_OUTBOUND_DRAIN_TIMEOUT:-0.2}" line
+        rc=$?
+        line="${line%$'\r'}"
+        if [[ -n "$line" ]]; then
+            if [[ "$line" == *"://"* ]]; then
+                SBD_OUTBOUND_INPUTS+=("$line")
+            else
+                SBD_OUTBOUND_PREFETCH="$line"
+                SBD_OUTBOUND_PREFETCH_SET=true
+                return 0
+            fi
+        elif ((rc == 0)); then
+            SBD_OUTBOUND_PREFETCH=''
+            SBD_OUTBOUND_PREFETCH_SET=true
+            return 0
+        fi
+        ((rc == 0)) || return 0
+    done
 }
 
 sbd_outbound_add_prompt() {
     local config tag i count joined request tags_json
-    local -a inputs tags
+    local -a tags
     sbd_ui_begin '添加出口'
     sbd_info '识别分享链接后只追加 outbounds，不修改 route.final 或现有分流规则'
     sbd_info '支持 Hysteria2/Hy2、AnyTLS、VLESS、VMess、Shadowsocks、SOCKS'
-    sbd_info '支持一条或多条链接，也支持 v2rayN 导出的 Base64 整段'
+    sbd_info '一次可粘贴一条或多条链接；多条会自动识别，也支持 v2rayN 的 Base64 整段'
     sbd_version >/dev/null || return 1
     if [[ -f "$SBD_CONFIG" ]]; then
         sbd_check_config || return 1
@@ -134,13 +180,15 @@ sbd_outbound_add_prompt() {
     else
         config="$SBD_APP/presets/base.json"
     fi
+    SBD_OUTBOUND_PREFETCH=''
+    SBD_OUTBOUND_PREFETCH_SET=false
     sbd_read_required '分享链接' || return $?
-    inputs=("$SBD_REPLY")
-    while sbd_outbound_read_more; do
-        [[ -n "$SBD_REPLY" ]] || break
-        inputs+=("$SBD_REPLY")
-    done
-    sbd_outbound_parse_batch "${inputs[@]}" || return 1
+    sbd_outbound_read_links
+    sbd_outbound_parse_batch "${SBD_OUTBOUND_INPUTS[@]}" || {
+        SBD_OUTBOUND_PREFETCH=''
+        SBD_OUTBOUND_PREFETCH_SET=false
+        return 1
+    }
     count=$SBD_OUTBOUND_COUNT
     if ((count == 1)); then
         sbd_info "已识别 ${SBD_OUTBOUND_PROTOCOLS[0]}: ${SBD_OUTBOUND_SERVERS[0]}:${SBD_OUTBOUND_PORTS[0]}"
@@ -157,11 +205,7 @@ sbd_outbound_add_prompt() {
         local default="${SBD_OUTBOUND_DEFAULT_TAGS[$i]}" label='出口 tag'
         ((count == 1)) || label="出口 tag [$((i + 1))/$count]"
         while true; do
-            if [[ -n "$default" ]]; then
-                sbd_entry_default "$label" "$default" || return $?
-            else
-                sbd_read_required "$label（链接没有可用 tag）" || return $?
-            fi
+            sbd_outbound_read_tag "$label" "$default" || return $?
             sbd_outbound_accept_tag "$config" "$SBD_REPLY" && break
         done
         tag="$SBD_REPLY"
@@ -184,6 +228,7 @@ sbd_outbound_add_prompt() {
         sbd_info "将添加 $count 个出口: $joined；不会修改默认路由，可在 [8] 分流设置中选择"
     fi
     sbd_read_required '确认添加并按需重启？输入 y 确认，其他输入取消' || return $?
+    SBD_REPLY="${SBD_REPLY%$'\r'}"
     [[ "$SBD_REPLY" = y ]] || return 2
     sbd_apply sbd_outbound_add_many "$request" || return 1
     if ((count == 1)); then
