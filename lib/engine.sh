@@ -120,6 +120,8 @@ sbd_service_restore() {
 
 sbd_logrotate_file() { printf '/etc/logrotate.d/singbox-deploy\n'; }
 
+sbd_crond_service_file() { printf '/etc/init.d/crond\n'; }
+
 sbd_tree_compare() (
     local source="$1" copy="$2" path rel
     local -a files
@@ -323,12 +325,18 @@ PY
 }
 
 sbd_engine_logrotate_ready() {
-    local family
+    local family crond
+    family=$(sbd_os) || return 1
+    crond=$(sbd_crond_service_file) || return 1
     if ! command -v logrotate >/dev/null 2>&1; then
-        family=$(sbd_os) || return 1
         [[ "$family" = alpine ]] || { _error 'OpenRC 日志轮换依赖 logrotate'; return 1; }
         apk add --no-cache logrotate || { _error '安装 logrotate 失败'; return 1; }
         command -v logrotate >/dev/null 2>&1 || { _error '安装后仍缺 logrotate'; return 1; }
+    fi
+    if [[ ! -e "$crond" ]]; then
+        [[ "$family" = alpine ]] || { _error '日志日常轮换缺少 crond 服务'; return 1; }
+        apk add --no-cache busybox-openrc || { _error '安装 busybox-openrc 失败'; return 1; }
+        [[ -e "$crond" ]] || { _error '安装后仍缺 crond 服务'; return 1; }
     fi
     if ! rc-service crond status >/dev/null 2>&1; then
         rc-service crond start || { _error '日志日常轮换所需 crond 启动失败'; return 1; }

@@ -20,6 +20,7 @@ e_fixture() {
     sbd_backend() { cat "$CASE_TMP/backend"; }
     sbd_service_file() { printf '%s/etc/service\n' "$CASE_TMP"; }
     sbd_logrotate_file() { printf '%s/etc/logrotate\n' "$CASE_TMP"; }
+    sbd_crond_service_file() { printf '%s/etc/crond\n' "$CASE_TMP"; }
     systemctl() {
         printf '%s\n' "$*" >> "$CASE_TMP/actions"
         case "$1" in
@@ -166,6 +167,29 @@ kill_recover() {
     t_run 0 sbd_recover
     e_old
 }
+logrotate_ready_contract() {
+    e_fixture
+    mkdir -p "$CASE_TMP/bin" || exit 1
+    printf '#!/bin/sh\nexit 0\n' > "$CASE_TMP/bin/logrotate" || exit 1
+    chmod +x "$CASE_TMP/bin/logrotate" || exit 1
+    PATH="$CASE_TMP/bin:$PATH"
+    apk() {
+        printf '%s\n' "$*" >> "$CASE_TMP/actions"
+        case "$*" in
+            *busybox-openrc*) : > "$CASE_TMP/etc/crond" ;;
+        esac
+    }
+    sbd_os() { printf 'alpine\n'; }
+    t_run 0 sbd_engine_logrotate_ready
+    t_contains "$CASE_TMP/actions" 'add --no-cache busybox-openrc'
+    t_contains "$CASE_TMP/actions" 'crond start'
+    t_contains "$CASE_TMP/actions" 'add crond default'
+    t_assert 'crond 已启动' test "$(cat "$CASE_TMP/runtime")" = running
+    t_assert 'crond 已自启' test "$(cat "$CASE_TMP/enabled")" = enabled
+    : > "$CASE_TMP/actions"
+    t_run 0 sbd_engine_logrotate_ready
+    t_absent "$CASE_TMP/actions" busybox-openrc
+}
 t_case '稳定版与 amd64/arm64 默认-musl 映射' asset_contract
 t_case '完整发行包解压与版本实测' unpack_contract
 t_case 'latest 与指定稳定版下载实际参数' fetch_contract
@@ -173,4 +197,5 @@ t_case '首次核心安装自启但保持停止' fresh_install
 t_case '核心文件缺失时使用候选核心保留单配置重装' keep_reinstall
 t_case '运行升级停止后再启动验证' running_upgrade
 t_case '核心提交 SIGKILL 后自动恢复' kill_recover
+t_case 'OpenRC 缺少 crond init 脚本时补装 busybox-openrc' logrotate_ready_contract
 t_finish
