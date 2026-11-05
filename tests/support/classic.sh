@@ -25,9 +25,9 @@ else:
     assert not any(k in q for k in ("aid", "alterId", "alter_id", "private_key"))
     if node["profile"].endswith("_ws"):
         assert u.scheme == c["type"] and q["type"] == ["ws"] and q["security"] == ["tls"]
-        assert q["path"] == [c["transport"]["path"]] and q["host"] == [node["ingress"]["host"]]
+        assert q["host"] == [node["ingress"]["host"]]
         assert q["encryption"] == ["auto" if u.scheme == "vmess" else "none"]
-        assert "flow" not in q and "ed" not in q
+        assert "flow" not in q and q["path"] == [c["transport"]["path"] + "?ed=2560"]
     else:
         assert u.scheme == "vless" and q["security"] == ["reality"] and q["type"] == ["tcp"]
         assert q["flow"] == ["xtls-rprx-vision"] and q["fp"] == ["chrome"]

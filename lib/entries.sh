@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+# CDN WS 早期数据：服务端只声明接收头，URI 用 path 中的 ed 表达。
+# shellcheck disable=SC2034
+SBD_WS_EARLY_DATA=2560
+SBD_WS_EARLY_DATA_HEADER='Sec-WebSocket-Protocol'
+
 sbd_entry_text() {
     jq -er "($2) | select(type==\"string\" and length>0)" "$1" || { _error "节点资料缺少 $3"; return 1; }
 }
@@ -374,12 +379,13 @@ sbd_entry_create_classic() {
     id=$(sbd_entry_new_id "$stage") || return 1
     tag=$(sbd_entry_tag "$stage" "$profile" "$port") || return 1
     content=$(jq -n --arg profile "$profile" --arg type "$type" --arg id "$id" --arg tag "$tag" --arg listen "$listen" --argjson port "$port" \
-        --arg credential "$credential" --arg method "$method" --arg network "$network" --argjson cdn "$cdn" --slurpfile tls "$stage/source-server.json" '
+        --arg credential "$credential" --arg method "$method" --arg network "$network" --argjson cdn "$cdn" --arg early_header "$SBD_WS_EARLY_DATA_HEADER" \
+        --slurpfile tls "$stage/source-server.json" '
         {type:$type,tag:$tag,listen:$listen,listen_port:$port} +
         (if $profile=="shadowsocks" then {method:$method,password:$credential} + (if $network!="both" then {network:$network} else {} end)
          else {users:[{name:$id,uuid:$credential}]} + (if $profile=="vmess_ws" then {users:[{name:$id,uuid:$credential,alterId:0}]} else {} end) +
           (if $profile=="vless_reality" then {users:[{name:$id,uuid:$credential,flow:"xtls-rprx-vision"}],tls:$tls[0]}
-           else {transport:{type:"ws",path:$cdn.path}} end) end)') || return 1
+           else {transport:{type:"ws",path:$cdn.path,early_data_header_name:$early_header}} end) end)') || return 1
     sbd_record_write "$stage/new-inbound.json" "$content" || return 1
     content=$(jq --slurpfile inbound "$stage/new-inbound.json" '.inbounds=((.inbounds // [])+$inbound)' "$stage/config.json") || return 1
     sbd_record_write "$stage/config.json" "$content" || return 1
@@ -416,15 +422,15 @@ sbd_entry_align_classic() {
     [[ "$scope" != delete ]] || return 0
     if [[ "$profile" = *_ws ]]; then
         sbd_entry_cdn "$(jq -c '.ingress + {path:.client.transport.path}' "$node")" || return 1
-        jq -e --slurpfile node "$node" '
+        jq -e --arg early_header "$SBD_WS_EARLY_DATA_HEADER" --slurpfile node "$node" '
             (has("tls")|not) and .transport.type=="ws" and .transport.path==$node[0].client.transport.path and
             $node[0].client.transport.type=="ws" and $node[0].client.tls.enabled==true and
             $node[0].client.tls.server_name==$node[0].ingress.host and $node[0].client.transport.headers.Host==$node[0].ingress.host and
             ((.transport.headers.Host // .transport.headers.host // "")=="") and
-            (.transport.max_early_data // 0)==0 and (.transport.early_data_header_name // "")=="" and
+            (.transport.max_early_data // 0)==0 and .transport.early_data_header_name==$early_header and
             (if .type=="vmess" then (.users[0].alterId // 0)==0 and ($node[0].client.alter_id // 0)==0 and $node[0].client.security=="auto"
              else (.users[0].flow // "")=="" and ($node[0].client.flow // "")=="" end)
-        ' "$stage/entry-inbound.json" >/dev/null || { _error 'CDN WS 回源、Host/SNI、路径或 AEAD/flow 发生漂移'; return 1; }
+        ' "$stage/entry-inbound.json" >/dev/null || { _error 'CDN WS 早期数据头、回源、Host/SNI、路径或 AEAD/flow 发生漂移'; return 1; }
     else
         jq -e '(.tls.client_authentication // "no")=="no" and ((.tls.ech.enabled // false)|not)' "$stage/entry-inbound.json" >/dev/null || { _error '此节点附带未登记的客户端认证或 ECH'; return 1; }
         jq -e --slurpfile node "$node" '.users[0].flow=="xtls-rprx-vision" and $node[0].client.flow=="xtls-rprx-vision" and

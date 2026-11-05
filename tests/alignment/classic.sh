@@ -86,7 +86,7 @@ drift_contract() {
     t_entry_add vmess_ws
     local original expression
     original=$(cat "$SBD_CONFIG") || exit 1
-    for expression in '.inbounds[0].users[0].uuid="69e480fd-5918-468c-b730-7c7b8fa81b8b"' '.inbounds[0].transport.path="/changed"' '.inbounds[0].users[0].alterId=1' '.inbounds[0].transport.max_early_data=2048'; do
+    for expression in '.inbounds[0].users[0].uuid="69e480fd-5918-468c-b730-7c7b8fa81b8b"' '.inbounds[0].transport.path="/changed"' '.inbounds[0].users[0].alterId=1' '.inbounds[0].transport.max_early_data=2048' '.inbounds[0].transport.early_data_header_name="X"'; do
         jq "$expression" <<< "$original" > "$CASE_TMP/drift" || exit 1
         cp "$CASE_TMP/drift" "$SBD_CONFIG" || exit 1
         t_sync_config

@@ -31,7 +31,7 @@ ws_contract() {
     for profile in vmess_ws vless_ws; do
         t_entry_add "$profile"
         t_run 0 t_classic_uri
-        t_assert 'CDN 源站没有 TLS 和请求 Host 匹配伪字段' jq -e '.inbounds[0]|(has("tls")|not) and .transport.type=="ws" and (.transport|has("headers")|not)' "$SBD_CONFIG"
+        t_assert 'CDN 源站使用早期数据头且没有 TLS、max_early_data 和 Host 伪字段' jq -e '.inbounds[0]|(has("tls")|not) and .transport.type=="ws" and .transport.early_data_header_name=="Sec-WebSocket-Protocol" and (.transport|has("max_early_data")|not) and (.transport|has("headers")|not)' "$SBD_CONFIG"
         t_assert '不生成无用证书材料' test -z "$(find "$SBD_CERT_DIR" -mindepth 1 -maxdepth 1 -print -quit)"
         t_assert '优选地址、前端和回源事实独立' jq -e '.nodes[0]|.client.server=="2001:db8::10" and .client.server_port==443 and .ingress.origin_port!=443 and .ingress.host=="cdn.example.com"' "$SBD_REGISTRY"
         t_assert 'VMess AEAD 或 VLESS 无 flow 均为原生字段' jq -e '.inbounds[0]|if .type=="vmess" then (.users[0].alterId // 0)==0 else (.users[0]|has("flow")|not) end' "$SBD_CONFIG"

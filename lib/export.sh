@@ -134,7 +134,8 @@ sbd_share_ws() {
     jq -e '(.client.transport|keys-["type","path","headers"]|length)==0 and
         (.client.transport.headers|keys-["Host"]|length)==0' "$node" >/dev/null || { _error 'URI 不能完整表达额外 WS 参数或请求头，保留旧输出'; return 1; }
     query=$(sbd_share_tls_query "$node" "$type") || return 1
-    query=$(jq --slurpfile node "$node" --arg type "$type" '. + {type:"ws",security:"tls",host:$node[0].ingress.host,path:$node[0].client.transport.path,
+    query=$(jq --slurpfile node "$node" --arg type "$type" --arg ed "$SBD_WS_EARLY_DATA" '. + {type:"ws",security:"tls",host:$node[0].ingress.host,
+        path:($node[0].client.transport.path + "?ed=" + $ed),
         encryption:(if $type=="vmess" then "auto" else "none" end)}' <<< "$query") || return 1
     sbd_share_uuid_emit "$node" "$type" "$query"
 }
