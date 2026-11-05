@@ -76,7 +76,7 @@ sbd_adopt_menu() {
         profile=$(jq -r .type <<< "$node") || return 1
         if [[ "$(jq -r '.transport.type // empty' <<< "$node")" = ws ]]; then
             while true; do sbd_entry_host_prompt 'CDN Host/SNI' || return $?; host="$SBD_REPLY"; [[ "$(sbd_tls_identity "$host")" = DNS:* ]] && break; _error '须填域名'; done
-            sbd_entry_number_prompt '提供商回源映射端口（仅登记）' 1 65535 || return $?; origin="$SBD_REPLY"
+            origin=$(jq -er '.listen_port' <<< "$node") || return 1
             facts=$(jq --arg host "$host" --argjson origin "$origin" '.cdn={host:$host,origin_port:$origin}' <<< "$facts") || return 1
         elif [[ "$(jq -r '.tls.reality.enabled // false' <<< "$node")" = true ]]; then
             jq '.tls.reality.short_id' <<< "$node" || return 1

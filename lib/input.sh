@@ -213,15 +213,27 @@ sbd_ui_menu() {
 sbd_ui_prompt() {
     # 首个字段与上文隔一行，连续字段紧排；对齐 xray-deploy 的紧凑向导。
     [[ "${SBD_UI_AFTER_PROMPT:-false}" = true ]] || printf '\n' >&2
-    printf '  %s: ' "$1" >&2
+    SBD_UI_PROMPT="  $1: "
     SBD_UI_AFTER_PROMPT=true
 }
 
-# 读取一行到 SBD_REPLY：字段提示紧排后行尾换行由终端回显提供，重定向输入没有回显，需补一个换行。
+sbd_ui_readline_utf8() {
+    local locale="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"
+    locale="${locale,,}"
+    [[ "$locale" = *utf-8* || "$locale" = *utf8* ]]
+}
+
+# 读取一行到 SBD_REPLY：终端下由 readline 带着提示一起重绘，避免长中文提示换行后错位残留；
+# 非 UTF-8 locale 或重定向输入退回普通 read，提示仍由本函数补印。
 sbd_ui_read_line() {
     local rc=0
-    IFS= read -e -r SBD_REPLY || rc=$?
-    [[ -t 0 ]] || printf '\n' >&2
+    if [[ -t 0 ]] && sbd_ui_readline_utf8; then
+        IFS= read -e -r -p "${SBD_UI_PROMPT:-}" SBD_REPLY || rc=$?
+    else
+        [[ -z "${SBD_UI_PROMPT:-}" ]] || printf '%s' "$SBD_UI_PROMPT" >&2
+        IFS= read -r SBD_REPLY || rc=$?
+        [[ -t 0 ]] || printf '\n' >&2
+    fi
     return "$rc"
 }
 
@@ -257,6 +269,7 @@ sbd_read_secret() {
     SBD_REPLY=''
     while true; do
         sbd_ui_prompt "$label（不回显）"
+        printf '%s' "${SBD_UI_PROMPT:-}" >&2
         if ! IFS= read -rs SBD_REPLY; then
             printf '\n' >&2
             sbd_info '输入结束，已取消'
@@ -275,6 +288,7 @@ sbd_read_optional() {
     sbd_ui_prompt "$1"
     SBD_REPLY=''
     if [[ "$secret" = true ]]; then
+        printf '%s' "${SBD_UI_PROMPT:-}" >&2
         IFS= read -rs SBD_REPLY || rc=$?
         printf '\n' >&2
     else

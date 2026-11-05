@@ -123,6 +123,7 @@ sbd_outbound_read_tag() {
     fi
     if [[ "$SBD_OUTBOUND_PREFETCH_SET" = true ]]; then
         sbd_ui_prompt "$prompt"
+        printf '%s' "${SBD_UI_PROMPT:-}" >&2
         SBD_REPLY="${SBD_OUTBOUND_PREFETCH%$'\r'}"
         SBD_OUTBOUND_PREFETCH=''
         SBD_OUTBOUND_PREFETCH_SET=false

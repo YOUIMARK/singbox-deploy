@@ -802,7 +802,7 @@ sbd_entry_cdn_prompt() {
         [[ "$(sbd_tls_identity "$host")" = DNS:* ]] && break
         _error 'CDN Host 必须填写域名，不能用 IP'
     done
-    sbd_entry_number_prompt '提供商回源 TCP 映射端口（仅记录，不自动改转发）' 1 65535 "$(jq -r --argjson port "$listen_port" '.origin_port // $port' <<< "$defaults")" || return $?; origin="$SBD_REPLY"
+    origin=$(jq -r --argjson port "$listen_port" '.origin_port // $port' <<< "$defaults") || return 1
     sbd_entry_host_prompt 'CDN 优选域名/IP' "$(jq -r --arg host "$host" '.server // $host' <<< "$defaults")" || return $?; server="$SBD_REPLY"
     sbd_entry_number_prompt 'CDN 前端端口' 1 65535 "$(jq -r '.server_port // 443' <<< "$defaults")" || return $?; port="$SBD_REPLY"
     default_path=$(jq -r '.path // empty' <<< "$defaults") || return 1

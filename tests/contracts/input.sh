@@ -24,8 +24,13 @@ eof_cancel() {
     t_run 2 sbd_read_integer 端口 1 65535 <<< '不是端口'
     t_contains "$CASE_TMP/output" '已取消'
 }
+prompt_once() {
+    sbd_read_required 字段 > "$CASE_TMP/prompt" 2>&1 <<< '值' || exit 1
+    t_assert '重定向输入只打印一次字段提示' test "$(grep -Fc -- '  字段: ' "$CASE_TMP/prompt")" = 1
+}
 t_case '十进制规范化' numbers
 t_case '拒绝溢出和表达式' rejected
 t_case '字段错误只重问当前字段' retry_field
 t_case '必答 EOF 取消' eof_cancel
+t_case '字段提示只输出一次' prompt_once
 t_finish
