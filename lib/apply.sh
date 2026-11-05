@@ -443,8 +443,9 @@ sbd_migrate_legacy_layout_locked() {
     fi
     backup=$(mktemp -d "$SBD_WORK/legacy-layout.XXXXXX") || { sbd_layout_stage_remove "$stage"; return 1; }
     if [[ "$migrate_config" = true ]]; then
-        if ! sbd_atomic_file "$stage/config.json" "$SBD_CONFIG" ||
-            ! sbd_atomic_file "$stage/schema.json" "$SBD_SCHEMA"; then
+        # config.json is the marker for the new layout; publish it only after its Schema.
+        if ! sbd_atomic_file "$stage/schema.json" "$SBD_SCHEMA" ||
+            ! sbd_atomic_file "$stage/config.json" "$SBD_CONFIG"; then
             sbd_layout_stage_remove "$stage"
             return 1
         fi

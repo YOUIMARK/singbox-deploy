@@ -75,6 +75,21 @@ migration_validation_failure() {
     t_assert '失败不重写服务' cmp -s "$CASE_TMP/etc/service" "$CASE_TMP/old-service"
 }
 
+migration_schema_publish_failure() {
+    m_migration_fixture
+    cp "$ROOT/tests/fixtures/valid.json" "$SBD_LEGACY_CONFIG" || exit 1
+    local definition
+    definition=$(declare -f sbd_atomic_file) || exit 1
+    eval "${definition/sbd_atomic_file/sbd_atomic_file_original}"
+    sbd_atomic_file() {
+        [[ "$2" != "$SBD_SCHEMA" ]] || return 1
+        sbd_atomic_file_original "$@"
+    }
+    t_run 1 sbd_migrate_legacy_layout
+    t_assert 'Schema 发布失败时不创建新布局标记' test ! -e "$SBD_CONFIG"
+    t_assert 'Schema 发布失败时保留旧配置' test -s "$SBD_LEGACY_CONFIG"
+}
+
 migration_cleanup_broken_live() {
     m_migration_fixture
     rm "$CASE_TMP/etc/service" || exit 1
@@ -104,6 +119,7 @@ t_case '旧根配置迁移为 confs 单配置并切换服务' migration_success
 t_case '已是单配置时迁移为空操作' migration_already_single
 t_case '已有单配置时只归档旧布局残留' migration_cleanup_only
 t_case '旧配置校验失败时保持原布局' migration_validation_failure
+t_case 'Schema 发布失败时不留下不完整的新布局' migration_schema_publish_failure
 t_case '清理旧残留不依赖当前配置可校验' migration_cleanup_broken_live
 t_case '只有旧残留没有配置源时保留原文件' migration_no_source
 t_finish
