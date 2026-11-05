@@ -766,12 +766,20 @@ sbd_entry_tls_prompt() {
 }
 
 sbd_entry_uuid_prompt() {
-    local value
+    local value generated
     while true; do
-        sbd_read_optional 'UUID（留空由核心随机生成，不回显）' true || return $?
+        generated=false
+        sbd_read_optional 'UUID（留空由核心随机生成）' || return $?
         value="$SBD_REPLY"
-        if [[ -z "$value" ]]; then value=$("$SBD_BINARY" generate uuid) || { _error '核心生成 UUID 失败'; return 1; }; fi
-        if value=$(sbd_entry_uuid "$value"); then SBD_REPLY="$value"; return 0; fi
+        if [[ -z "$value" ]]; then
+            value=$("$SBD_BINARY" generate uuid) || { _error '核心生成 UUID 失败'; return 1; }
+            generated=true
+        fi
+        if value=$(sbd_entry_uuid "$value"); then
+            SBD_REPLY="$value"
+            [[ "$generated" != true ]] || sbd_info "随机 UUID: $SBD_REPLY"
+            return 0
+        fi
     done
 }
 
