@@ -120,7 +120,7 @@ sbd_service_restore() {
 
 sbd_logrotate_file() { printf '/etc/logrotate.d/singbox-deploy\n'; }
 
-sbd_crond_service_file() { printf '/etc/init.d/crond\n'; }
+sbd_openrc_service_file() { printf '/etc/init.d/%s\n' "$1"; }
 
 sbd_tree_compare() (
     local source="$1" copy="$2" path rel
@@ -325,22 +325,29 @@ PY
 }
 
 sbd_engine_logrotate_ready() {
-    local family crond
+    local family crond syslog hostname devfs path
     family=$(sbd_os) || return 1
-    crond=$(sbd_crond_service_file) || return 1
+    [[ "$family" = alpine ]] || { _error 'OpenRC 日志轮换仅支持 Alpine'; return 1; }
+    crond=$(sbd_openrc_service_file crond) || return 1
+    syslog=$(sbd_openrc_service_file syslog) || return 1
+    hostname=$(sbd_openrc_service_file hostname) || return 1
+    devfs=$(sbd_openrc_service_file devfs) || return 1
     if ! command -v logrotate >/dev/null 2>&1; then
-        [[ "$family" = alpine ]] || { _error 'OpenRC 日志轮换依赖 logrotate'; return 1; }
         apk add --no-cache logrotate || { _error '安装 logrotate 失败'; return 1; }
         command -v logrotate >/dev/null 2>&1 || { _error '安装后仍缺 logrotate'; return 1; }
     fi
     if [[ ! -e "$crond" ]]; then
-        [[ "$family" = alpine ]] || { _error '日志日常轮换缺少 crond 服务'; return 1; }
         apk add --no-cache busybox-openrc || { _error '安装 busybox-openrc 失败'; return 1; }
-        [[ -e "$crond" ]] || { _error '安装后仍缺 crond 服务'; return 1; }
     fi
-    if ! rc-service crond status >/dev/null 2>&1; then
-        rc-service crond start || { _error '日志日常轮换所需 crond 启动失败'; return 1; }
+    # 精简 Alpine 可能裁掉 openrc/busybox-openrc 的 init 脚本，先从包内恢复。
+    if [[ ! -e "$hostname" || ! -e "$devfs" || ! -e "$syslog" || ! -e "$crond" ]]; then
+        apk fix openrc busybox-openrc || { _error '修复 OpenRC 基础服务失败'; return 1; }
     fi
+    for path in "$hostname" "$devfs" "$syslog" "$crond"; do
+        [[ -e "$path" ]] || { _error "修复后仍缺 OpenRC 服务: $path"; return 1; }
+    done
+    rc-service syslog start || { _error '日志服务 syslog 启动失败'; return 1; }
+    rc-service crond start || { _error '日志日常轮换所需 crond 启动失败'; return 1; }
     rc-update add crond default || { _error 'crond 自启设置失败'; return 1; }
     rc-service crond status >/dev/null 2>&1 || { _error '无法确认 crond 运行'; return 1; }
 }
