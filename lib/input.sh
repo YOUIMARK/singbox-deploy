@@ -220,7 +220,7 @@ sbd_ui_prompt() {
 # 读取一行到 SBD_REPLY：字段提示紧排后行尾换行由终端回显提供，重定向输入没有回显，需补一个换行。
 sbd_ui_read_line() {
     local rc=0
-    IFS= read -r SBD_REPLY || rc=$?
+    IFS= read -e -r SBD_REPLY || rc=$?
     [[ -t 0 ]] || printf '\n' >&2
     return "$rc"
 }
