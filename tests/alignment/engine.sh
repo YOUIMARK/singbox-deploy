@@ -57,7 +57,9 @@ e_fixture() {
     }
     rc-update() {
         printf '%s\n' "$*" >> "$CASE_TMP/actions"
-        case "$1" in
+        local action="$1"
+        [[ "$action" != -q ]] || action="$2"
+        case "$action" in
             show) if [[ "$(cat "$CASE_TMP/enabled")" = enabled ]]; then printf '%s | default\n' "$SBD_SERVICE"; fi ;;
             add) printf 'enabled\n' > "$CASE_TMP/enabled" ;;
             del) printf 'disabled\n' > "$CASE_TMP/enabled" ;;
@@ -203,6 +205,8 @@ logrotate_ready_contract() {
     t_run 0 sbd_engine_logrotate_ready
     t_absent "$CASE_TMP/actions" 'add --no-cache busybox-openrc'
     t_absent "$CASE_TMP/actions" 'fix openrc busybox-openrc'
+    t_absent "$CASE_TMP/actions" 'syslog start'
+    t_absent "$CASE_TMP/actions" 'crond start'
 }
 t_case '稳定版与 amd64/arm64 默认-musl 映射' asset_contract
 t_case '完整发行包解压与版本实测' unpack_contract

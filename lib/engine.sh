@@ -346,9 +346,13 @@ sbd_engine_logrotate_ready() {
     for path in "$hostname" "$devfs" "$syslog" "$crond"; do
         [[ -e "$path" ]] || { _error "修复后仍缺 OpenRC 服务: $path"; return 1; }
     done
-    rc-service syslog start || { _error '日志服务 syslog 启动失败'; return 1; }
-    rc-service crond start || { _error '日志日常轮换所需 crond 启动失败'; return 1; }
-    rc-update add crond default || { _error 'crond 自启设置失败'; return 1; }
+    if ! rc-service syslog status >/dev/null 2>&1; then
+        rc-service syslog start || { _error '日志服务 syslog 启动失败'; return 1; }
+    fi
+    if ! rc-service crond status >/dev/null 2>&1; then
+        rc-service crond start || { _error '日志日常轮换所需 crond 启动失败'; return 1; }
+    fi
+    rc-update -q add crond default || { _error 'crond 自启设置失败'; return 1; }
     rc-service crond status >/dev/null 2>&1 || { _error '无法确认 crond 运行'; return 1; }
 }
 
