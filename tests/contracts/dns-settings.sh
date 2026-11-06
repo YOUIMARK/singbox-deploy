@@ -57,7 +57,6 @@ preserve_config() {
     t_run 0 sbd_apply sbd_resolver_default strategy prefer_ipv6
     jq '.route.default_domain_resolver={server:"system",strategy:"ipv4_only"} | .dns.reverse_mapping=true' "$SBD_CONFIG" > "$CASE_TMP/extra.json" || exit 1
     cp "$CASE_TMP/extra.json" "$SBD_CONFIG" || exit 1
-    t_sync_config
     t_entry_save
     t_run 0 sbd_apply sbd_resolver_switch https://dns.google/dns-query
     t_assert '旧服务器、DNS/route 规则和高级字段不丢失' python3 - "$ENTRY_SAVED/config" "$SBD_CONFIG" <<'PY'
@@ -90,14 +89,12 @@ fixed_tag_collision() {
     t_run 0 sbd_apply sbd_resolver_server delete alidns
     jq '.dns.servers += [{type:"udp",tag:"google",server:"192.0.2.54",server_port:53}]' "$SBD_CONFIG" > "$CASE_TMP/config" || exit 1
     cp "$CASE_TMP/config" "$SBD_CONFIG" || exit 1
-    t_sync_config
     t_entry_save
     t_run 1 sbd_apply sbd_resolver_switch https://dns.google/dns-query
     t_contains "$CASE_TMP/output" '预设 tag google 已被不同配置占用'
     t_entry_unchanged
     jq '(.dns.servers[]|select(.tag=="system"))={type:"udp",tag:"system",server:"192.0.2.55",server_port:53}' "$SBD_CONFIG" > "$CASE_TMP/config" || exit 1
     cp "$CASE_TMP/config" "$SBD_CONFIG" || exit 1
-    t_sync_config
     t_entry_save
     t_run 1 sbd_apply sbd_resolver_switch local
     t_contains "$CASE_TMP/output" '预设 tag system 已被不同配置占用'

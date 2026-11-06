@@ -41,14 +41,14 @@ def build(root, mode):
     root = Path(root).resolve()
     files, trees = set(), set()
     app = root / "app"
-    for rel in (app / "manifest.txt").read_text().splitlines():
+    for rel in (app / "manifest.txt").read_text(encoding="utf-8").splitlines():
         p = app / rel
         if p.is_absolute() and p.resolve().is_relative_to(app.resolve()) and ".." not in Path(rel).parts:
             files.add(str(p))
         else:
             raise ValueError("发布清单越界")
     inventory = root / "bin/.sbd-files"
-    members = inventory.read_text().splitlines() if inventory.is_file() else ["sing-box", "libcronet.so", "LICENSE"]
+    members = inventory.read_text(encoding="utf-8").splitlines() if inventory.is_file() else ["sing-box", "libcronet.so", "LICENSE"]
     for rel in members + [".sbd-files"]:
         p = root / "bin" / rel
         if p.resolve().is_relative_to((root / "bin").resolve()) and ".." not in Path(rel).parts:
@@ -59,8 +59,8 @@ def build(root, mode):
         config_path = root / "confs/config.json"
         if not config_path.is_file():
             config_path = root / "config.json"
-        config = json.loads(config_path.read_text()) if config_path.is_file() else {}
-        registry = json.loads((root / "state/registry.json").read_text())
+        config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
+        registry = json.loads((root / "state/registry.json").read_text(encoding="utf-8"))
         for name in (
             "confs/config.json",
             "confs/schema.json",
@@ -96,7 +96,7 @@ def build(root, mode):
         for name in ("active", "previous"):
             directory = root / "work" / name
             if directory.is_dir():
-                journal = json.loads((directory / "journal.json").read_text())
+                journal = json.loads((directory / "journal.json").read_text(encoding="utf-8"))
                 if journal.get("phase") != "accepted":
                     raise ValueError("未收敛事务不能卸载")
                 for key in ("created_materials", "retired_materials"):
@@ -114,7 +114,7 @@ def main():
         if sys.argv[1] == "plan":
             print(json.dumps(build(sys.argv[2], sys.argv[3]), ensure_ascii=False))
         else:
-            plan = json.loads(Path(sys.argv[2]).read_text())
+            plan = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
             root = Path(plan["root"]).resolve()
             for group in ("trees", "files"):
                 for name in plan[group]:

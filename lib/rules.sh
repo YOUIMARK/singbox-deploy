@@ -29,6 +29,7 @@ sbd_policy_edit() {
 
 sbd_policy_adopt() {
     local stage="$1" area="$2" id="$3" position="${4:--1}" request old=''
+    sbd_policy_begin "$stage" || return 1
     case "$area" in route_rules|dns_rules|dns_servers|rule_sets|endpoints|connectors) ;; *) _error '未知接管区域'; return 1 ;; esac
     if [[ "$area" = *_rules && -z "$id" ]]; then id=$(openssl rand -hex 8) || return 1; id="rule.$id"; fi
     sbd_tls_tag "$id" || return 1
@@ -81,7 +82,7 @@ sbd_rule_set_list() {
     local config="$1" count
     count=$(jq '(.route.rule_set // []) | length' "$config") || return 1
     if [[ "$count" = 0 ]]; then
-        printf '  （暂无规则集；可用 [4] 添加）\n'
+        printf '  （暂无规则集；可用 [6] 添加）\n'
         return 0
     fi
     jq -r '(.route.rule_set // [])[] |
@@ -480,7 +481,7 @@ sbd_route_rule_set_prompt() {
     local config="$1" values count raw i tags
     values=$(sbd_route_rule_set_values "$config") || return 1
     count=$(jq 'length' <<< "$values") || return 1
-    (( count > 0 )) || { _error "当前没有规则集；请先用 [4] 添加规则集，或直接编辑 $SBD_CONFIG"; return 1; }
+    (( count > 0 )) || { _error "当前没有规则集；请先用 [6] 添加规则集，或直接编辑 $SBD_CONFIG"; return 1; }
     for ((i=0; i<count; i++)); do
         sbd_ui_rows "[$((i+1))] $(jq -r --argjson i "$i" '.[$i]' <<< "$values")" || return 1
     done

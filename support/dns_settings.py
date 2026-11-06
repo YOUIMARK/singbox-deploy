@@ -123,11 +123,15 @@ def ensure_server(config, registry, value, fixed_tag=None):
         if found:
             if len(found) == 1 and {k: v for k, v in found[0].items() if k != "tag"} == value:
                 return fixed_tag
-            # 旧面板的 Cloudflare IP 预设仍是同一提供商，不改写已有对象或引用。
-            if fixed_tag == "cloudflare" and len(found) == 1 and found[0] == dict(
-                parse_address("https://1.1.1.1/dns-query"), tag="cloudflare"
-            ) and value == dict(parse_address("https://cloudflare-dns.com/dns-query"), domain_resolver="system"):
-                return fixed_tag
+            # Cloudflare 的 IP 与域名两种预设形态是同一提供商，不改写已有对象或引用。
+            if fixed_tag == "cloudflare" and len(found) == 1:
+                forms = (
+                    dict(parse_address("https://1.1.1.1/dns-query")),
+                    dict(parse_address("https://cloudflare-dns.com/dns-query"), domain_resolver="system"),
+                )
+                existing = {k: v for k, v in found[0].items() if k != "tag"}
+                if existing in forms and value in forms:
+                    return fixed_tag
             raise ValueError(f"预设 tag {fixed_tag} 已被不同配置占用；请先在 config.json 中处理，不会覆盖")
         policy.edit(config, registry, {
             "area": "dns_servers", "action": "add", "id": fixed_tag, "value": dict(value, tag=fixed_tag),
@@ -237,12 +241,16 @@ def switch(config, registry, address):
             policy.edit(config, registry, {"area": "dns_rules", "action": "add", "id": f"{RACE_GROUP}.{index}",
                                           "group": RACE_GROUP, "value": rule})
         # 显式拨号解析器会绕过 DNS 路由；代理目标先通过原生 resolve 动作解析。
-        if {"action": "resolve"} not in route.get("rules", []):
+        if not has_resolve_rule(route.get("rules", [])):
             policy.edit(config, registry, {"area": "route_rules", "action": "add", "id": "dns.default.resolve",
                                           "value": {"action": "resolve"}, "position": 0})
     removed = remove_unused_servers(config, registry, set(tags))
     policy.references(config)
     return removed
+
+
+def has_resolve_rule(rules):
+    return any(isinstance(rule, dict) and rule.get("action") == "resolve" for rule in rules)
 
 
 def unchanged(config, registry, address):
@@ -280,7 +288,7 @@ def summary(config):
     if len(tags) > 1 and race_indexes(rules, expected) is not None:
         mapped = {server.get("tag"): server for server in servers}
         result["address"] = ", ".join(server_address(mapped.get(tag, {})) for tag in tags)
-        result["race"] = "开启" if {"action": "resolve"} in config.get("route", {}).get("rules", []) else "仅 DNS 查询（代理目标未接入）"
+        result["race"] = "开启" if has_resolve_rule(config.get("route", {}).get("rules", [])) else "仅 DNS 查询（代理目标未接入）"
     else:
         result["race"] = "自定义规则" if any(rule.get("race") for rule in policy.objects(rules)) else "关闭"
     # 输出到终端前去掉配置文本中的控制字符，不执行任何终端转义。
