@@ -231,13 +231,39 @@ RESOLVE_ACTION_FIELDS = {
 }
 
 
+# 非最终动作不会终止规则遍历（官方文档：hijack-dns 为非最终动作，route/reject 才是
+# 最终动作）；缺省动作是最终动作 route。
+NON_FINAL_ACTIONS = {"sniff", "resolve", "hijack-dns", "route-options"}
+
+# Rule 中表示匹配条件或逻辑结构的字段；带任意一个就不是“无条件覆盖全部流量”。
+ROUTE_MATCH_FIELDS = {
+    "type", "mode", "rules", "invert",
+    "inbound", "ip_version", "network", "auth_user", "protocol", "client",
+    "domain", "domain_suffix", "domain_keyword", "domain_regex",
+    "source_ip_cidr", "source_ip_is_private",
+    "source_port", "source_port_range", "source_hostname", "source_mac_address",
+    "port", "port_range", "process_name", "process_path", "process_path_regex",
+    "package_name", "package_name_regex", "user", "user_id", "clash_mode",
+    "ip_cidr", "ip_is_private", "rule_set", "rule_set_ip_cidr_match_source",
+    "wifi_ssid", "wifi_bssid", "network_type", "network_is_expensive",
+    "network_is_constrained", "network_interface_address", "interface_address",
+    "default_interface_address", "preferred_by", "dns_search_domain",
+    "dns_server_address",
+}
+
+
 def has_global_resolve_rule(rules):
-    return any(
-        isinstance(rule, dict)
-        and rule.get("action") == "resolve"
-        and set(rule) <= RESOLVE_ACTION_FIELDS
-        for rule in rules
-    )
+    """全局 resolve 必须无匹配条件，且排在所有无条件的最终动作之前。"""
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        if rule.get("action") == "resolve" and set(rule) <= RESOLVE_ACTION_FIELDS:
+            return True
+        if rule.get("action", "route") not in NON_FINAL_ACTIONS and not (
+            set(rule) & ROUTE_MATCH_FIELDS
+        ):
+            return False
+    return False
 
 
 def switch(config, registry, address):

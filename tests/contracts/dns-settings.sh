@@ -182,6 +182,27 @@ conditional_resolve_rule() {
         *) printf 'summary 把条件性 resolve 当成全局规则: %s\n' "$summary"; exit 1 ;;
     esac
 }
+resolve_order_contract() {
+    t_seed
+    t_assert '起始没有路由规则' jq -e '(.route.rules // [])|length==0' "$SBD_CONFIG"
+    t_patch_config '.route.rules=[{action:"route",outbound:"direct"},{action:"resolve"}]'
+    t_run 0 sbd_apply sbd_resolver_switch 'https://dns.google/dns-query,https://1.1.1.1/dns-query'
+    t_assert '全局 resolve 被插到最终动作之前' jq -e '.route.rules[0]|.action=="resolve" and (keys|length)==1' "$SBD_CONFIG"
+    t_assert '原有最终动作被保留在 resolve 之后' jq -e '.route.rules[1]|(.action // "route")=="route" and .outbound=="direct"' "$SBD_CONFIG"
+    t_assert '原有的无条件 resolve 仍在末尾' jq -e '.route.rules[2].action=="resolve"' "$SBD_CONFIG"
+    summary=$(python3 "$SBD_APP/support/dns_settings.py" summary "$SBD_CONFIG") || exit 1
+    case "$summary" in
+        *'开启'*) ;;
+        *) printf 'summary 未识别插到最前的全局 resolve: %s\n' "$summary"; exit 1 ;;
+    esac
+    # 再让无条件的最终动作跑到最前面，被它挡住的 resolve 不算有效
+    t_patch_config '.route.rules = [{action:"route",outbound:"direct"}] + .route.rules'
+    summary=$(python3 "$SBD_APP/support/dns_settings.py" summary "$SBD_CONFIG") || exit 1
+    case "$summary" in
+        *'仅 DNS 查询'*) ;;
+        *) printf 'summary 忽略了最终动作对 resolve 的阻断: %s\n' "$summary"; exit 1 ;;
+    esac
+}
 t_case 'DNS 完整地址解析、IPv6/自定义端口/path 与错误拒绝' address_parser
 t_case '五种常用预设原生校验、独立 bootstrap 与反复切换复用' presets_and_reuse
 t_case '六种自定义协议可真正提交并保留端口和 path' custom_types
@@ -189,6 +210,7 @@ t_case '切换保留规则/上游/策略/拨号解析器选项/导出与托管�
 t_case '固定 tag 被托管或自定义不同配置占用时失败并保留旧事实' fixed_tag_collision
 t_case '默认与预设切换不启用竞速，显式竞速组仍保留' no_implicit_race
 t_case '条件性 resolve 规则不当作全局规则，summary 口径一致' conditional_resolve_rule
+t_case '全局 resolve 必须排在无条件的最终动作之前' resolve_order_contract
 t_case '内置预设按 tag 清理并保留被引用上游' preset_cleanup
 t_case '首页预设、自定义/策略/恢复默认与查看配置实际导航提交' menu_flow
 t_case 'state 提交失败整组回滚且不假报成功' state_failure
