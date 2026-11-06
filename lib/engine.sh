@@ -367,7 +367,7 @@ sbd_engine_commit_locked() {
     if [[ -L "$service" ]] || { [[ "$backend" = openrc ]] && [[ -L "$logrotate" ]]; }; then _error '服务或日志轮换路径是外部链接，拒绝覆盖'; return 1; fi
     mkdir -p -- "$stage" || { _error '创建核心事务候选失败'; return 1; }
     trap sbd_apply_signal INT TERM HUP
-    sbd_config_stage_current "$stage/config.json" "$candidate/engine/sing-box" || { _error '暂存旧配置失败'; sbd_work_remove "$dir"; return 1; }
+    sbd_config_stage_current "$stage/config.json" || { _error '暂存旧配置失败'; sbd_work_remove "$dir"; return 1; }
     if ! version=$(cat "$candidate/version") || ! asset=$(cat "$candidate/asset") ||
         ! old_revision=$(jq -er '.revision' "$SBD_STATE") || ! old_revision=$(sbd_integer "$old_revision" 0 999999998); then
         _error '候选版本或管理器状态不可读'; sbd_work_remove "$dir"; return 1
@@ -446,7 +446,7 @@ sbd_engine_control_locked() {
     local action="$1" before after
     sbd_recover_locked || return 1
     case "$action" in
-        start|restart)
+        restart)
             sbd_check_config || return 1
             # 运行态未知只影响失败后的原态恢复，不能阻止用户主动重启。
             before=$(sbd_service_state 2>/dev/null) || before=''

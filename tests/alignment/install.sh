@@ -5,17 +5,19 @@
 . "$ROOT/install.sh"
 
 fresh_install() {
+    local version
     t_fresh empty
+    version=$(cat "$ROOT/VERSION") || exit 1
     t_run 0 sbd_install_publish "$ROOT" "$SBD_ROOT" "$SBD_COMMAND" "$SBD_LOCK"
     t_assert 'sd 指向部署入口' test "$(readlink "$SBD_COMMAND")" = "$SBD_APP/singbox-deploy.sh"
     t_assert '入口有执行位' test -x "$SBD_APP/singbox-deploy.sh"
-    t_assert '管理器事实已提交' jq -e '.manager_version=="0.1.0" and .revision==0' "$SBD_STATE"
+    t_assert '管理器事实已提交' jq -e --arg version "$version" '.manager_version==$version and .revision==0' "$SBD_STATE"
     t_assert '空登记表' jq -e '.nodes==[]' "$SBD_REGISTRY"
     t_assert '不自动创建配置' test ! -e "$SBD_CONFIG"
     t_assert '不自动创建旧布局配置' test ! -e "$SBD_LEGACY_CONFIG" -a ! -e "$SBD_LEGACY_SCHEMA"
     t_assert '不自动装核心' test ! -e "$SBD_ROOT/bin/sing-box"
     t_run 0 "$SBD_COMMAND" --version
-    t_contains "$CASE_TMP/output" 0.1.0
+    t_contains "$CASE_TMP/output" "$version"
 }
 preserve_config() {
     t_fresh
@@ -49,12 +51,14 @@ state_failure() {
     t_assert '普通失败已收尾' test ! -e "$SBD_WORK/active"
 }
 crashed_install() {
+    local version
     t_fresh
+    version=$(cat "$ROOT/VERSION") || exit 1
     printf '0.0.9\n' > "$SBD_APP/VERSION" || exit 1
     cp "$SBD_STATE" "$CASE_TMP/old-state" || exit 1
     mv() { if [[ "${!#}" = "$SBD_STATE" ]]; then kill -KILL "$BASHPID"; fi; command mv "$@"; }
     t_run 137 sbd_install_publish "$ROOT" "$SBD_ROOT" "$SBD_COMMAND" "$SBD_LOCK"
-    t_contains "$SBD_APP/VERSION" 0.1.0
+    t_contains "$SBD_APP/VERSION" "$version"
     unset -f mv
     sbd_service_restore() { return 1; }
     t_run 0 sbd_recover
@@ -71,6 +75,7 @@ main_local_install() {
     t_fresh empty
     # 只替换权限谓词和目标路径；文件发布、复核与恢复运行真实代码。
     sbd_install_require_root() { return 0; }
+    sbd_dependencies() { return 0; }
     sbd_install_target() {
         case "$1" in
             root) printf '%s/root\n' "$CASE_TMP" ;;

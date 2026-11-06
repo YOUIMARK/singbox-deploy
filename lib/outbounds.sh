@@ -124,6 +124,7 @@ sbd_outbound_read_tag() {
     if [[ "$SBD_OUTBOUND_PREFETCH_SET" = true ]]; then
         sbd_ui_prompt "$prompt"
         printf '%s' "${SBD_UI_PROMPT:-}" >&2
+        printf '\n' >&2
         SBD_REPLY="${SBD_OUTBOUND_PREFETCH%$'\r'}"
         SBD_OUTBOUND_PREFETCH=''
         SBD_OUTBOUND_PREFETCH_SET=false
@@ -214,7 +215,7 @@ sbd_outbound_add_prompt() {
         SBD_OUTBOUND_ACCEPTED+=("$tag")
     done
 
-    tags_json=$(jq -n '$ARGS.positional' --args "${tags[@]}") || {
+    tags_json=$(jq -n --args '$ARGS.positional' -- "${tags[@]}") || {
         _error '构造出口 tag 列表失败'
         return 1
     }

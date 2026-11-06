@@ -32,7 +32,7 @@ format_only_manual() {
     cp "$CASE_TMP/pretty.json" "$SBD_CONFIG" || exit 1
     t_run 0 sbd_check_config
     t_absent "$CASE_TMP/output" 'merged.json.raw'
-    t_absent "$CASE_TMP/output" '/tmp/'
+    t_absent "$CASE_TMP/output" "$SUITE_TMP"
     t_assert '检查配置不重写单配置文件' cmp -s "$CASE_TMP/pretty.json" "$SBD_CONFIG"
 }
 check_tidy_formatting() {

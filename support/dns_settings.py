@@ -123,11 +123,15 @@ def ensure_server(config, registry, value, fixed_tag=None):
         if found:
             if len(found) == 1 and {k: v for k, v in found[0].items() if k != "tag"} == value:
                 return fixed_tag
-            # 旧面板的 Cloudflare IP 预设仍是同一提供商，不改写已有对象或引用。
-            if fixed_tag == "cloudflare" and len(found) == 1 and found[0] == dict(
-                parse_address("https://1.1.1.1/dns-query"), tag="cloudflare"
-            ) and value == dict(parse_address("https://cloudflare-dns.com/dns-query"), domain_resolver="system"):
-                return fixed_tag
+            # Cloudflare 的 IP 与域名两种预设形态是同一提供商，不改写已有对象或引用。
+            if fixed_tag == "cloudflare" and len(found) == 1:
+                forms = (
+                    dict(parse_address("https://1.1.1.1/dns-query")),
+                    dict(parse_address("https://cloudflare-dns.com/dns-query"), domain_resolver="system"),
+                )
+                existing = {k: v for k, v in found[0].items() if k != "tag"}
+                if existing in forms and value in forms:
+                    return fixed_tag
             raise ValueError(f"预设 tag {fixed_tag} 已被不同配置占用；请先在 config.json 中处理，不会覆盖")
         policy.edit(config, registry, {
             "area": "dns_servers", "action": "add", "id": fixed_tag, "value": dict(value, tag=fixed_tag),
@@ -213,6 +217,55 @@ def remove_unused_servers(config, registry, selected):
     return removed
 
 
+# resolve 动作自身的参数；Rule 的其余字段都是匹配条件（sing-box 1.14 Schema 共 45 个），
+# 带任何匹配条件的 resolve 只覆盖部分流量，不能当作覆盖全部流量的全局规则。
+RESOLVE_ACTION_FIELDS = {
+    "action",
+    "server",
+    "strategy",
+    "client_subnet",
+    "disable_cache",
+    "disable_optimistic_cache",
+    "rewrite_ttl",
+    "timeout",
+}
+
+
+# 非最终动作不会终止规则遍历（官方文档：hijack-dns 为非最终动作，route/reject 才是
+# 最终动作）；缺省动作是最终动作 route。
+NON_FINAL_ACTIONS = {"sniff", "resolve", "hijack-dns", "route-options"}
+
+# Rule 中表示匹配条件或逻辑结构的字段；带任意一个就不是“无条件覆盖全部流量”。
+ROUTE_MATCH_FIELDS = {
+    "type", "mode", "rules", "invert",
+    "inbound", "ip_version", "network", "auth_user", "protocol", "client",
+    "domain", "domain_suffix", "domain_keyword", "domain_regex",
+    "source_ip_cidr", "source_ip_is_private",
+    "source_port", "source_port_range", "source_hostname", "source_mac_address",
+    "port", "port_range", "process_name", "process_path", "process_path_regex",
+    "package_name", "package_name_regex", "user", "user_id", "clash_mode",
+    "ip_cidr", "ip_is_private", "rule_set", "rule_set_ip_cidr_match_source",
+    "wifi_ssid", "wifi_bssid", "network_type", "network_is_expensive",
+    "network_is_constrained", "network_interface_address", "interface_address",
+    "default_interface_address", "preferred_by", "dns_search_domain",
+    "dns_server_address",
+}
+
+
+def has_global_resolve_rule(rules):
+    """全局 resolve 必须无匹配条件，且排在所有无条件的最终动作之前。"""
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        if rule.get("action") == "resolve" and set(rule) <= RESOLVE_ACTION_FIELDS:
+            return True
+        if rule.get("action", "route") not in NON_FINAL_ACTIONS and not (
+            set(rule) & ROUTE_MATCH_FIELDS
+        ):
+            return False
+    return False
+
+
 def switch(config, registry, address):
     policy.align(config, registry)
     selected = addresses(address) if address != "default" else [
@@ -237,7 +290,7 @@ def switch(config, registry, address):
             policy.edit(config, registry, {"area": "dns_rules", "action": "add", "id": f"{RACE_GROUP}.{index}",
                                           "group": RACE_GROUP, "value": rule})
         # 显式拨号解析器会绕过 DNS 路由；代理目标先通过原生 resolve 动作解析。
-        if {"action": "resolve"} not in route.get("rules", []):
+        if not has_global_resolve_rule(route.get("rules", [])):
             policy.edit(config, registry, {"area": "route_rules", "action": "add", "id": "dns.default.resolve",
                                           "value": {"action": "resolve"}, "position": 0})
     removed = remove_unused_servers(config, registry, set(tags))
@@ -280,7 +333,7 @@ def summary(config):
     if len(tags) > 1 and race_indexes(rules, expected) is not None:
         mapped = {server.get("tag"): server for server in servers}
         result["address"] = ", ".join(server_address(mapped.get(tag, {})) for tag in tags)
-        result["race"] = "开启" if {"action": "resolve"} in config.get("route", {}).get("rules", []) else "仅 DNS 查询（代理目标未接入）"
+        result["race"] = "开启" if has_global_resolve_rule(config.get("route", {}).get("rules", [])) else "仅 DNS 查询（代理目标未接入）"
     else:
         result["race"] = "自定义规则" if any(rule.get("race") for rule in policy.objects(rules)) else "关闭"
     # 输出到终端前去掉配置文本中的控制字符，不执行任何终端转义。

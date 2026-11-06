@@ -8,7 +8,6 @@ preserve_custom() {
     t_policy_seed
     jq '.ntp={enabled:false,server:"old.example",server_port:123,interval:"1h",detour:"direct",connect_timeout:"4s",write_to_system:true} | .log.level="error" | .route.rules=[{domain:"user.example",action:"route",outbound:"direct"}]' "$SBD_CONFIG" > "$CASE_TMP/custom" || exit 1
     cp "$CASE_TMP/custom" "$SBD_CONFIG" || exit 1
-    t_sync_config
     t_run 0 sbd_time_prompt <<< $'new.example\ny'
     t_assert '显式修改时间源，保留原端口/间隔/高级拨号和其他配置' jq -e '.ntp.server=="new.example" and .ntp.server_port==123 and .ntp.interval=="1h0m0s" and .ntp.detour=="direct" and .ntp.connect_timeout=="4s" and (.ntp.write_to_system // false)==false and .log.level=="error" and .route.rules[0].domain=="user.example"' "$SBD_CONFIG"
     t_run 0 sbd_apply sbd_time_change disable

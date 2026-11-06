@@ -90,6 +90,9 @@ sbd_entry_port() {
     skip=$(python3 - "$config" "$listen" "$port" "$network" "$exclude" <<'PY'
 import ipaddress, json, sys
 path, host, port, network, exclude = sys.argv[1:]
+def overlap(first, second):
+    a, b = ipaddress.ip_address(first), ipaddress.ip_address(second)
+    return a == b or str(a) == "::" or str(b) == "::" or (a.version == b.version and (a.is_unspecified or b.is_unspecified))
 try:
     ipaddress.ip_address(host)
     config = json.load(open(path))
@@ -104,11 +107,9 @@ try:
         if inbound.get("listen_port") != int(port) or network not in nets:
             continue
         if exclude and inbound.get("tag") == exclude:
-            same = ipaddress.ip_address(address) == ipaddress.ip_address(host)
+            same = overlap(address, host)
             continue
-        a, b = ipaddress.ip_address(address), ipaddress.ip_address(host)
-        overlaps = a == b or str(a) == "::" or str(b) == "::" or (a.version == b.version and (a.is_unspecified or b.is_unspecified))
-        if overlaps:
+        if overlap(address, host):
             raise ValueError("binding conflict")
     print("same" if same else "probe")
 except (ValueError, KeyError, TypeError):
@@ -538,7 +539,10 @@ sbd_entry_change() {
                 (if .dns?.rules? != null then .dns.rules |= rename_inbound($tag; $new_tag) else . end)
             ' "$stage/config.json") || return 1
             sbd_record_write "$stage/config.json" "$content" || return 1
-            content=$(jq --arg new_tag "$new_tag" '.inbound_tag=$new_tag' "$stage/entry-node.json") || return 1 ;;
+            content=$(jq --arg new_tag "$new_tag" --argjson port "$source" '
+                .inbound_tag=$new_tag |
+                (if .ingress?.type=="cdn" then .ingress.origin_port=$port else . end)
+            ' "$stage/entry-node.json") || return 1 ;;
         hy2)
             [[ "$(jq -r '.profile' "$stage/entry-node.json")" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
             content=$(jq --arg tag "$tag" --argjson value "$value" '(.inbounds[]|select(.tag==$tag)) |=
@@ -1027,24 +1031,6 @@ sbd_entry_change_prompt() {
 
 sbd_entries_list() {
     jq -r 'if .nodes==[] then "暂无节点，请先添加节点" else .nodes[] | "\(.id)  \(.name)  \(.profile)  \(.client.server):\(.client.server_port)" end' "$SBD_REGISTRY" || { _error '读取节点列表失败'; return 1; }
-}
-
-sbd_entries_menu() {
-    local choice rc page
-    while true; do
-        sbd_ui_menu '节点管理' '[1] 列出节点（不显示凭据）' '[2] 创建节点' '[3] 修改或删除节点' '[0] 返回'
-        page="$SBD_UI_PAGE"
-        sbd_read_integer '请选择' 0 3 || return 0; choice="$SBD_REPLY"
-        case "$choice" in
-            0) return 0 ;;
-            1) sbd_entries_list ;;
-            2) sbd_entry_create_prompt ;;
-            3) sbd_entry_change_prompt ;;
-        esac
-        rc=$?
-        [[ "$rc" = 0 || "$rc" = 2 ]] || return 1
-        sbd_ui_pause "$page"
-    done
 }
 
 sbd_entry_adopt() {

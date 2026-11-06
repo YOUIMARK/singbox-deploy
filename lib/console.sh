@@ -52,6 +52,7 @@ sbd_adopt_menu() {
         if [[ "$area" = *_rules ]]; then
             if [[ "$area" = route_rules ]]; then jq '.route.rules // []' "$SBD_CONFIG"; count=$(jq '.route.rules // []|length' "$SBD_CONFIG")
             else jq '.dns.rules // []' "$SBD_CONFIG"; count=$(jq '.dns.rules // []|length' "$SBD_CONFIG"); fi || return 1
+            (( count > 0 )) || { _error '当前配置里没有可接管的规则；请先在 [8] 分流设置中添加'; return 1; }
             sbd_entry_number_prompt '当前配置中的规则位置（1 起）' 1 "$count" || return $?; position=$((SBD_REPLY-1))
             jq --arg area "$area" '.policy[$area] // [] | map({id,position:(.index+1)})' "$SBD_REGISTRY" || return 1
             sbd_read_optional '协调时填已有管理 ID；新接管留空' || return $?; id="$SBD_REPLY"

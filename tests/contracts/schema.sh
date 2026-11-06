@@ -7,7 +7,7 @@ prepare_valid() {
     cp "$ROOT/presets/base.json" "$CASE_TMP/stage/config.json" || exit 1
     t_run 0 sbd_prepare_config "$CASE_TMP/stage"
     t_absent "$CASE_TMP/output" 'merged.json.raw'
-    t_absent "$CASE_TMP/output" '/tmp/'
+    t_absent "$CASE_TMP/output" "$SUITE_TMP"
     # $schema 是 JSON 属性名，不是 shell 变量。
     # shellcheck disable=SC2016
     t_assert '本地 schema 引用保留' jq -e '."$schema"=="./schema.json"' "$CASE_TMP/stage/config.json"

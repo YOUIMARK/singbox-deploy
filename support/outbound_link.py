@@ -179,25 +179,42 @@ def validate_host(value, label="服务器地址"):
     name = value[:-1] if value.endswith(".") else value
     if not name or len(name) > 253:
         fail("%s格式无效" % label)
+    encoded_parts = []
+    converted = False
     for part in name.split("."):
         if not part or len(part) > 63:
             fail("%s格式无效" % label)
-        try:
-            encoded = part.encode("idna").decode("ascii")
-        except UnicodeError:
-            fail("%s格式无效" % label)
+        if part.isascii():
+            encoded = part
+        else:
+            try:
+                encoded = part.encode("idna").decode("ascii")
+            except (UnicodeError, ValueError):
+                fail("%s格式无效" % label)
+            # 标准库 idna codec 是 IDNA2003，会把 ß 等字符映射成别的字符（faß.de → fass.de，
+            # 实际指向另一个域名）。解码回来不一致说明不是无损表示，明确拒绝而不是静默改名。
+            try:
+                if encoded.encode("ascii").decode("idna") != part:
+                    fail("%s的国际化写法无法无损转成 punycode，请改用 xn-- 写法" % label)
+            except UnicodeError:
+                fail("%s格式无效" % label)
+            converted = True
         if not re.fullmatch(
             r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", encoded
         ):
             fail("%s格式无效" % label)
-    return value
+        encoded_parts.append(encoded)
+    # 国际化域名按 punycode 落地：sing-box（Go）不做 IDNA 转换，UTF-8 主机名无法解析。
+    if not converted:
+        return value
+    return ".".join(encoded_parts) + ("." if value.endswith(".") else "")
 
 
 def endpoint(url, default_port=None):
     host = url.hostname
     if not host:
         fail("链接缺少服务器地址")
-    validate_host(host)
+    host = validate_host(host)
     try:
         port = url.port
     except ValueError:
@@ -269,7 +286,7 @@ def choose_sni(params, host, required=False):
         if len(set(present)) > 1:
             fail("sni/peer/servername 不一致")
         value = present[0]
-        validate_host(value, "SNI")
+        value = validate_host(value, "SNI")
         return value
     if required:
         fail("链接缺少 SNI")
@@ -365,7 +382,11 @@ def tag_value(fragment=None, fallback=None):
         return None
     if not isinstance(value, str):
         value = str(value)
-    value = decode_component(value, "tag")
+    try:
+        value = decode_component(value, "tag")
+    except LinkError:
+        # tag 只是展示名，编码不合法时省略，不否决整条链接。
+        return None
     if not valid_tag(value):
         return None
     return value
@@ -384,8 +405,7 @@ def transport_value(kind, params, server, sni):
             path = "/"
         if not path.startswith("/"):
             path = "/" + path
-        host = params.get("host") or sni or server
-        validate_host(host, "WebSocket Host")
+        host = validate_host(params.get("host") or sni or server, "WebSocket Host")
         return {"type": "ws", "path": path, "headers": {"Host": host}}
     if kind in ("http", "h2"):
         if "servicename" in params:
@@ -398,8 +418,7 @@ def transport_value(kind, params, server, sni):
             result["path"] = path
         host = params.get("host", "")
         if host:
-            validate_host(host, "HTTP/2 Host")
-            result["host"] = host
+            result["host"] = validate_host(host, "HTTP/2 Host")
         return result
     if kind == "httpupgrade":
         if "servicename" in params:
@@ -412,8 +431,7 @@ def transport_value(kind, params, server, sni):
             result["path"] = path
         host = params.get("host", "")
         if host:
-            validate_host(host, "HTTPUpgrade Host")
-            result["host"] = host
+            result["host"] = validate_host(host, "HTTPUpgrade Host")
         return result
     if kind == "grpc":
         fail("暂不支持 gRPC 传输")
@@ -765,8 +783,6 @@ def vmess_build(
 ):
     if header_type not in ("", "none"):
         fail("VMess 不支持 headerType 伪装")
-    if kind == "tcp" and header_type not in ("", "none"):
-        fail("VMess TCP 不支持额外头部伪装")
     outbound = {
         "type": "vmess",
         "server": host,
@@ -842,7 +858,7 @@ def parse_vmess_legacy(raw, fragment):
     host = data.get("add")
     if not isinstance(host, str):
         fail("VMess JSON 缺少服务器地址 add")
-    validate_host(host)
+    host = validate_host(host)
     port = int_param(
         {"port": str(data.get("port", ""))}, ("port",), "VMess 端口", 1, 65535
     )
@@ -1134,19 +1150,19 @@ def parse(link):
         link = link[1:]
     if "\r" in link or "\n" in link:
         fail("分享链接不能包含换行符")
-    if link.startswith("hysteria2://") or link.startswith("hy2://"):
-        return parse_hysteria2(link)
-    if link.startswith("anytls://"):
-        return parse_anytls(link)
-    if link.startswith("vless://"):
-        return parse_vless(link)
-    if link.startswith("vmess://"):
-        return parse_vmess(link)
-    if link.startswith("ss://"):
-        return parse_ss(link)
-    if link.startswith("socks://") or link.startswith("socks5://"):
-        return parse_socks(link)
     scheme = link.split("://", 1)[0].lower() if "://" in link else ""
+    if scheme in ("hysteria2", "hy2"):
+        return parse_hysteria2(link)
+    if scheme == "anytls":
+        return parse_anytls(link)
+    if scheme == "vless":
+        return parse_vless(link)
+    if scheme == "vmess":
+        return parse_vmess(link)
+    if scheme == "ss":
+        return parse_ss(link)
+    if scheme in ("socks", "socks5"):
+        return parse_socks(link)
     if scheme in {
         "tuic",
         "hysteria",
