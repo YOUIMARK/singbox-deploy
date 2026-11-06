@@ -217,6 +217,29 @@ def remove_unused_servers(config, registry, selected):
     return removed
 
 
+# resolve 动作自身的参数；Rule 的其余字段都是匹配条件（sing-box 1.14 Schema 共 45 个），
+# 带任何匹配条件的 resolve 只覆盖部分流量，不能当作覆盖全部流量的全局规则。
+RESOLVE_ACTION_FIELDS = {
+    "action",
+    "server",
+    "strategy",
+    "client_subnet",
+    "disable_cache",
+    "disable_optimistic_cache",
+    "rewrite_ttl",
+    "timeout",
+}
+
+
+def has_global_resolve_rule(rules):
+    return any(
+        isinstance(rule, dict)
+        and rule.get("action") == "resolve"
+        and set(rule) <= RESOLVE_ACTION_FIELDS
+        for rule in rules
+    )
+
+
 def switch(config, registry, address):
     policy.align(config, registry)
     selected = addresses(address) if address != "default" else [
@@ -241,16 +264,12 @@ def switch(config, registry, address):
             policy.edit(config, registry, {"area": "dns_rules", "action": "add", "id": f"{RACE_GROUP}.{index}",
                                           "group": RACE_GROUP, "value": rule})
         # 显式拨号解析器会绕过 DNS 路由；代理目标先通过原生 resolve 动作解析。
-        if not has_resolve_rule(route.get("rules", [])):
+        if not has_global_resolve_rule(route.get("rules", [])):
             policy.edit(config, registry, {"area": "route_rules", "action": "add", "id": "dns.default.resolve",
                                           "value": {"action": "resolve"}, "position": 0})
     removed = remove_unused_servers(config, registry, set(tags))
     policy.references(config)
     return removed
-
-
-def has_resolve_rule(rules):
-    return any(isinstance(rule, dict) and rule.get("action") == "resolve" for rule in rules)
 
 
 def unchanged(config, registry, address):
@@ -288,7 +307,7 @@ def summary(config):
     if len(tags) > 1 and race_indexes(rules, expected) is not None:
         mapped = {server.get("tag"): server for server in servers}
         result["address"] = ", ".join(server_address(mapped.get(tag, {})) for tag in tags)
-        result["race"] = "开启" if has_resolve_rule(config.get("route", {}).get("rules", [])) else "仅 DNS 查询（代理目标未接入）"
+        result["race"] = "开启" if has_global_resolve_rule(config.get("route", {}).get("rules", [])) else "仅 DNS 查询（代理目标未接入）"
     else:
         result["race"] = "自定义规则" if any(rule.get("race") for rule in policy.objects(rules)) else "关闭"
     # 输出到终端前去掉配置文本中的控制字符，不执行任何终端转义。

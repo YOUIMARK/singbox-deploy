@@ -488,6 +488,15 @@ dispatch_contract() {
     t_contains "$CASE_TMP/output" '分享链接:'
 }
 
+idn_contract() {
+    t_seed
+    t_run 0 parse_link 'vless://11111111-1111-1111-1111-111111111111@例え.测试:443?encryption=none&security=tls#IDN'
+    t_assert '国际化域名按 punycode 落地' jq -e '.outbound.server=="xn--r8jz45g.xn--0zwm56d" and .outbound.tls.server_name=="xn--r8jz45g.xn--0zwm56d"' "$CASE_TMP/output"
+    t_run 0 parse_link 'vless://11111111-1111-1111-1111-111111111111@Example.COM:443?encryption=none&security=tls'
+    t_assert 'ASCII 主机保持原样' jq -e '.outbound.server=="example.com"' "$CASE_TMP/output"
+    t_run 1 parse_link 'vless://11111111-1111-1111-1111-111111111111@faß.de:443?encryption=none&security=tls'
+    t_contains "$CASE_TMP/output" 'punycode'
+}
 t_case 'Hysteria2 示例解析、默认 tag 与真实配置检查' hy2_example_contract
 t_case '默认/自定义 tag、重复 tag 不改配置' tag_prompt_contract
 t_case 'tag 扫描兼容字符串 DNS 条目' tag_scan_contract
@@ -509,4 +518,5 @@ t_case 'v2rayN 导出格式兼容补充' v2rayn_formats_contract
 t_case '批量添加内 tag 重复可重新命名' batch_duplicate_tag_contract
 t_case '候选出口 tag 重复时整批拒绝' invalid_batch_contract
 t_case '主菜单 [6] 直达添加出口' dispatch_contract
+t_case '国际化域名 punycode 落地与不可无损转换的拒绝' idn_contract
 t_finish

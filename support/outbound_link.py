@@ -191,6 +191,13 @@ def validate_host(value, label="服务器地址"):
                 encoded = part.encode("idna").decode("ascii")
             except (UnicodeError, ValueError):
                 fail("%s格式无效" % label)
+            # 标准库 idna codec 是 IDNA2003，会把 ß 等字符映射成别的字符（faß.de → fass.de，
+            # 实际指向另一个域名）。解码回来不一致说明不是无损表示，明确拒绝而不是静默改名。
+            try:
+                if encoded.encode("ascii").decode("idna") != part:
+                    fail("%s的国际化写法无法无损转成 punycode，请改用 xn-- 写法" % label)
+            except UnicodeError:
+                fail("%s格式无效" % label)
             converted = True
         if not re.fullmatch(
             r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", encoded

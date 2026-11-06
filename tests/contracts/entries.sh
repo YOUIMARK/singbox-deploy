@@ -119,6 +119,22 @@ empty_list_contract() {
     t_contains "$CASE_TMP/output" '读取节点列表失败'
     t_absent "$CASE_TMP/output" '[成功]'
 }
+listen_overlap_contract() {
+    t_seed
+    t_entry_add vless_reality
+    local id
+    id="$NODE_ID"
+    t_assert '初始监听 127.0.0.1:19507' jq -e '.inbounds[0].listen=="127.0.0.1" and .inbounds[0].listen_port==19507' "$SBD_CONFIG"
+    # 绑定探测桩恒失败：只有「编辑自身 + 地址重叠」这一条路径允许跳过探测。
+    sbd_entry_socket_available() { return 1; }
+    t_run 0 sbd_apply sbd_entry_change "$id" listen '{"listen":"0.0.0.0","listen_port":19507}'
+    t_assert '自身重叠地址不算端口冲突' jq -e '.inbounds[0].listen=="0.0.0.0" and .inbounds[0].listen_port==19507' "$SBD_CONFIG"
+    t_run 1 sbd_apply sbd_entry_change "$id" listen '{"listen":"127.0.0.1","listen_port":19620}'
+    t_contains "$CASE_TMP/output" '无法绑定'
+    t_patch_config '.inbounds += [{type:"direct",tag:"other",listen:"127.0.0.1",listen_port:19507}]'
+    t_run 1 sbd_apply sbd_entry_change "$id" listen '{"listen":"127.0.0.1","listen_port":19507}'
+    t_contains "$CASE_TMP/output" '已被占用'
+}
 t_case '节点字段重问、十进制与秘密随机输入' field_contract
 t_case 'AnyTLS 真实配置与 URI 编码' anytls_contract
 t_case 'AnyReality 真实密钥与原生客户端/服务端' reality_contract
@@ -127,5 +143,6 @@ t_case 'Hysteria2 两侧带宽与 Gecko 自定义 URI 扩展' hy2_custom
 t_case '精简向导真实创建、自动分享和列表隐藏凭据' create_prompt_contract
 t_case '七档操作菜单只显示适用项且保持原有编号' action_contract
 t_case '创建后自动分享、可另查 JSON、稳定 ID 和 EOF 语义' post_commit_contract
+t_case '编辑自身时监听地址重叠不误判冲突，其他入口仍判冲突' listen_overlap_contract
 t_case '首页空列表明确提示、坏登记不冒充没有节点' empty_list_contract
 t_finish

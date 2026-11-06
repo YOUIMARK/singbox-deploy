@@ -64,9 +64,18 @@ menu_contract() {
     t_run 2 sbd_entry_change_prompt <<< $'1\n6'
     t_contains "$CASE_TMP/output" '选择显示的编号'
 }
+cdn_origin_contract() {
+    t_seed
+    t_run 0 sbd_entry_create_prompt <<< $'5\n127.0.0.1\n19505\ncdn.example.com\n\n\n/ws\n回源同步\n\ny'
+    t_assert '创建时回源端口等于监听端口' jq -e '.nodes[0].ingress.origin_port==19505' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_entry_change "$(jq -r '.nodes[0].id' "$SBD_REGISTRY")" listen '{"listen":"127.0.0.1","listen_port":19610}'
+    t_assert '改监听端口后回源端口跟随' jq -e '.nodes[0].ingress.origin_port==19610' "$SBD_REGISTRY"
+    t_assert '监听端口已更新' jq -e '.inbounds[0].listen_port==19610' "$SBD_CONFIG"
+}
 t_case 'SS 三算法真实 Schema/check 与 SIP002 回读' ss_contract
 t_case 'SS2022 密钥长度和编码、算法边界' ss_key_contract
 t_case '双 WS CDN 原生配置、URI 和三个端口事实' ws_contract
 t_case 'VLESS Reality Vision 公私钥与 URI' vision_contract
 t_case '真实菜单创建 WS、编辑 UUID/CDN 和拒绝源站 TLS' menu_contract
+t_case '改本地监听端口后 CDN 回源端口跟随' cdn_origin_contract
 t_finish
