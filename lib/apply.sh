@@ -399,9 +399,15 @@ sbd_legacy_archive() {
         [[ -f "$SBD_CONF_DIR/$name" ]] || continue
         mv -- "$SBD_CONF_DIR/$name" "$backup/legacy/$name" || failed=true
     done < <(sbd_legacy_config_parts)
-    for name in "$SBD_LEGACY_CONF_DIR" "$SBD_LEGACY_DATA_DIR"; do
-        [[ ! -d "$name" ]] || mv -- "$name" "$backup/legacy/$(basename -- "$name")" || failed=true
-    done
+    [[ ! -d "$SBD_LEGACY_CONF_DIR" ]] || mv -- "$SBD_LEGACY_CONF_DIR" "$backup/legacy/config" || failed=true
+    if [[ -d "$SBD_LEGACY_DATA_DIR" ]]; then
+        # 第一代布局把证书、规则集、ACME 与缓存写在 data/，配置里保存的是绝对路径。
+        # 只归档两个管理数据文件，托管材料留在原位，避免已发布配置指向的路径失效。
+        mkdir -p -- "$backup/legacy/data" || failed=true
+        for name in state.json registry.json; do
+            [[ ! -f "$SBD_LEGACY_DATA_DIR/$name" ]] || mv -- "$SBD_LEGACY_DATA_DIR/$name" "$backup/legacy/data/$name" || failed=true
+        done
+    fi
     [[ "$failed" = false ]] || { _error "旧布局未完全归档，原文件仍在部署根或 confs: $backup"; return 1; }
 }
 
@@ -463,9 +469,18 @@ sbd_migrate_legacy_layout_locked() {
         migrated=true
     fi
     for name in state.json registry.json; do
-        if [[ -f "$SBD_LEGACY_DATA_DIR/$name" && ! -e "$SBD_STATE_DIR/$name" ]]; then
-            sbd_atomic_file "$SBD_LEGACY_DATA_DIR/$name" "$SBD_STATE_DIR/$name" || { sbd_layout_stage_remove "$stage"; return 1; }
+        [[ -f "$SBD_LEGACY_DATA_DIR/$name" ]] || continue
+        if [[ -e "$SBD_STATE_DIR/$name" ]]; then
+            # 安装器发布新版时先在 state/ 写入空默认；只有第一代配置源仍在（升级/重试路径）
+            # 且目标尚未含真实数据时，才用旧登记数据覆盖。其余情形保留新布局优先。
+            if [[ ! -f "$SBD_LEGACY_CONF_DIR/config.json" ]] || jq -e --arg name "$name" '
+                    if $name == "state.json" then (.revision // 0) > 0
+                    else ((.nodes // [])|length) > 0 or ((.tls // {})|length) > 0 or ((.policy // {})|length) > 0
+                    end' "$SBD_STATE_DIR/$name" >/dev/null 2>&1; then
+                continue
+            fi
         fi
+        sbd_atomic_file "$SBD_LEGACY_DATA_DIR/$name" "$SBD_STATE_DIR/$name" || { sbd_layout_stage_remove "$stage"; return 1; }
     done
     if [[ "$rewrite_service" = true ]]; then
         mode=644; [[ "$backend" != openrc ]] || mode=755

@@ -46,6 +46,37 @@ purge_plan_prefers_current() {
         '[(.files|index($txt))!=null,(.files|index($old))==null] | all' <<< "$plan"
 }
 
+purge_plan_gen1_material_dirs() {
+    t_fresh
+    rm -f "$SBD_STATE" "$SBD_REGISTRY" || exit 1
+    local plan
+    mkdir -p "$SBD_LEGACY_CONF_DIR" "$SBD_LEGACY_DATA_DIR/certificates/example.com" \
+        "$SBD_LEGACY_DATA_DIR/rule-sets/geosite" "$SBD_LEGACY_DATA_DIR/acme/le" || exit 1
+    jq -n --arg dir "$SBD_LEGACY_DATA_DIR/acme/le" \
+        '{certificate_providers:[{tag:"le",data_directory:$dir}]}' > "$SBD_LEGACY_CONF_DIR/config.json" || exit 1
+    jq -n --arg cert "$SBD_LEGACY_DATA_DIR/certificates/example.com" \
+        --arg ruleset "$SBD_LEGACY_DATA_DIR/rule-sets/geosite" \
+        '{format:1,nodes:[],tls:{certificates:[{directory:$cert}],providers:["le"]},
+          policy:{rule_sets:[{directory:$ruleset}]}}' > "$SBD_LEGACY_DATA_DIR/registry.json" || exit 1
+    plan=$(sbd_uninstall_plan purge) || exit 1
+    t_assert '清单包含第一代证书目录' jq -e --arg d "$SBD_LEGACY_DATA_DIR/certificates/example.com" '.trees|index($d)!=null' <<< "$plan"
+    t_assert '清单包含第一代规则集目录' jq -e --arg d "$SBD_LEGACY_DATA_DIR/rule-sets/geosite" '.trees|index($d)!=null' <<< "$plan"
+    t_assert '清单包含第一代 provider 数据目录' jq -e --arg d "$SBD_LEGACY_DATA_DIR/acme/le" '.trees|index($d)!=null' <<< "$plan"
+    t_assert '清单包含第一代缓存文件' jq -e --arg f "$SBD_LEGACY_DATA_DIR/cache.db" '.files|index($f)!=null' <<< "$plan"
+}
+
+purge_plan_legacy_backup() {
+    t_fresh
+    local plan backup="$SBD_WORK/legacy-layout.ABC"
+    mkdir -p "$backup/legacy/data" "$backup/legacy/config" || exit 1
+    printf '{"format":1,"nodes":[{"id":"n1"}]}\n' > "$backup/legacy/data/registry.json" || exit 1
+    printf '{}\n' > "$backup/legacy/config/config.json" || exit 1
+    plan=$(sbd_uninstall_plan purge) || exit 1
+    t_assert '清单包含旧布局迁移备份' jq -e --arg d "$backup" '.trees|index($d)!=null' <<< "$plan"
+}
+
 t_case '第一代布局 purge 清单回退读取旧数据' purge_plan_gen1
+t_case '第一代托管目录进入 purge 清单' purge_plan_gen1_material_dirs
+t_case '旧布局迁移备份进入 purge 清单' purge_plan_legacy_backup
 t_case 'purge 清单优先当前布局 registry' purge_plan_prefers_current
 t_finish

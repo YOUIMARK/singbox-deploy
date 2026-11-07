@@ -78,6 +78,8 @@ def build(root, mode):
             "data/state.json",
             "data/registry.json",
             "data/sing-box.log",
+            "data/cache.db",
+            "data/uninstall.json",
             "assets/cache.db",
             "logs/sing-box.log",
         ):
@@ -90,19 +92,27 @@ def build(root, mode):
         for p in (root / "exports").iterdir():
             if p.name in ("links.txt", "schema.json") or any(p.name == n["id"] + suffix for n in registry.get("nodes", []) for suffix in (".json", ".txt")):
                 files.add(str(p))
+        # 第一代布局把托管材料写在 data/ 下；迁移后这些路径仍被运行配置引用，卸载时同样属于自有数据。
+        cert_dirs = (root / "certs", root / "data/certificates")
+        ruleset_dirs = (root / "assets/rule-sets", root / "data/rule-sets")
+        acme_dirs = (root / "certs/acme", root / "data/acme")
         for record in registry.get("tls", {}).get("certificates", []):
             path = record.get("directory")
-            if path and Path(path).parent == root / "certs":
+            if path and Path(path).parent in cert_dirs:
                 trees.add(path)
         for rec in registry.get("policy", {}).get("rule_sets", []):
             path = rec.get("directory")
-            if path and Path(path).parent == root / "assets/rule-sets":
+            if path and Path(path).parent in ruleset_dirs:
                 trees.add(path)
         managed_providers = set(registry.get("tls", {}).get("providers", []))
         for provider in config.get("certificate_providers", []):
             path = provider.get("data_directory", "")
-            if provider.get("tag") in managed_providers and path and Path(path).parent == root / "certs/acme":
+            if provider.get("tag") in managed_providers and path and Path(path).parent in acme_dirs:
                 trees.add(path)
+        # 旧布局迁移备份由 lib/apply.sh 生成，不清理会让 work/ 与部署根无法收敛。
+        for backup in (root / "work").glob("legacy-layout.*"):
+            if backup.is_dir() and not backup.is_symlink():
+                trees.add(str(backup))
         for name in ("active", "previous"):
             directory = root / "work" / name
             if directory.is_dir():
@@ -111,7 +121,7 @@ def build(root, mode):
                     raise ValueError("未收敛事务不能卸载")
                 for key in ("created_materials", "retired_materials"):
                     for path in journal.get(key, []):
-                        if Path(path).parent in (root / "certs", root / "assets/rule-sets"):
+                        if Path(path).parent in cert_dirs + ruleset_dirs:
                             trees.add(path)
                 trees.add(str(directory))
     elif mode != "keep":
