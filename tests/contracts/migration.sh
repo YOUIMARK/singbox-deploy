@@ -120,9 +120,27 @@ m_gen1_fixture() {
     rm -f "$SBD_STATE" "$SBD_REGISTRY" || exit 1
     printf 'ExecStart=%s/engine/sing-box -D %s -c %s/config/config.json run\n' "$SBD_ROOT" "$SBD_ROOT" "$SBD_ROOT" > "$CASE_TMP/etc/service" || exit 1
     mkdir "$SBD_LEGACY_CONF_DIR" "$SBD_LEGACY_DATA_DIR" || exit 1
+    mkdir -p "$SBD_LEGACY_DATA_DIR/certificates/cert.ABCD1234" || exit 1
+    printf 'cert\n' > "$SBD_LEGACY_DATA_DIR/certificates/cert.ABCD1234/cert.pem" || exit 1
     cp "$ROOT/tests/fixtures/valid.json" "$SBD_LEGACY_CONF_DIR/config.json" || exit 1
     printf '{"format":1,"manager_version":"0.1.0","revision":7}\n' > "$SBD_LEGACY_DATA_DIR/state.json" || exit 1
     printf '{"format":1,"nodes":[]}\n' > "$SBD_LEGACY_DATA_DIR/registry.json" || exit 1
+}
+
+migration_gen1_upgrade_path() {
+    m_migration_fixture
+    # 安装器发布新版时先在 state/ 写入空默认，这是真实升级路径。
+    printf '{"format":1,"manager_version":"0.1.1","revision":0,"installed":true}\n' > "$SBD_STATE" || exit 1
+    printf '{"format":1,"nodes":[]}\n' > "$SBD_REGISTRY" || exit 1
+    printf 'ExecStart=%s/engine/sing-box -D %s -c %s/config/config.json run\n' "$SBD_ROOT" "$SBD_ROOT" "$SBD_ROOT" > "$CASE_TMP/etc/service" || exit 1
+    mkdir "$SBD_LEGACY_CONF_DIR" "$SBD_LEGACY_DATA_DIR" || exit 1
+    cp "$ROOT/tests/fixtures/valid.json" "$SBD_LEGACY_CONF_DIR/config.json" || exit 1
+    printf '{"format":1,"manager_version":"0.1.0","revision":7}\n' > "$SBD_LEGACY_DATA_DIR/state.json" || exit 1
+    printf '{"format":1,"nodes":[{"id":"n1","name":"legacy","inbound_tag":"t1"}]}\n' > "$SBD_LEGACY_DATA_DIR/registry.json" || exit 1
+    t_run 0 sbd_migrate_legacy_layout
+    t_assert '升级路径下旧 registry 成为活跃登记' jq -e '.nodes|length==1 and .[0].id=="n1"' "$SBD_REGISTRY"
+    t_assert '升级路径保留新元数据并继承旧修订号' jq -e \
+        '.manager_version=="0.1.1" and .installed==true and .revision==7' "$SBD_STATE"
 }
 
 migration_gen1_success() {
@@ -132,7 +150,9 @@ migration_gen1_success() {
     t_assert '迁移后真实配置可检查' sbd_check_config
     t_assert 'state 随迁保留修订号' jq -e '.revision==7' "$SBD_STATE"
     t_assert 'registry 随迁' test -s "$SBD_REGISTRY"
-    t_assert '旧目录已归档' test ! -e "$SBD_LEGACY_CONF_DIR" -a ! -e "$SBD_LEGACY_DATA_DIR"
+    t_assert '旧配置目录与旧管理数据已归档' test ! -e "$SBD_LEGACY_CONF_DIR" \
+        -a ! -e "$SBD_LEGACY_DATA_DIR/state.json" -a ! -e "$SBD_LEGACY_DATA_DIR/registry.json"
+    t_assert '第一代托管材料保留在原位' test -s "$SBD_LEGACY_DATA_DIR/certificates/cert.ABCD1234/cert.pem"
     t_contains "$CASE_TMP/etc/service" "-c $SBD_CONFIG"
     t_contains "$CASE_TMP/actions" 'restore running'
     local backup
@@ -162,7 +182,9 @@ migration_gen1_interrupted() {
     t_run 0 sbd_migrate_legacy_layout
     t_assert '重试补迁 registry' jq -e '.format==1' "$SBD_REGISTRY"
     t_assert '重试保留已迁入的修订号' jq -e '.revision==7' "$SBD_STATE"
-    t_assert '重试后旧目录归档' test ! -e "$SBD_LEGACY_CONF_DIR" -a ! -e "$SBD_LEGACY_DATA_DIR"
+    t_assert '重试后旧配置与管理数据归档' test ! -e "$SBD_LEGACY_CONF_DIR" \
+        -a ! -e "$SBD_LEGACY_DATA_DIR/state.json" -a ! -e "$SBD_LEGACY_DATA_DIR/registry.json"
+    t_assert '重试后托管材料仍在原位' test -s "$SBD_LEGACY_DATA_DIR/certificates/cert.ABCD1234/cert.pem"
     local backup found=''
     for backup in "$SBD_WORK"/legacy-layout.*; do
         if [[ -s "$backup/legacy/data/registry.json" && -s "$backup/legacy/config/config.json" ]]; then
@@ -181,5 +203,6 @@ t_case 'Schema 发布失败时不留下不完整的新布局' migration_schema_p
 t_case '清理旧残留不依赖当前配置可校验' migration_cleanup_broken_live
 t_case '只有旧残留没有配置源时保留原文件' migration_no_source
 t_case '第一代 config/+data/ 布局整体迁移' migration_gen1_success
+t_case '升级路径下空默认不覆盖旧登记数据' migration_gen1_upgrade_path
 t_case '迁移中断后重试补迁并归档' migration_gen1_interrupted
 t_finish

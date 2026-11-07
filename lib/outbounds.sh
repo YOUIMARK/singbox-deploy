@@ -152,7 +152,10 @@ sbd_outbound_read_links() {
         rc=$?
         line="${line%$'\r'}"
         if [[ -n "$line" ]]; then
-            if [[ "$line" == *"://"* ]]; then
+            # 纯 Base64 链接行不含 ://，交给解析器自身判定，避免被当成 tag 预取而丢掉后续行。
+            if [[ "$line" == *"://"* ]] ||
+                { [[ "$line" =~ ^[A-Za-z0-9+/=_-]+$ ]] &&
+                  printf '%s\n' "$line" | python3 "$SBD_APP/support/outbound_link.py" --batch >/dev/null 2>&1; }; then
                 SBD_OUTBOUND_INPUTS+=("$line")
             else
                 SBD_OUTBOUND_PREFETCH="$line"

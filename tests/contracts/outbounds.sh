@@ -259,6 +259,22 @@ base64_batch_contract() {
     t_run 0 sbd_check_config
 }
 
+multi_base64_batch_contract() {
+    t_seed
+    local b1 b2 final
+    final=$(jq -r '.route.final' "$SBD_CONFIG") || exit 1
+    b1=$(printf '%s' 'socks://example.com:1080#B64-First' | openssl base64 -A) || exit 1
+    b2=$(printf '%s' 'socks://example.com:1081#B64-Second' | openssl base64 -A) || exit 1
+    t_run 0 sbd_outbound_add_prompt <<< "$b1"$'\n'"$b2"$'\n\n\ny\n'
+    t_contains "$CASE_TMP/output" '共识别 2 个出口'
+    t_assert '两行纯 Base64 链接全部写入' jq -e '
+        ([.outbounds[].tag] | index("B64-First") != null) and
+        ([.outbounds[].tag] | index("B64-Second") != null)
+    ' "$SBD_CONFIG"
+    t_assert '多行 Base64 不改默认路由' test "$(jq -r '.route.final' "$SBD_CONFIG")" = "$final"
+    t_run 0 sbd_check_config
+}
+
 plain_batch_contract() {
     t_seed
     local first second final
@@ -507,6 +523,7 @@ t_case 'Hysteria2 Gecko 自定义包长导入' gecko_contract
 t_case 'Shadowsocks/AnyTLS 映射与真实配置检查' ss_anytls_contract
 t_case 'SOCKS/SOCKS5 映射与真实配置检查' socks_contract
 t_case '整串 Base64 批量添加且不改默认路由' base64_batch_contract
+t_case '多行纯 Base64 链接不被误判为 tag' multi_base64_batch_contract
 t_case '普通多行链接一次粘贴批量添加（CRLF）' plain_batch_contract
 t_case '批量解析跳过失败项并添加成功项' batch_skip_invalid_contract
 t_case '后续分享链接延迟到达时仍能批量识别' delayed_plain_batch_contract
