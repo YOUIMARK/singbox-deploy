@@ -462,13 +462,11 @@ sbd_migrate_legacy_layout_locked() {
         fi
         migrated=true
     fi
-    if [[ "$migrate_config" = true ]]; then
-        for name in state.json registry.json; do
-            if [[ -f "$SBD_LEGACY_DATA_DIR/$name" && ! -e "$SBD_STATE_DIR/$name" ]]; then
-                cp -- "$SBD_LEGACY_DATA_DIR/$name" "$SBD_STATE_DIR/$name" || { sbd_layout_stage_remove "$stage"; return 1; }
-            fi
-        done
-    fi
+    for name in state.json registry.json; do
+        if [[ -f "$SBD_LEGACY_DATA_DIR/$name" && ! -e "$SBD_STATE_DIR/$name" ]]; then
+            cp -- "$SBD_LEGACY_DATA_DIR/$name" "$SBD_STATE_DIR/$name" || { sbd_layout_stage_remove "$stage"; return 1; }
+        fi
+    done
     if [[ "$rewrite_service" = true ]]; then
         mode=644; [[ "$backend" != openrc ]] || mode=755
         if ! cp -- "$service" "$backup/service" || ! sbd_atomic_file "$stage/service" "$service" "$mode"; then
