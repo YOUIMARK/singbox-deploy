@@ -36,6 +36,8 @@ sbd_config_stage_current() {
         source="$SBD_CONFIG"
     elif [[ -f "$SBD_LEGACY_CONFIG" ]]; then
         source="$SBD_LEGACY_CONFIG"
+    elif [[ -f "$SBD_LEGACY_CONF_DIR/config.json" ]]; then
+        source="$SBD_LEGACY_CONF_DIR/config.json"
     else
         source="$SBD_APP/presets/base.json"
     fi

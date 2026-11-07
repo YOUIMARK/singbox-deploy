@@ -14,6 +14,8 @@ sbd_paths() {
     SBD_SCHEMA="$SBD_CONF_DIR/schema.json"
     SBD_LEGACY_CONFIG="$SBD_ROOT/config.json"
     SBD_LEGACY_SCHEMA="$SBD_ROOT/schema.json"
+    SBD_LEGACY_CONF_DIR="$SBD_ROOT/config"
+    SBD_LEGACY_DATA_DIR="$SBD_ROOT/data"
     SBD_ASSET_DIR="$SBD_ROOT/assets"
     SBD_CERT_DIR="$SBD_ROOT/certs"
     SBD_LOG_DIR="$SBD_ROOT/logs"

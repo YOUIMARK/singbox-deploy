@@ -408,7 +408,7 @@ sbd_entry_create_classic() {
 }
 
 sbd_entry_align_classic() {
-    local stage="$1" node="$2" scope="$3" profile public key method password
+    local stage="$1" node="$2" scope="$3" profile public key method password content tag
     profile=$(sbd_entry_text "$node" .profile 配置档) || return 1
     jq -ce --slurpfile node "$node" '[.inbounds[]? | select(.tag==$node[0].inbound_tag)] | select(length==1) | .[0]' "$stage/config.json" > "$stage/entry-inbound.json" || { _error '节点 inbound 缺失或重复'; return 1; }
     if [[ "$profile" = shadowsocks ]]; then
@@ -423,6 +423,16 @@ sbd_entry_align_classic() {
     [[ "$scope" != delete ]] || return 0
     if [[ "$profile" = *_ws ]]; then
         sbd_entry_cdn "$(jq -c '.ingress + {path:.client.transport.path}' "$node")" || return 1
+        if jq -e '(has("tls")|not) and .transport.type=="ws" and
+            (.transport|has("early_data_header_name")|not) and (.transport.max_early_data // 0)==0
+        ' "$stage/entry-inbound.json" >/dev/null; then
+            tag=$(sbd_entry_text "$node" .inbound_tag inbound标识) || return 1
+            content=$(jq --arg tag "$tag" --arg early_header "$SBD_WS_EARLY_DATA_HEADER" '
+                (.inbounds[]|select(.tag==$tag)|.transport.early_data_header_name)=$early_header
+            ' "$stage/config.json") || return 1
+            sbd_record_write "$stage/config.json" "$content" || return 1
+            jq -ce --slurpfile node "$node" '[.inbounds[]? | select(.tag==$node[0].inbound_tag)] | select(length==1) | .[0]' "$stage/config.json" > "$stage/entry-inbound.json" || { _error '节点 inbound 缺失或重复'; return 1; }
+        fi
         jq -e --arg early_header "$SBD_WS_EARLY_DATA_HEADER" --slurpfile node "$node" '
             (has("tls")|not) and .transport.type=="ws" and .transport.path==$node[0].client.transport.path and
             $node[0].client.transport.type=="ws" and $node[0].client.tls.enabled==true and

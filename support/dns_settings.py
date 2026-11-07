@@ -173,11 +173,22 @@ def remove_default_race(config, registry):
         rules = config.get("dns", {}).get("rules", [])
         indexes = race_indexes(rules, expected)
         if indexes is not None:
-            occupied = {rec["index"] for rec in owned}
-            if not any(i in occupied for i in indexes):
-                for offset, (index, rule) in enumerate(zip(indexes, expected)):
-                    owned.append({"id": f"{RACE_GROUP}.{offset}", "index": index,
+            occupied = {rec["index"]: rec for rec in owned}
+            grouped, extra = [], []
+            for offset, (index, rule) in enumerate(zip(indexes, expected)):
+                rec = occupied.get(index)
+                if rec is None:
+                    extra.append({"id": f"{RACE_GROUP}.{offset}", "index": index,
                                   "group": RACE_GROUP, "expected": rule})
+                elif rec.get("expected") == rule:
+                    grouped.append(rec)
+                else:
+                    grouped = None
+                    break
+            if grouped is not None:
+                owned.extend(extra)
+                for rec in grouped:
+                    rec["group"] = RACE_GROUP
     if any(rec.get("group") == RACE_GROUP for rec in owned):
         policy.edit(config, registry, {"area": "dns_rules", "action": "delete_group", "id": RACE_GROUP})
 
