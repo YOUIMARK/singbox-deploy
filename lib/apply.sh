@@ -464,7 +464,7 @@ sbd_migrate_legacy_layout_locked() {
     fi
     for name in state.json registry.json; do
         if [[ -f "$SBD_LEGACY_DATA_DIR/$name" && ! -e "$SBD_STATE_DIR/$name" ]]; then
-            cp -- "$SBD_LEGACY_DATA_DIR/$name" "$SBD_STATE_DIR/$name" || { sbd_layout_stage_remove "$stage"; return 1; }
+            sbd_atomic_file "$SBD_LEGACY_DATA_DIR/$name" "$SBD_STATE_DIR/$name" || { sbd_layout_stage_remove "$stage"; return 1; }
         fi
     done
     if [[ "$rewrite_service" = true ]]; then

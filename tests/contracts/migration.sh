@@ -146,7 +146,7 @@ migration_gen1_interrupted() {
     cp() {
         local arg
         for arg in "$@"; do
-            [[ "$arg" != "$SBD_STATE_DIR/registry.json" ]] || return 1
+            [[ "$arg" != "$SBD_STATE_DIR/registry.json."* ]] || { printf '{"format":1,"nodes":[' > "$arg"; return 1; }
         done
         command cp "$@"
     }
@@ -154,6 +154,7 @@ migration_gen1_interrupted() {
     t_assert '发布标记已生成' test -s "$SBD_CONFIG"
     t_assert '中断保留旧 registry' test -s "$SBD_LEGACY_DATA_DIR/registry.json"
     t_assert '中断未迁入 registry' test ! -e "$SBD_REGISTRY"
+    t_assert '半成品临时文件已清理' test -z "$(find "$SBD_STATE_DIR" -maxdepth 1 -name 'registry.json.*' -print -quit)"
     t_assert '部分成功的 state 保留' test -s "$SBD_STATE"
     t_assert '中断不归档旧目录' test -d "$SBD_LEGACY_DATA_DIR"
     t_assert '中断不重写服务' cmp -s "$CASE_TMP/etc/service" "$CASE_TMP/old-service"
