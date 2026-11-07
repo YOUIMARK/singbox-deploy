@@ -870,7 +870,10 @@ def parse_vmess_legacy(raw, fragment):
     )
     if aid not in (0, None):
         fail("VMess 只支持 AEAD，alterId 必须为 0")
-    security = vmess_security_value({}, data.get("scy", "auto"))
+    scy_raw = data.get("scy", "auto")
+    if scy_raw is not None and not isinstance(scy_raw, str):
+        fail("VMess JSON 字段 scy 必须是字符串")
+    security = vmess_security_value({}, scy_raw or "auto")
     tls_raw = data.get("tls", "")
     if isinstance(tls_raw, bool):
         tls_mode = "tls" if tls_raw else "none"

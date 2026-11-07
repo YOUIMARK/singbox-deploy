@@ -375,6 +375,8 @@ sbd_legacy_config_parts() {
 sbd_legacy_layout_present() {
     [[ ! -f "$SBD_LEGACY_CONFIG" && ! -f "$SBD_LEGACY_SCHEMA" ]] || return 0
     [[ -z "$(sbd_legacy_config_parts)" ]] || return 0
+    [[ ! -f "$SBD_LEGACY_CONF_DIR/config.json" && ! -f "$SBD_LEGACY_DATA_DIR/registry.json" &&
+        ! -f "$SBD_LEGACY_DATA_DIR/state.json" ]] || return 0
     return 1
 }
 
@@ -397,6 +399,9 @@ sbd_legacy_archive() {
         [[ -f "$SBD_CONF_DIR/$name" ]] || continue
         mv -- "$SBD_CONF_DIR/$name" "$backup/legacy/$name" || failed=true
     done < <(sbd_legacy_config_parts)
+    for name in "$SBD_LEGACY_CONF_DIR" "$SBD_LEGACY_DATA_DIR"; do
+        [[ ! -d "$name" ]] || mv -- "$name" "$backup/legacy/$(basename -- "$name")" || failed=true
+    done
     [[ "$failed" = false ]] || { _error "旧布局未完全归档，原文件仍在部署根或 confs: $backup"; return 1; }
 }
 
@@ -406,17 +411,23 @@ sbd_migrate_legacy_layout_locked() {
     sbd_directories || return 1
     if [[ -e "$SBD_CONFIG" ]]; then
         if sbd_legacy_layout_present; then cleanup_legacy=true; fi
-    elif [[ -f "$SBD_LEGACY_CONFIG" ]]; then
+    elif [[ -f "$SBD_LEGACY_CONFIG" || -f "$SBD_LEGACY_CONF_DIR/config.json" ]]; then
         migrate_config=true
     elif sbd_legacy_layout_present; then
-        _error '检测到旧布局残留，但找不到可迁移的配置源（confs/config.json 或部署根 config.json）；已保留原文件，请恢复配置后重新启动'
+        _error '检测到旧布局残留，但找不到可迁移的配置源（confs/config.json、部署根 config.json 或 config/config.json）；已保留原文件，请恢复配置后重新启动'
         return 0
     fi
-    backend=$(sbd_backend) || return 1
+    if ! backend=$(sbd_backend 2>/dev/null); then
+        if [[ "$migrate_config" = true || "$cleanup_legacy" = true ]]; then
+            _error '检测到旧配置布局，但未检测到支持的 systemd/OpenRC 服务后端'
+            return 1
+        fi
+        return 0
+    fi
     service=$(sbd_service_file "$backend") || return 1
     if [[ -e "$service" || -L "$service" ]]; then
         sbd_service_claim "$backend" || return 1
-        if grep -Fq -- "$SBD_LEGACY_CONFIG" "$service"; then rewrite_service=true; fi
+        if grep -Fq -- "$SBD_LEGACY_CONFIG" "$service" || grep -Fq -- "$SBD_LEGACY_CONF_DIR/" "$service"; then rewrite_service=true; fi
     fi
     [[ "$migrate_config" = true || "$rewrite_service" = true || "$cleanup_legacy" = true ]] || return 0
     if [[ ! -x "$SBD_BINARY" ]]; then
@@ -450,6 +461,13 @@ sbd_migrate_legacy_layout_locked() {
             return 1
         fi
         migrated=true
+    fi
+    if [[ "$migrate_config" = true ]]; then
+        for name in state.json registry.json; do
+            if [[ -f "$SBD_LEGACY_DATA_DIR/$name" && ! -e "$SBD_STATE_DIR/$name" ]]; then
+                cp -- "$SBD_LEGACY_DATA_DIR/$name" "$SBD_STATE_DIR/$name" || { sbd_layout_stage_remove "$stage"; return 1; }
+            fi
+        done
     fi
     if [[ "$rewrite_service" = true ]]; then
         mode=644; [[ "$backend" != openrc ]] || mode=755

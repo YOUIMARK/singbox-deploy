@@ -60,7 +60,8 @@ def build(root, mode):
         if not config_path.is_file():
             config_path = root / "config.json"
         config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
-        registry = json.loads((root / "state/registry.json").read_text(encoding="utf-8"))
+        registry_path = root / "state/registry.json"
+        registry = json.loads(registry_path.read_text(encoding="utf-8")) if registry_path.is_file() else {}
         for name in (
             "confs/config.json",
             "confs/schema.json",
@@ -68,6 +69,11 @@ def build(root, mode):
             "confs/core-version",
             "config.json",
             "schema.json",
+            "config/config.json",
+            "config/schema.json",
+            "data/state.json",
+            "data/registry.json",
+            "data/sing-box.log",
             "assets/cache.db",
             "logs/sing-box.log",
         ):

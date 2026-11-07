@@ -453,6 +453,8 @@ for raw in tokens:
             raise SystemExit(1)
         try:
             name = value.encode("idna").decode("ascii").lower()
+            if not value.isascii() and name.encode("ascii").decode("idna") != value.lower():
+                raise SystemExit(1)
         except (UnicodeError, ValueError):
             raise SystemExit(1)
         if len(name) > 253 or not all(
