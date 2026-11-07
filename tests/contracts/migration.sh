@@ -139,7 +139,8 @@ migration_gen1_upgrade_path() {
     printf '{"format":1,"nodes":[{"id":"n1","name":"legacy","inbound_tag":"t1"}]}\n' > "$SBD_LEGACY_DATA_DIR/registry.json" || exit 1
     t_run 0 sbd_migrate_legacy_layout
     t_assert '升级路径下旧 registry 成为活跃登记' jq -e '.nodes|length==1 and .[0].id=="n1"' "$SBD_REGISTRY"
-    t_assert '升级路径下旧修订号成为活跃 state' jq -e '.revision==7' "$SBD_STATE"
+    t_assert '升级路径保留新元数据并继承旧修订号' jq -e \
+        '.manager_version=="0.1.1" and .installed==true and .revision==7' "$SBD_STATE"
 }
 
 migration_gen1_success() {

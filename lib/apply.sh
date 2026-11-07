@@ -413,7 +413,7 @@ sbd_legacy_archive() {
 
 sbd_migrate_legacy_layout_locked() {
     local migrate_config=false rewrite_service=false cleanup_legacy=false
-    local backend='' service='' runtime='' mode stage backup backup_service=false migrated=false
+    local backend='' service='' runtime='' mode stage backup backup_service=false migrated=false content
     sbd_directories || return 1
     if [[ -e "$SBD_CONFIG" ]]; then
         if sbd_legacy_layout_present; then cleanup_legacy=true; fi
@@ -477,6 +477,16 @@ sbd_migrate_legacy_layout_locked() {
                     if $name == "state.json" then (.revision // 0) > 0
                     else ((.nodes // [])|length) > 0 or ((.tls // {})|length) > 0 or ((.policy // {})|length) > 0
                     end' "$SBD_STATE_DIR/$name" >/dev/null 2>&1; then
+                continue
+            fi
+            if [[ "$name" = state.json ]]; then
+                # 只继承旧布局的历史 revision；manager_version、installed、core_version 等
+                # 由安装器与新布局写入的元数据必须保留，否则状态菜单会显示错误的版本。
+                content=$(jq -n --slurpfile legacy "$SBD_LEGACY_DATA_DIR/$name" \
+                    --slurpfile current "$SBD_STATE_DIR/$name" \
+                    '$legacy[0] * $current[0] * {revision: ($legacy[0].revision // 0)}') ||
+                    { sbd_layout_stage_remove "$stage"; return 1; }
+                sbd_record_write "$SBD_STATE_DIR/$name" "$content" || { sbd_layout_stage_remove "$stage"; return 1; }
                 continue
             fi
         fi
