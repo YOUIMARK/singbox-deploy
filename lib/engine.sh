@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+# 只支持 systemd/OpenRC；状态、自启与失败恢复都依赖真实服务管理器，不提供 direct 后端。
 sbd_backend() {
     if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
         printf 'systemd\n'
@@ -28,6 +29,7 @@ sbd_service_claim() {
     [[ ! -L "$file" ]] || { _error '服务路径是外部链接，拒绝操作'; return 1; }
 }
 
+# 以 /proc/<pid>/exe 指向本部署二进制作为运行事实；核心包被替换后路径可能带 " (deleted)" 后缀。
 sbd_service_process_running() {
     local path target
     [[ -n "${SBD_BINARY:-}" ]] || return 1
@@ -199,6 +201,7 @@ sbd_service_set_enabled() {
     [[ "$current" = "$expected" ]] || { _error '自启状态复验失败'; return 1; }
 }
 
+# 服务定义与官方 1.14.x 对齐，并注入按可见内存推算的 GOMEMLIMIT。
 sbd_service_render() {
     local backend="$1" target="$2" memlimit
     memlimit=$(sbd_go_memlimit_mb) || { _error '无法计算 Go 运行时内存限制'; return 1; }
@@ -314,6 +317,7 @@ sbd_engine_unpack() {
     if [[ "$asset" != *-musl.tar.gz && "$asset" != *-glibc.tar.gz ]]; then
         [[ -s "$target/libcronet.so" ]] || { _error '官方默认包缺少随包运行库 libcronet.so'; return 1; }
     fi
+    # 记录包内自有文件清单，卸载时只删除这些文件，不碰部署根下的其他内容。
     python3 - "$target" <<'PY' || { _error '记录自有核心包文件清单失败'; return 1; }
 from pathlib import Path
 import sys

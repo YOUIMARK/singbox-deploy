@@ -39,6 +39,8 @@ def default_config():
         return json.load(stream)
 
 
+# evaluate 先并发发起查询，respond 按 NOERROR/NXDOMAIN 竞争；两种 rcode 都要覆盖，
+# 否则负响应无法参与竞速。
 def race_rules(tags):
     return [
         {"action": "evaluate", "server": tag, "tag": "sd.dns." + tag}
@@ -50,6 +52,7 @@ def race_rules(tags):
     ]
 
 
+# 优先识别连续规则块；被其他规则插入时退化为按顺序的唯一子序列匹配，有歧义则不认领。
 def race_indexes(rules, expected):
     starts = [
         i for i in range(len(rules) - len(expected) + 1)

@@ -15,6 +15,7 @@ sbd_install_manifest() {
         seen["$rel"]=1
         SBD_INSTALL_FILES+=("$rel")
     done < "$source/manifest.txt"
+    # 清单必须含入口加载与运行所需文件；缺一项安装后无法启动。
     for rel in install.sh singbox-deploy.sh VERSION manifest.txt lib/input.sh lib/host.sh lib/records.sh lib/apply.sh lib/console.sh lib/outbounds.sh support/validate_schema.py support/policy_records.py support/dns_settings.py support/outbound_link.py support/warp.py support/uninstall_plan.py presets/base.json; do
         [[ -n "${seen[$rel]:-}" ]] || { _error "发布清单缺少入口依赖: $rel"; return 1; }
     done
@@ -68,6 +69,7 @@ sbd_install_command() {
     ln -sfn -- "$SBD_APP/singbox-deploy.sh" "$SBD_COMMAND" || { _error '发布 sd 命令失败'; return 1; }
 }
 
+# 安装事务：暂存并复核发布文件 → 快照 → 替换 app/state/命令；失败按 journal 回滚。
 sbd_install_publish_locked() {
     local source="$1" dir="$SBD_WORK/active" stage="$SBD_WORK/active/after" rel state version content
     sbd_directories || return 1

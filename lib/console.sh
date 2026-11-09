@@ -7,6 +7,7 @@ sbd_terminal() {
     return 1
 }
 
+# 按类别删除脚本托管的配置与登记；存活引用会让整次事务失败，不自动连带删除。
 sbd_reset() {
     local stage="$1" category="$2" node content ids id directory
     sbd_policy_begin "$stage" || return 1

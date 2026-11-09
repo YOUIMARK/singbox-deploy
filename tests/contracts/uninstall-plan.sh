@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 第一代布局（config/ + data/）的 purge 清单回退读取；纯 Python，不执行真实核心。
+# 第一代布局回退读取、托管材料目录、迁移备份与当前布局优先；纯 Python，不执行真实核心。
 # shellcheck disable=SC2016,SC2329
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/harness.sh"
 

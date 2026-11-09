@@ -93,6 +93,7 @@ sbd_rule_set_list() {
         else "  \($tag)  inline" end' "$config" || return 1
 }
 
+# 把文件/URL 规则集落到独立目录，并用核心编译/反编译校验；目录登记为待提交材料。
 sbd_rule_material() {
     local stage="$1" origin="$2" kind input format directory id raw
     if ! kind=$(jq -er '.kind' <<< "$origin") || ! input=$(jq -er '.value' <<< "$origin") || ! format=$(jq -er '.format' <<< "$origin"); then
@@ -149,7 +150,7 @@ sbd_rule_set_prepare() {
                 value=$(jq --arg tag "$tag" --arg path "$directory/rules.srs" '. + {tag:$tag,format:"binary",path:$path}' <<< "$value") || return 1 ;;
             remote)
                 sbd_rule_url "$(jq -r '.url' <<< "$value")" || return 1
-                # 4B：不下载种子，不声明远端已验证。显式 HTTP client 避免隐式旧默认。
+                # 不下载种子、不声明远端已验证；显式 http_client 避免依赖隐式旧默认。
                 value=$(jq --arg tag "$tag" '. + {tag:$tag} | .http_client //= {version:2}' <<< "$value") || return 1
                 content=$(jq --arg path "$SBD_ASSET_DIR/cache.db" 'if .experimental.cache_file==null then .experimental.cache_file={enabled:true,path:$path} else . end' "$stage/config.json") || return 1
                 sbd_record_write "$stage/config.json" "$content" || return 1
@@ -607,6 +608,7 @@ sbd_route_outbound_prompt() {
     esac
 }
 
+# 域名与 IP 同时存在时改用 logical/or，否则同一规则内的字段会按 AND 处理。
 sbd_route_rule_value() {
     local match="$1" action="$2"
     jq -cn --argjson match "$match" --argjson action "$action" '

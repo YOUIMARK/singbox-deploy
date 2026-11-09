@@ -4,6 +4,7 @@ sbd_object() {
     jq -es 'length == 1 and (.[0] | type == "object")' "$1" >/dev/null 2>&1
 }
 
+# 同目录临时文件写入并复核字节后 rename，避免中断或并发读取看到半写文件。
 sbd_atomic_file() {
     local source="$1" target="$2" mode="${3:-600}" tmp
     [[ -f "$source" && ! -d "$target" ]] || { _error "文件提交源或目标无效: $target"; return 1; }

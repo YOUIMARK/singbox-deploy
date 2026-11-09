@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# CDN WS 早期数据：服务端只声明接收头，URI 用 path 中的 ed 表达。
+# CDN WS 早期数据：服务端只写接收头，不写 max_early_data；URI 用 path 中的 ed 表达。
 # shellcheck disable=SC2034
 SBD_WS_EARLY_DATA=2560
 SBD_WS_EARLY_DATA_HEADER='Sec-WebSocket-Protocol'
@@ -80,6 +80,7 @@ except OSError:
 PY
 }
 
+# 先查配置内的端口/地址重叠，再实际 bind 探测；编辑自身时允许同地址重叠。
 sbd_entry_port() {
     local stage="$1" listen="$2" port="$3" network="$4" exclude="${5:-}" config="${6:-$1/config.json}" skip
     if [[ "$network" = both ]]; then
@@ -227,6 +228,7 @@ sbd_entry_lookup() {
     jq -ce --arg id "$id" '[.nodes[] | select(.id==$id)] | select(length==1) | .[0]' "$stage/registry.json" > "$stage/entry-node.json" || { _error '未找到唯一节点元数据'; return 1; }
 }
 
+# 校验 inbound 与 registry 事实一致；delete 只核对身份，replace_tls 允许替换旧证书但仍先核对身份。
 sbd_entry_align() {
     local stage="$1" node="$2" scope="${3:-all}" profile kind id expected value key public sha cert provider
     profile=$(sbd_entry_text "$node" .profile 配置档) || return 1
@@ -423,6 +425,8 @@ sbd_entry_align_classic() {
     [[ "$scope" != delete ]] || return 0
     if [[ "$profile" = *_ws ]]; then
         sbd_entry_cdn "$(jq -c '.ingress + {path:.client.transport.path}' "$node")" || return 1
+        # 升级前的 CDN WS 节点没有接收头键：仅在完全缺省时按默认补齐；
+        # 已写入其他值的漂移仍交给下方严格校验拒绝。
         if jq -e '(has("tls")|not) and .transport.type=="ws" and
             (.transport|has("early_data_header_name")|not) and (.transport.max_early_data // 0)==0
         ' "$stage/entry-inbound.json" >/dev/null; then

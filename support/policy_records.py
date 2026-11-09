@@ -246,6 +246,7 @@ def is_domain(value):
 
 
 def references(config):
+    """校验 tag 引用、bootstrap/detour 环与 DNS 响应顺序；缺失、循环或顺序破坏一律拒绝。"""
     dns = config.get("dns", {})
     route = config.get("route", {})
     servers = {s.get("tag"): s for s in dns.get("servers", []) if s.get("tag")}

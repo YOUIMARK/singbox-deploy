@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert a WARP registration response into a native sing-box endpoint."""
+"""把 WARP 注册响应转换为原生 sing-box endpoint。"""
 
 import base64
 import binascii
@@ -21,6 +21,7 @@ class InvalidResponse(ValueError):
 def _wireguard_endpoint(data):
     if not isinstance(data, dict):
         return None
+    # 注册接口可能把 endpoints 放在顶层、config 或 data 下，逐个容器查找。
     containers = [data]
     for key in ("config", "data"):
         child = data.get(key)

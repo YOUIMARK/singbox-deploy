@@ -8,7 +8,7 @@ import sys
 
 
 CONFIG_PART_NAMES = (
-    # 当前布局：一个顶层字段一个分片，编号按 sing-box 官方顶层顺序。
+    # 历史分片布局：一个顶层字段一个分片，编号按 sing-box 官方顶层顺序。
     "00_empty.json",
     "01_log.json",
     "02_dns.json",
@@ -24,7 +24,7 @@ CONFIG_PART_NAMES = (
     "12_services.json",
     "13_experimental.json",
     "99_extra.json",
-    # 旧布局：升级后尚未重新分片的部署仍可能保留这些文件。
+    # 更早的合并分片布局：升级后尚未收敛的部署仍可能保留这些文件。
     "00_base.json",
     "10_dns.json",
     "20_endpoints.json",

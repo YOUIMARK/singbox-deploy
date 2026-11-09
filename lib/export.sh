@@ -41,7 +41,7 @@ print(urlencode(data, quote_via=quote, safe=""))
 PY
     ) || { _error '分享查询参数须为字符串对象，不能包含 null'; return 1; }
     fragment=$(sbd_uri_escape "$name") || { _error '分享名称编码失败'; return 1; }
-    # 716 的 authority 之后直接接查询串；不写空路径斜杠，与主流客户端保持一致。
+    # 查询串直接跟在 authority 后（参照 Xray-core #716 的链接结构），不写空路径斜杠。
     printf '%s://%s@%s:%s' "$scheme" "$userinfo" "$authority" "$port"
     [[ -z "$parameters" ]] || printf '?%s' "$parameters"
     printf '#%s\n' "$fragment"
@@ -134,6 +134,7 @@ sbd_share_ws() {
     jq -e '(.client.transport|keys-["type","path","headers"]|length)==0 and
         (.client.transport.headers|keys-["Host"]|length)==0' "$node" >/dev/null || { _error 'URI 不能完整表达额外 WS 参数或请求头，保留旧输出'; return 1; }
     query=$(sbd_share_tls_query "$node" "$type") || return 1
+    # URI 用 path 的 ?ed= 表达早期数据；原生客户端 JSON 的 path 不含查询串。
     query=$(jq --slurpfile node "$node" --arg type "$type" --arg ed "$SBD_WS_EARLY_DATA" '. + {type:"ws",security:"tls",host:$node[0].ingress.host,
         path:($node[0].client.transport.path + "?ed=" + $ed),
         encryption:(if $type=="vmess" then "auto" else "none" end)}' <<< "$query") || return 1
@@ -212,6 +213,7 @@ sbd_export_metadata_check() {
     ' "$1" >/dev/null 2>&1 || { _error '节点元数据缺失、重复或无效，保留旧输出'; return 1; }
 }
 
+# 从 registry 全量重建 exports：逐节点校验并生成客户端 JSON/分享链接，失败时保留旧输出。
 sbd_export_rebuild() {
     local stage="$1" next="$1/exports-next" work="$1/export-work" count index id name outbound uri content
     sbd_export_metadata_check "$stage/registry.json" || return 1

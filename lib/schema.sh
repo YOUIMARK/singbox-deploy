@@ -44,6 +44,7 @@ sbd_config_stage_current() {
     cp -- "$source" "$target" || { _error "暂存配置失败: $source"; return 1; }
 }
 
+# 流水线：核心生成 Schema → Draft 2020-12 校验 → format → check；全部通过后才替换暂存配置。
 sbd_prepare_config() {
     local stage="$1" version
     version=$(sbd_version) || return 1

@@ -78,6 +78,7 @@ sbd_material_note() {
     sbd_record_write "$journal" "$content"
 }
 
+# 只回收 journal 记录且未被活跃配置/登记引用的材料；仍被引用的新候选保留现场并失败。
 sbd_material_cleanup() {
     local journal="$1" key="$2" paths path file referenced
     sbd_material_journal_valid "$journal" || return 1
@@ -108,6 +109,7 @@ sbd_work_remove() {
     rm -rf -- "$resolved" || { _error "恢复目录清理失败: $resolved"; return 1; }
 }
 
+# 事务记录只有在格式、阶段、资源存在性与恢复副本都一致时才可信；任何不一致都保留现场。
 sbd_journal_valid() {
     local dir="$1" key had kind keys
     if ! sbd_object "$dir/journal.json" || ! jq -e '
@@ -288,6 +290,8 @@ sbd_apply_signal() {
     exit 1
 }
 
+# 事务流程：暂存副本 → 快照 → 执行回调并通过 Schema/format/check → 发布 → 标记 accepted；
+# 任一步失败都由 journal 恢复到操作前状态。
 sbd_apply_locked() {
     local callback="$1"; shift
     local dir="$SBD_WORK/active" stage="$SBD_WORK/active/after" runtime key revision version core content
@@ -460,7 +464,7 @@ sbd_migrate_legacy_layout_locked() {
     fi
     backup=$(mktemp -d "$SBD_WORK/legacy-layout.XXXXXX") || { sbd_layout_stage_remove "$stage"; return 1; }
     if [[ "$migrate_config" = true ]]; then
-        # config.json is the marker for the new layout; publish it only after its Schema.
+        # config.json 是新布局的完成标记：先发布 Schema，再发布它。
         if ! sbd_atomic_file "$stage/schema.json" "$SBD_SCHEMA" ||
             ! sbd_atomic_file "$stage/config.json" "$SBD_CONFIG"; then
             sbd_layout_stage_remove "$stage"
@@ -471,8 +475,8 @@ sbd_migrate_legacy_layout_locked() {
     for name in state.json registry.json; do
         [[ -f "$SBD_LEGACY_DATA_DIR/$name" ]] || continue
         if [[ -e "$SBD_STATE_DIR/$name" ]]; then
-            # 安装器发布新版时先在 state/ 写入空默认；只有第一代配置源仍在（升级/重试路径）
-            # 且目标尚未含真实数据时，才用旧登记数据覆盖。其余情形保留新布局优先。
+            # 第一代升级时安装器会先写入空默认：仅旧配置源仍在且目标尚无真实数据时继承旧登记，
+            # 其余情形保持新布局优先。
             if [[ ! -f "$SBD_LEGACY_CONF_DIR/config.json" ]] || jq -e --arg name "$name" '
                     if $name == "state.json" then (.revision // 0) > 0
                     else ((.nodes // [])|length) > 0 or ((.tls // {})|length) > 0 or ((.policy // {})|length) > 0
@@ -480,8 +484,8 @@ sbd_migrate_legacy_layout_locked() {
                 continue
             fi
             if [[ "$name" = state.json ]]; then
-                # 只继承旧布局的历史 revision；manager_version、installed、core_version 等
-                # 由安装器与新布局写入的元数据必须保留，否则状态菜单会显示错误的版本。
+                # 只继承旧布局的 revision；manager_version、installed、core_version 等
+                # 由安装器或新布局写入，保留它们，否则状态菜单会显示错误的版本。
                 content=$(jq -n --slurpfile legacy "$SBD_LEGACY_DATA_DIR/$name" \
                     --slurpfile current "$SBD_STATE_DIR/$name" \
                     '$legacy[0] * $current[0] * {revision: ($legacy[0].revision // 0)}') ||
@@ -522,6 +526,7 @@ sbd_migrate_legacy_layout_locked() {
 
 sbd_migrate_legacy_layout() { sbd_write_lock sbd_migrate_legacy_layout_locked; }
 
+# 恢复最近一次已接受事务的 before 快照：先校验候选，再按记录替换资源并恢复运行态。
 sbd_history_restore_locked() {
     local previous="$SBD_WORK/previous" active="$SBD_WORK/active" destination="$SBD_WORK/active/target" kind runtime content revision binary
     sbd_recover_locked || return 1
@@ -531,7 +536,7 @@ sbd_history_restore_locked() {
     runtime=unchanged; [[ "$kind" = install ]] || runtime=$(sbd_service_state) || return 1
     mkdir -p "$active" || { _error '创建恢复候选失败'; return 1; }
     cp -a "$previous" "$destination" || { _error '保存完整恢复目标失败'; sbd_work_remove "$active"; return 1; }
-    # 目标仍是完整快照；恢复失败时 active/before 是本次操作前的现场。
+    # 恢复目标仍是完整快照；失败回滚时 active/before 保留本次操作前的现场。
     if [[ -f "$destination/before/config" ]]; then
         mkdir "$active/check" || return 1
         cp "$destination/before/config" "$active/check/config.json" || return 1

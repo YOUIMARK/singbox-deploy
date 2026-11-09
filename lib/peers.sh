@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+# 第三方 WARP 注册接口；返回 sing-box endpoint，失败时不修改配置。
 SBD_PEER_WARP_API='https://warp.cloudflare.now.cc/?run=register&format=sing-box'
 
 sbd_peer_change() {

@@ -924,6 +924,7 @@ def parse_vmess_legacy(raw, fragment):
 
 def parse_vmess(link):
     raw = link[len("vmess://") :]
+    # vmess:// 有整段 Base64 JSON（无 @）和 URL（带 @）两种形态。
     if "@" not in raw.split("#", 1)[0].split("?", 1)[0]:
         body, _, fragment = raw.partition("#")
         if "?" in body:
@@ -1023,6 +1024,7 @@ def ss_password_value(method, password):
     if method not in ("2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305"):
         return password
     expected = 16 if method == "2022-blake3-aes-128-gcm" else 32
+    # SS2022 单段密钥的 Base64 文本长度固定（16 字节 24 字符、32 字节 44 字符），先按长度拒绝。
     parts = password.split(":")
     if len(parts) > 2:
         fail("Shadowsocks 2022 密钥只能包含一个服务端:用户分隔冒号")
@@ -1179,6 +1181,7 @@ def parse(link):
     fail("无法识别分享链接协议；当前支持 %s" % SUPPORTED_TEXT)
 
 
+# 按协议头扫描而非按空白切分：多条链接可无分隔符相连，vmess/vless 中的 ss:// 子串也不会被单独识别。
 def split_links(text):
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     parts = []
@@ -1203,6 +1206,7 @@ def split_links(text):
     return [part for part in parts if part]
 
 
+# 整段 Base64 可递归展开（最多 3 层）；批量模式逐条记录失败，不中断其余链接。
 def parse_many_collect(text, depth=0, skip_errors=False, prefix=""):
     if depth > 3:
         fail("Base64 分享链接嵌套层数过多")

@@ -143,6 +143,7 @@ sbd_outbound_read_tag() {
     fi
 }
 
+# 首条链接之后用短超时继续吸取多行：链接行追加到 INPUTS，其余行留给下一个 tag。
 sbd_outbound_read_links() {
     local line='' rc=0
     SBD_OUTBOUND_INPUTS=("${SBD_REPLY%$'\r'}")
