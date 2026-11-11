@@ -5,6 +5,21 @@ export PYTHONSAFEPATH=1
 
 _error() { printf '[错误] %s\n' "$*" >&2; }
 
+sbd_install_ensure_curl() {
+    command -v curl >/dev/null 2>&1 && return 0
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update || { _error 'apt 索引更新失败'; return 1; }
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ||
+            { _error '安装 curl 失败'; return 1; }
+    elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache curl || { _error '安装 curl 失败'; return 1; }
+    else
+        _error '缺少 curl，且未找到 apt-get/apk'
+        return 1
+    fi
+    command -v curl >/dev/null 2>&1 || { _error 'curl 安装后仍不可用'; return 1; }
+}
+
 sbd_install_manifest() {
     local source="$1" rel
     local -A seen=()
@@ -59,10 +74,8 @@ sbd_install_fetch() {
     [[ "$url" = https://* ]] || { _error '安装下载地址必须使用 HTTPS'; return 1; }
     if command -v curl >/dev/null 2>&1; then
         curl -fLsS --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 "$url" -o "$target" || { _error "下载失败: $url"; return 1; }
-    elif command -v wget >/dev/null 2>&1; then
-        wget -q -T 120 -O "$target" "$url" || { _error "下载失败: $url"; return 1; }
     else
-        _error '需要 curl 或 wget，当前未下载任何发布文件'
+        _error '需要 curl 才能安全下载发布文件'
         return 1
     fi
     [[ -s "$target" ]] || { _error "下载为空: $url"; return 1; }
@@ -77,6 +90,7 @@ sbd_install_commit() {
 
 sbd_install_download() {
     local stage="$1" rel ref="${SBD_INSTALL_REF:-}" base
+    sbd_install_ensure_curl || return 1
     if [[ -z "$ref" ]]; then
         sbd_install_fetch 'https://api.github.com/repos/YOUIMARK/singbox-deploy/commits/main' "$stage/commit.json" || return 1
         ref=$(sbd_install_commit "$stage/commit.json") || { _error '无法解析安装提交'; return 1; }

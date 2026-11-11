@@ -32,6 +32,14 @@ draft_required() {
     t_run 1 sbd_dependencies
     t_contains "$CASE_TMP/output" 'Draft202012Validator'
 }
+curl_required() {
+    command() {
+        if [[ "$*" = '-v curl' ]]; then return 1; fi
+        builtin command "$@"
+    }
+    t_run 1 sbd_dependencies
+    t_contains "$CASE_TMP/output" '缺少依赖: curl'
+}
 go_memlimit_contract() {
     local mem="$CASE_TMP/meminfo" cg="$CASE_TMP/cgroup"
     mkdir -p "$cg/memory" || exit 1
@@ -114,6 +122,7 @@ t_case '发行版契约' os_contract
 t_case '架构契约' arch_contract
 t_case '路径上下文与根目录拒绝' context_contract
 t_case '真实 Draft202012 依赖不可降级' draft_required
+t_case '安全下载要求 curl' curl_required
 t_case 'Go 软内存限制按物理内存与 cgroup 最小值计算' go_memlimit_contract
 t_case '公网 IPv4 响应规范化并优先返回' public_ip_ipv4
 t_case '公网 IPv4 失败后回退 IPv6' public_ip_ipv6_fallback

@@ -106,12 +106,9 @@ sbd_go_memlimit_mb() {
 sbd_dependencies() {
     local tool
     (( BASH_VERSINFO[0] >= 5 )) || { _error '需要 Bash 5 或更新版本'; return 1; }
-    for tool in jq python3 flock tar cmp mktemp readlink openssl sha256sum; do
+    for tool in curl jq python3 flock tar cmp mktemp readlink openssl sha256sum; do
         command -v "$tool" >/dev/null 2>&1 || { _error "缺少依赖: $tool"; return 1; }
     done
-    if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
-        _error '缺少 curl/wget 下载客户端'; return 1
-    fi
     if ! python3 -I -c 'from jsonschema import Draft202012Validator' >/dev/null 2>&1; then
         _error 'Python jsonschema 必须提供 Draft202012Validator，不能降级为仅运行 check'
         return 1
@@ -158,10 +155,8 @@ sbd_download() {
     [[ "$url" = https://* ]] || { _error '下载地址必须使用 HTTPS'; return 1; }
     if command -v curl >/dev/null 2>&1; then
         curl -fLsS --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 "$url" -o "$target" || { _error "下载失败: $url"; return 1; }
-    elif command -v wget >/dev/null 2>&1; then
-        wget -q -T 120 -O "$target" "$url" || { _error "下载失败: $url"; return 1; }
     else
-        _error '需要 curl 或 wget'
+        _error '需要 curl 才能安全下载'
         return 1
     fi
     [[ -s "$target" ]] || { _error "下载结果为空: $url"; return 1; }
