@@ -60,7 +60,7 @@ sbd_install_fetch() {
     if command -v curl >/dev/null 2>&1; then
         curl -fLsS --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 "$url" -o "$target" || { _error "下载失败: $url"; return 1; }
     elif command -v wget >/dev/null 2>&1; then
-        wget --max-redirect=0 -q -T 120 -O "$target" "$url" || { _error "下载失败: $url"; return 1; }
+        wget -q -T 120 -O "$target" "$url" || { _error "下载失败: $url"; return 1; }
     else
         _error '需要 curl 或 wget，当前未下载任何发布文件'
         return 1
