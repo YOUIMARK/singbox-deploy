@@ -119,7 +119,7 @@ fetch_contract() {
     sbd_download() {
         printf '%s\n' "$1" >> "$CASE_TMP/downloads"
         if [[ "$1" = *api.github.com* ]]; then
-            printf '{"tag_name":"v1.14.4","draft":false,"prerelease":false,"assets":[{"name":"sing-box-1.14.4-linux-arm64-musl.tar.gz"}]}' > "$2"
+            printf '{"tag_name":"v1.14.4","draft":false,"prerelease":false,"assets":[{"name":"sing-box-1.14.4-linux-arm64-musl.tar.gz","digest":"sha256:4bc37329ae8e38e8085fc102535e20204bc6fb3ff32b1f1b19b4a4828c048f9b"}]}' > "$2"
         else printf 'transport-boundary' > "$2"; fi
     }
     sbd_engine_unpack() { printf '%s\n' "$3 $4" > "$CASE_TMP/unpack-args"; }

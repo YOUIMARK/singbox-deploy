@@ -24,3 +24,4 @@ support/dns_settings.py
 support/outbound_link.py
 support/warp.py
 support/uninstall_plan.py
+SHA256SUMS

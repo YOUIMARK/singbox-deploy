@@ -368,6 +368,12 @@ def main():
             config = json.load(f)
         with open(stage + "/registry.json", encoding="utf-8") as f:
             registry = json.load(f)
+
+        def request_data():
+            if len(sys.argv) > 3:
+                return sys.argv[3]
+            return sys.stdin.read()
+
         if command == "align":
             align(config, registry)
             return 0
@@ -375,13 +381,13 @@ def main():
             references(config)
             return 0
         if command == "defaults":
-            prepend_defaults(config, registry, json.loads(sys.argv[3]))
+            prepend_defaults(config, registry, json.loads(request_data()))
             print(json.dumps({"config": config, "registry": registry}, ensure_ascii=False))
             return 0
         if command == "edit":
-            edit(config, registry, json.loads(sys.argv[3]))
+            edit(config, registry, json.loads(request_data()))
         elif command == "adopt":
-            adopt(config, registry, json.loads(sys.argv[3]))
+            adopt(config, registry, json.loads(request_data()))
         elif command == "reset":
             reset(config, registry, sys.argv[3])
         elif command == "sync":

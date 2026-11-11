@@ -50,7 +50,7 @@ sbd_resolver_race() {
 sbd_resolver_switch() {
     local stage="$1" address="$2" content
     sbd_policy_begin "$stage" || return 1
-    content=$(python3 "$SBD_APP/support/dns_settings.py" switch "$stage" "$address") || return 1
+    content=$(python3 -I "$SBD_APP/support/dns_settings.py" switch "$stage" "$address") || return 1
     sbd_record_write "$stage/dns-bundle.json" "$content" || return 1
     content=$(jq -c .config "$stage/dns-bundle.json") || return 1
     sbd_record_write "$stage/config.json" "$content" || return 1
@@ -62,7 +62,7 @@ sbd_resolver_switch() {
 sbd_resolver_unchanged() {
     local address="$1" report
     [[ -f "$SBD_CONFIG" && -f "$SBD_REGISTRY" ]] || return 1
-    report=$(python3 "$SBD_APP/support/dns_settings.py" unchanged "$SBD_CONFIG" "$SBD_REGISTRY" "$address") || return 1
+    report=$(python3 -I "$SBD_APP/support/dns_settings.py" unchanged "$SBD_CONFIG" "$SBD_REGISTRY" "$address") || return 1
     jq -er '.unchanged' <<< "$report"
 }
 
@@ -73,7 +73,7 @@ sbd_resolver_summary() {
         printf '  '; sbd_ui_status_field '解析策略: 未设置'; printf '\n'
         return 0
     fi
-    report=$(python3 "$SBD_APP/support/dns_settings.py" summary "$config") || return 1
+    report=$(python3 -I "$SBD_APP/support/dns_settings.py" summary "$config") || return 1
     address=$(jq -er .address <<< "$report") && strategy=$(jq -er .strategy <<< "$report") && race=$(jq -er .race <<< "$report") || return 1
     printf '  '; sbd_ui_status_field "当前 DNS: $address"; printf '\n'
     printf '  '; sbd_ui_status_field "解析策略: $strategy"; printf '\n'
@@ -103,7 +103,7 @@ sbd_resolver_menu() {
                 while true; do
                     sbd_read_optional 'DNS 地址（留空取消）' || return 0; address="$SBD_REPLY"
                     [[ -n "$address" ]] || break
-                    if python3 "$SBD_APP/support/dns_settings.py" parse "$address" >/dev/null; then break; fi
+                    if python3 -I "$SBD_APP/support/dns_settings.py" parse "$address" >/dev/null; then break; fi
                 done
                 [[ -n "$address" ]] || continue ;;
             7)

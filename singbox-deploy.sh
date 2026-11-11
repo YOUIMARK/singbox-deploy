@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -u
 umask 077
+export PYTHONSAFEPATH=1
 
-sbd_loader_lock_path() { printf '/run/lock/singbox-deploy.lock\n'; }
+sbd_loader_lock_path() { printf '%s/run/singbox-deploy.lock\n' "$1"; }
 
 sbd_cli_require_root() {
     [[ "$EUID" = 0 ]] || { printf '[错误] 请以 root 运行 sd\n' >&2; return 1; }
@@ -16,9 +17,13 @@ sbd_bootstrap() {
     # 与安装发布共用同一把锁，加载期间不能跨两个发布版本读取模块。
     if [[ "$#" = 0 && "${app##*/}" = app ]]; then
         sbd_cli_require_root || return 1
-        lock_file=$(sbd_loader_lock_path) || return 1
-        if ! mkdir -p -- "$(dirname -- "$lock_file")" || ! { exec {loader_fd}>"$lock_file"; }; then
+        lock_file=$(sbd_loader_lock_path "$(dirname -- "$app")") || return 1
+        if ! mkdir -p -m 700 -- "$(dirname -- "$lock_file")" || ! chmod 700 -- "$(dirname -- "$lock_file")" || ! { exec {loader_fd}>"$lock_file"; }; then
             printf '[错误] 无法取得模块加载锁\n' >&2; return 1
+        fi
+        if [[ -L "$lock_file" || ! -f "$lock_file" ]]; then
+            exec {loader_fd}>&-
+            printf '[错误] 模块加载锁路径不安全\n' >&2; return 1
         fi
         if ! flock -n "$loader_fd"; then
             exec {loader_fd}>&-

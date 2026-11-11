@@ -64,7 +64,7 @@ sbd_entry_deliver() {
 }
 
 sbd_entry_socket_available() {
-    python3 - "$1" "$2" "$3" <<'PY'
+    python3 -I - "$1" "$2" "$3" <<'PY'
 import socket, sys
 host, port, network = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 family = socket.AF_INET6 if ":" in host else socket.AF_INET
@@ -88,7 +88,7 @@ sbd_entry_port() {
             sbd_entry_port "$stage" "$listen" "$port" udp "$exclude" "$config"
         return $?
     fi
-    skip=$(python3 - "$config" "$listen" "$port" "$network" "$exclude" <<'PY'
+    skip=$(python3 -I - "$config" "$listen" "$port" "$network" "$exclude" <<'PY'
 import ipaddress, json, sys
 path, host, port, network, exclude = sys.argv[1:]
 def overlap(first, second):
@@ -129,20 +129,21 @@ sbd_entry_cert_sha() (
 
 sbd_entry_public_key() {
     local key="$1" stage="$2"
-    python3 - "$key" "$stage/reality-private.der" <<'PY' || { _error 'Reality 私钥格式无效'; return 1; }
+    python3 -I -c '
 import base64, pathlib, sys
 try:
-    key = base64.urlsafe_b64decode(sys.argv[1] + "=" * (-len(sys.argv[1]) % 4))
+    raw = sys.stdin.read().strip()
+    key = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
     if len(key) != 32:
         raise ValueError()
-    pathlib.Path(sys.argv[2]).write_bytes(bytes.fromhex("302e020100300506032b656e04220420") + key)
+    pathlib.Path(sys.argv[1]).write_bytes(bytes.fromhex("302e020100300506032b656e04220420") + key)
 except ValueError:
     raise SystemExit(1)
-PY
+' "$stage/reality-private.der" <<< "$key" || { _error 'Reality 私钥格式无效'; return 1; }
     if ! openssl pkey -inform DER -in "$stage/reality-private.der" -pubout -outform DER > "$stage/reality-public.der" 2>/dev/null; then
         _error 'Reality 私钥无法导出公钥'; return 1
     fi
-    python3 - "$stage/reality-public.der" <<'PY' || { _error 'Reality 公钥编码无法识别'; return 1; }
+    python3 -I - "$stage/reality-public.der" <<'PY' || { _error 'Reality 公钥编码无法识别'; return 1; }
 import base64, pathlib, sys
 data = pathlib.Path(sys.argv[1]).read_bytes()
 if not data.startswith(bytes.fromhex("302a300506032b656e032100")) or len(data) != 44:
@@ -152,7 +153,7 @@ PY
 }
 
 sbd_entry_provider_name() {
-    python3 - "$1" "$2" <<'PY' || { _error 'SNI 不在 provider 的签发域名内'; return 1; }
+    python3 -I - "$1" "$2" <<'PY' || { _error 'SNI 不在 provider 的签发域名内'; return 1; }
 import json, sys
 domains = json.loads(sys.argv[1]).get("domain", [])
 if isinstance(domains, str):
@@ -186,7 +187,7 @@ sbd_entry_tls() {
             public=$(awk -F': ' 'tolower($1) ~ /^public/ {print $2}' "$stage/reality-keys")
             short=$("$SBD_BINARY" generate rand --hex 8) || { _error '核心生成 short_id 失败'; return 1; }
             [[ -n "$private" && -n "$public" && "$short" =~ ^[0-9a-f]{16}$ ]] || { _error '核心密钥输出不完整'; return 1; }
-            content=$(jq -n --arg name "$name" --arg key "$private" --arg short "$short" --argjson source "$source" \
+            content=$(jq -n --arg name "$name" --rawfile key <(printf '%s' "$private") --arg short "$short" --argjson source "$source" \
                 '{enabled:true,server_name:$name,reality:{enabled:true,handshake:$source.handshake,private_key:$key,short_id:[$short]}}') || return 1
             sbd_record_write "$stage/source-server.json" "$content" || return 1
             content=$(jq -n --arg name "$name" --arg key "$public" --arg short "$short" \
@@ -297,32 +298,33 @@ sbd_entry_align() {
 }
 
 sbd_entry_uuid() {
-    python3 - "$1" <<'PY' || { _error '请输入合法 UUID'; return 1; }
-import sys, uuid
+    python3 -I -c 'import sys, uuid
 try:
-    print(uuid.UUID(sys.argv[1]))
+    print(uuid.UUID(sys.stdin.read().strip()))
 except ValueError:
-    raise SystemExit(1)
-PY
+    raise SystemExit(1)' || { _error '请输入合法 UUID'; return 1; }
 }
 
 sbd_entry_ss_key() {
-    local method="$1" password="$2"
+    local method="$1" password
     case "$method" in
-        aes-256-gcm) [[ -n "$password" ]] || { _error 'Shadowsocks 密码不能为空'; return 1; } ;;
+        aes-256-gcm)
+            password=$(cat)
+            password=${password%$'\n'}
+            [[ -n "$password" ]] || { _error 'Shadowsocks 密码不能为空'; return 1; }
+            ;;
         2022-blake3-aes-256-gcm|2022-blake3-chacha20-poly1305)
-            python3 - "$password" <<'PY' || { _error 'SS2022 需要标准 Base64 编码的 32-byte 密钥'; return 1; }
-import base64, binascii, sys
+            python3 -I -c 'import base64, binascii, sys
 try:
-    key = base64.b64decode(sys.argv[1], validate=True)
+    key = base64.b64decode(sys.stdin.read().strip(), validate=True)
     if len(key) != 32:
         raise ValueError()
 except (ValueError, binascii.Error):
-    raise SystemExit(1)
-PY
+    raise SystemExit(1)' || { _error 'SS2022 需要标准 Base64 编码的 32-byte 密钥'; return 1; }
             ;;
         *) _error '仅支持已选的三个 Shadowsocks 算法'; return 1 ;;
     esac
+    return 0
 }
 
 sbd_entry_ws_path() {
@@ -353,14 +355,14 @@ sbd_entry_create_classic() {
         shadowsocks)
             type=shadowsocks
             method=$(sbd_entry_text "$stage/request.json" .method 算法) && credential=$(sbd_entry_text "$stage/request.json" .password 密码) || return 1
-            sbd_entry_ss_key "$method" "$credential" || return 1
+            sbd_entry_ss_key "$method" <<< "$credential" || return 1
             network=$(jq -r '.network // "both"' "$stage/request.json") || return 1
             case "$network" in both|tcp|udp) ;; *) _error 'Shadowsocks 监听网络无效'; return 1 ;; esac
             ;;
         vmess_ws|vless_ws|vless_reality)
             type=vless; [[ "$profile" != vmess_ws ]] || type=vmess
             network=tcp
-            uuid=$(sbd_entry_text "$stage/request.json" .uuid UUID) && uuid=$(sbd_entry_uuid "$uuid") || return 1
+            uuid=$(sbd_entry_text "$stage/request.json" .uuid UUID) && uuid=$(sbd_entry_uuid <<< "$uuid") || return 1
             credential="$uuid"
             ;;
     esac
@@ -382,7 +384,7 @@ sbd_entry_create_classic() {
     id=$(sbd_entry_new_id "$stage") || return 1
     tag=$(sbd_entry_tag "$stage" "$profile" "$port") || return 1
     content=$(jq -n --arg profile "$profile" --arg type "$type" --arg id "$id" --arg tag "$tag" --arg listen "$listen" --argjson port "$port" \
-        --arg credential "$credential" --arg method "$method" --arg network "$network" --argjson cdn "$cdn" --arg early_header "$SBD_WS_EARLY_DATA_HEADER" \
+        --rawfile credential <(printf '%s' "$credential") --arg method "$method" --arg network "$network" --argjson cdn "$cdn" --arg early_header "$SBD_WS_EARLY_DATA_HEADER" \
         --slurpfile tls "$stage/source-server.json" '
         {type:$type,tag:$tag,listen:$listen,listen_port:$port} +
         (if $profile=="shadowsocks" then {method:$method,password:$credential} + (if $network!="both" then {network:$network} else {} end)
@@ -393,7 +395,7 @@ sbd_entry_create_classic() {
     content=$(jq --slurpfile inbound "$stage/new-inbound.json" '.inbounds=((.inbounds // [])+$inbound)' "$stage/config.json") || return 1
     sbd_record_write "$stage/config.json" "$content" || return 1
     content=$(jq -n --arg profile "$profile" --arg type "$type" --arg id "$id" --arg tag "$tag" --arg name "$name" --arg server "$server" --argjson port "$external" \
-        --arg credential "$credential" --arg method "$method" --arg network "$network" --argjson cdn "$cdn" \
+        --rawfile credential <(printf '%s' "$credential") --arg method "$method" --arg network "$network" --argjson cdn "$cdn" \
         --slurpfile tls "$stage/source-client.json" --slurpfile source "$stage/source-facts.json" '
         {id:$id,name:$name,profile:$profile,inbound_tag:$tag,tls_source:$source[0],share:{},client:
           ({type:$type,server:$server,server_port:$port} +
@@ -417,7 +419,7 @@ sbd_entry_align_classic() {
         jq -e --slurpfile node "$node" '.type=="shadowsocks" and .password==$node[0].client.password and ((.users // [])|length==0) and ((.destinations // [])|length==0)' "$stage/entry-inbound.json" >/dev/null || { _error 'Shadowsocks 身份或单用户结构不一致'; return 1; }
         [[ "$scope" != delete ]] || return 0
         method=$(sbd_entry_text "$node" .client.method 算法) && password=$(sbd_entry_text "$node" .client.password 密码) || return 1
-        sbd_entry_ss_key "$method" "$password" || return 1
+        sbd_entry_ss_key "$method" <<< "$password" || return 1
         jq -e --slurpfile node "$node" '.method==$node[0].client.method and (.network // "both")==($node[0].client.network // "both")' "$stage/entry-inbound.json" >/dev/null || { _error 'Shadowsocks 算法或监听网络发生漂移'; return 1; }
         return 0
     fi
@@ -483,7 +485,7 @@ sbd_entry_create() {
     sbd_entry_tls "$stage" "$source" || return 1
     id=$(sbd_entry_new_id "$stage") || return 1
     tag=$(sbd_entry_tag "$stage" "$profile" "$port") || return 1
-    content=$(jq -n --arg id "$id" --arg tag "$tag" --arg type "$type" --arg listen "$listen" --argjson port "$port" --arg password "$password" \
+    content=$(jq -n --arg id "$id" --arg tag "$tag" --arg type "$type" --arg listen "$listen" --argjson port "$port" --rawfile password <(printf '%s' "$password") \
         --slurpfile tls "$stage/source-server.json" --slurpfile request "$stage/request.json" '
         (if $type=="hysteria2" then ($request[0].server_options // {}) else {} end) +
         {type:$type,tag:$tag,listen:$listen,listen_port:$port,users:[{name:$id,password:$password}],tls:$tls[0]} +
@@ -491,7 +493,7 @@ sbd_entry_create() {
     sbd_record_write "$stage/new-inbound.json" "$content" || return 1
     content=$(jq --slurpfile inbound "$stage/new-inbound.json" '.inbounds=((.inbounds // []) + $inbound)' "$stage/config.json") || return 1
     sbd_record_write "$stage/config.json" "$content" || return 1
-    content=$(jq -n --arg id "$id" --arg tag "$tag" --arg profile "$profile" --arg name "$name" --arg type "$type" --arg server "$server" --argjson port "$external" --arg password "$password" \
+    content=$(jq -n --arg id "$id" --arg tag "$tag" --arg profile "$profile" --arg name "$name" --arg type "$type" --arg server "$server" --argjson port "$external" --rawfile password <(printf '%s' "$password") \
         --slurpfile tls "$stage/source-client.json" --slurpfile source "$stage/source-facts.json" --slurpfile share "$stage/source-share.json" --slurpfile request "$stage/request.json" '
         {id:$id,name:$name,profile:$profile,inbound_tag:$tag,tls_source:$source[0],share:$share[0],client:
         ((if $type=="hysteria2" then ($request[0].client_options // {}) else {} end) +
@@ -518,15 +520,15 @@ sbd_entry_change() {
             [[ -n "$value" ]] || { _error '密码不能为空'; return 1; }
             case "$profile" in
                 shadowsocks)
-                    sbd_entry_ss_key "$(jq -r '.client.method' "$stage/entry-node.json")" "$value" || return 1
+                    sbd_entry_ss_key "$(jq -r '.client.method' "$stage/entry-node.json")" <<< "$value" || return 1
                     source=password; tls=password ;;
-                vmess_ws|vless_ws|vless_reality) value=$(sbd_entry_uuid "$value") || return 1; source=uuid; tls=uuid ;;
+                vmess_ws|vless_ws|vless_reality) value=$(sbd_entry_uuid <<< "$value") || return 1; source=uuid; tls=uuid ;;
                 *) source=password; tls=password ;;
             esac
-            content=$(jq --arg value "$value" --arg tag "$tag" --arg profile "$profile" --arg key "$source" '
+            content=$(jq --rawfile value <(printf '%s' "$value") --arg tag "$tag" --arg profile "$profile" --arg key "$source" '
                 (.inbounds[] | select(.tag==$tag)) |= (if $profile=="shadowsocks" then .password=$value else .users[0][$key]=$value end)' "$stage/config.json") || return 1
             sbd_record_write "$stage/config.json" "$content" || return 1
-            content=$(jq --arg value "$value" --arg key "$tls" '.client[$key]=$value' "$stage/entry-node.json") || return 1 ;;
+            content=$(jq --rawfile value <(printf '%s' "$value") --arg key "$tls" '.client[$key]=$value' "$stage/entry-node.json") || return 1 ;;
         external)
             sbd_entry_host "$(jq -r '.server' <<< "$value")" || return 1
             source=$(sbd_integer "$(jq -r '.server_port' <<< "$value")" 1 65535) || { _error '映射端口无效'; return 1; }
@@ -559,12 +561,12 @@ sbd_entry_change() {
             ' "$stage/entry-node.json") || return 1 ;;
         hy2)
             [[ "$(jq -r '.profile' "$stage/entry-node.json")" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
-            content=$(jq --arg tag "$tag" --argjson value "$value" '(.inbounds[]|select(.tag==$tag)) |=
-                (del(.obfs,.up_mbps,.down_mbps,.ignore_client_bandwidth) + ($value.server_options // {}) +
-                (if $value.obfs!=null then {obfs:$value.obfs} else {} end))' "$stage/config.json") || return 1
+            content=$(jq --arg tag "$tag" --slurpfile value <(printf '%s' "$value") '(.inbounds[]|select(.tag==$tag)) |=
+                (del(.obfs,.up_mbps,.down_mbps,.ignore_client_bandwidth) + ($value[0].server_options // {}) +
+                (if $value[0].obfs!=null then {obfs:$value[0].obfs} else {} end))' "$stage/config.json") || return 1
             sbd_record_write "$stage/config.json" "$content" || return 1
-            content=$(jq --argjson value "$value" '.client |= (del(.obfs,.up_mbps,.down_mbps) + ($value.client_options // {}) +
-                (if $value.obfs!=null then {obfs:$value.obfs} else {} end))' "$stage/entry-node.json") || return 1 ;;
+            content=$(jq --slurpfile value <(printf '%s' "$value") '.client |= (del(.obfs,.up_mbps,.down_mbps) + ($value[0].client_options // {}) +
+                (if $value[0].obfs!=null then {obfs:$value[0].obfs} else {} end))' "$stage/entry-node.json") || return 1 ;;
         tls)
             case "$profile" in shadowsocks|vmess_ws|vless_ws) _error '此配置档不使用源站 TLS，不能添加证书或 Reality'; return 1 ;; esac
             if [[ "$profile" = anyreality || "$profile" = vless_reality ]]; then
@@ -582,15 +584,15 @@ sbd_entry_change() {
                 if $source[0].kind=="certificate" then .certificate_id=$source[0].id else . end' "$stage/entry-node.json") || return 1 ;;
         ss)
             [[ "$profile" = shadowsocks ]] || { _error '此节点不是 Shadowsocks'; return 1; }
-            sbd_entry_ss_key "$(jq -r '.method' <<< "$value")" "$(jq -r '.password' <<< "$value")" || return 1
+            sbd_entry_ss_key "$(jq -r '.method' <<< "$value")" <<< "$(jq -r '.password' <<< "$value")" || return 1
             source=$(jq -r '.network // "both"' <<< "$value") || return 1
             case "$source" in tcp|udp|both) ;; *) _error 'Shadowsocks 监听网络无效'; return 1 ;; esac
             sbd_entry_port "$stage" "$(jq -r '.listen' "$stage/entry-inbound.json")" "$(jq -r '.listen_port' "$stage/entry-inbound.json")" "$source" "$tag" || return 1
-            content=$(jq --arg tag "$tag" --argjson value "$value" --arg network "$source" '(.inbounds[]|select(.tag==$tag)) |=
-                (.method=$value.method | .password=$value.password | del(.network) | if $network!="both" then .network=$network else . end)' "$stage/config.json") || return 1
+            content=$(jq --arg tag "$tag" --slurpfile value <(printf '%s' "$value") --arg network "$source" '(.inbounds[]|select(.tag==$tag)) |=
+                (.method=$value[0].method | .password=$value[0].password | del(.network) | if $network!="both" then .network=$network else . end)' "$stage/config.json") || return 1
             sbd_record_write "$stage/config.json" "$content" || return 1
-            content=$(jq --argjson value "$value" --arg network "$source" '.client |=
-                (.method=$value.method | .password=$value.password | del(.network) | if $network!="both" then .network=$network else . end)' "$stage/entry-node.json") || return 1 ;;
+            content=$(jq --slurpfile value <(printf '%s' "$value") --arg network "$source" '.client |=
+                (.method=$value[0].method | .password=$value[0].password | del(.network) | if $network!="both" then .network=$network else . end)' "$stage/entry-node.json") || return 1 ;;
         cdn)
             case "$profile" in vmess_ws|vless_ws) ;; *) _error '此节点不是 CDN WS 配置档'; return 1 ;; esac
             sbd_entry_cdn "$value" && sbd_entry_host "$(jq -r '.server' <<< "$value")" || return 1
@@ -664,7 +666,7 @@ sbd_entry_listen_prompt() {
     local value
     while true; do
         sbd_entry_default '监听 IP' '::' || return $?
-        if value=$(python3 -c 'import ipaddress,sys; print(ipaddress.ip_address(sys.argv[1]))' "$SBD_REPLY" 2>/dev/null) &&
+        if value=$(python3 -I -c 'import ipaddress,sys; print(ipaddress.ip_address(sys.argv[1]))' "$SBD_REPLY" 2>/dev/null) &&
             sbd_entry_socket_available "$value" 0 tcp; then SBD_REPLY="$value"; return 0; fi
         _error '监听地址须为可绑定的本机 IP，可用 :: 或 0.0.0.0'
     done
@@ -793,7 +795,7 @@ sbd_entry_uuid_prompt() {
             value=$("$SBD_BINARY" generate uuid) || { _error '核心生成 UUID 失败'; return 1; }
             generated=true
         fi
-        if value=$(sbd_entry_uuid "$value"); then
+        if value=$(sbd_entry_uuid <<< "$value"); then
             SBD_REPLY="$value"
             [[ "$generated" != true ]] || sbd_info "随机 UUID: $SBD_REPLY"
             return 0
@@ -810,7 +812,7 @@ sbd_entry_ss_prompt() {
     sbd_read_integer '选择算法' 1 3 || return $?; choice="$SBD_REPLY"
     case "$choice" in 1) method=aes-256-gcm ;; 2) method=2022-blake3-aes-256-gcm ;; 3) method=2022-blake3-chacha20-poly1305 ;; esac
     sbd_entry_ss_password_prompt "$method" || return $?; password="$SBD_REPLY"
-    SBD_SS_REQUEST=$(jq -n --arg method "$method" --arg network "$network" --arg password "$password" '{method:$method,network:$network,password:$password}') || return 1
+    SBD_SS_REQUEST=$(jq -n --arg method "$method" --arg network "$network" --rawfile password <(printf '%s' "$password") '{method:$method,network:$network,password:$password}') || return 1
 }
 
 sbd_entry_ss_password_prompt() {
@@ -822,7 +824,7 @@ sbd_entry_ss_password_prompt() {
             if [[ "$method" = aes-256-gcm ]]; then value=$("$SBD_BINARY" generate rand --hex 16)
             else value=$("$SBD_BINARY" generate rand --base64 32); fi || { _error '核心生成 Shadowsocks 密钥失败'; return 1; }
         fi
-        if sbd_entry_ss_key "$method" "$value"; then SBD_REPLY="$value"; return 0; fi
+        if sbd_entry_ss_key "$method" <<< "$value"; then SBD_REPLY="$value"; return 0; fi
     done
 }
 
@@ -869,7 +871,7 @@ sbd_entry_create_classic_prompt() {
     sbd_entry_default '节点显示名' "$profile-$port" || return $?; name="$SBD_REPLY"
     if [[ "$profile" != shadowsocks ]]; then
         sbd_entry_uuid_prompt || return $?; uuid="$SBD_REPLY"
-        options=$(jq --arg uuid "$uuid" '. + {uuid:$uuid}' <<< "$options") || return 1
+        options=$(jq --rawfile uuid <(printf '%s' "$uuid") '. + {uuid:$uuid}' <<< "$options") || return 1
     fi
     if [[ "$profile" = vless_reality ]]; then
         sbd_entry_tls_prompt "$profile" "$server" || return $?; source="$SBD_TLS_REQUEST"
@@ -903,15 +905,15 @@ sbd_entry_hy2_prompt() {
     sbd_entry_number_prompt '混淆方式' 1 3 1 || return $?; choice="$SBD_REPLY"
     if [[ "$choice" != 1 ]]; then
         sbd_entry_password_prompt '混淆密码' || return $?; password="$SBD_REPLY"
-        if [[ "$choice" = 2 ]]; then obfs=$(jq -n --arg password "$password" '{type:"salamander",password:$password}') || return 1
+        if [[ "$choice" = 2 ]]; then obfs=$(jq -n --rawfile password <(printf '%s' "$password") '{type:"salamander",password:$password}') || return 1
         else
             sbd_entry_number_prompt 'Gecko 最小包长（bytes）' 1 65535 512 || return $?; low="$SBD_REPLY"
             maximum=1200; (( low <= maximum )) || maximum="$low"
             sbd_entry_number_prompt 'Gecko 最大包长（bytes）' "$low" 65535 "$maximum" || return $?; high="$SBD_REPLY"
-            obfs=$(jq -n --arg password "$password" --argjson low "$low" --argjson high "$high" '{type:"gecko",password:$password,min_packet_size:$low,max_packet_size:$high}') || return 1
+            obfs=$(jq -n --rawfile password <(printf '%s' "$password") --argjson low "$low" --argjson high "$high" '{type:"gecko",password:$password,min_packet_size:$low,max_packet_size:$high}') || return 1
         fi
     fi
-    SBD_HY2_REQUEST=$(jq -n --argjson server "$server" --argjson client "$client" --argjson obfs "$obfs" '{server_options:$server,client_options:$client,obfs:$obfs}') || return 1
+    SBD_HY2_REQUEST=$(jq -n --argjson server "$server" --argjson client "$client" --slurpfile obfs <(printf '%s' "$obfs") '{server_options:$server,client_options:$client,obfs:$obfs[0]}') || return 1
 }
 
 sbd_entry_create_prompt() {
@@ -936,8 +938,8 @@ sbd_entry_create_prompt() {
     sbd_entry_password_prompt '认证密码' || return $?; password="$SBD_REPLY"
     sbd_entry_tls_prompt "$profile" "$server" || return $?; source="$SBD_TLS_REQUEST"
     if [[ "$profile" = hysteria2 ]]; then sbd_entry_hy2_prompt || return $?; options="$SBD_HY2_REQUEST"; fi
-    request=$(jq -n --arg profile "$profile" --arg name "$name" --arg listen "$listen" --argjson port "$port" --arg server "$server" --arg password "$password" --argjson source "$source" --argjson options "$options" \
-        '$options + {profile:$profile,name:$name,listen:$listen,listen_port:$port,server:$server,server_port:$port,password:$password,tls_source:$source}') || return 1
+    request=$(jq -n --arg profile "$profile" --arg name "$name" --arg listen "$listen" --argjson port "$port" --arg server "$server" --rawfile password <(printf '%s' "$password") --argjson source "$source" --slurpfile options <(printf '%s' "$options") \
+        '$options[0] + {profile:$profile,name:$name,listen:$listen,listen_port:$port,server:$server,server_port:$port,password:$password,tls_source:$source}') || return 1
     sbd_read_required '确认创建并按需重启？输入 y 确认，其他输入取消' || return $?
     [[ "$SBD_REPLY" = y ]] || return 2
     sbd_entry_submit "$request" || return 1
@@ -1074,14 +1076,14 @@ sbd_entry_adopt() {
     sbd_entry_host "$server" || return 1
     client=$(jq -n --arg type "$actual_type" --arg server "$server" --argjson port "$port" '{type:$type,server:$server,server_port:$port}') || return 1
     if [[ "$profile" = shadowsocks ]]; then
-        client=$(jq --argjson inbound "$inbound" '. + ($inbound|{method,password} + (if has("network") then {network} else {} end))' <<< "$client") || return 1
+        client=$(jq --slurpfile inbound "$stage/adopt-inbound.json" '. + ($inbound[0]|{method,password} + (if has("network") then {network} else {} end))' <<< "$client") || return 1
         source='{"kind":"none"}'
     else
         jq -e '.users|length==1' <<< "$inbound" >/dev/null || { _error '仅接管可唯一对应一个客户端的单用户节点'; return 1; }
-        client=$(jq --argjson inbound "$inbound" '. + ($inbound.users[0]|{uuid,password,flow}|with_entries(select(.value!=null)))' <<< "$client") || return 1
+        client=$(jq --slurpfile inbound "$stage/adopt-inbound.json" '. + ($inbound[0].users[0]|{uuid,password,flow}|with_entries(select(.value!=null)))' <<< "$client") || return 1
         if [[ "$profile" = vmess_ws ]]; then client=$(jq '. + {security:"auto",alter_id:0}' <<< "$client") || return 1; fi
         if [[ "$profile" = *_ws ]]; then
-            content=$(jq -c --argjson inbound "$inbound" '.cdn + {path:$inbound.transport.path}' "$stage/adopt-facts.json") || return 1
+            content=$(jq -c --slurpfile inbound "$stage/adopt-inbound.json" '.cdn + {path:$inbound[0].transport.path}' "$stage/adopt-facts.json") || return 1
             sbd_entry_cdn "$content" || return 1
             client=$(jq --argjson cdn "$content" '. + {tls:{enabled:true,server_name:$cdn.host},transport:{type:"ws",path:$cdn.path,headers:{Host:$cdn.host}}}' <<< "$client") || return 1
             source='{"kind":"cdn"}'
@@ -1113,16 +1115,16 @@ sbd_entry_adopt() {
             fi
             if [[ "$profile" = hysteria2 ]]; then
                 content=$(jq -c '.client_options // {}' "$stage/adopt-facts.json") || return 1
-                client=$(jq --argjson options "$content" --argjson inbound "$inbound" '. + $options + (if $inbound.obfs!=null then {obfs:$inbound.obfs} else {} end)' <<< "$client") || return 1
+                client=$(jq --argjson options "$content" --slurpfile inbound "$stage/adopt-inbound.json" '. + $options + (if $inbound[0].obfs!=null then {obfs:$inbound[0].obfs} else {} end)' <<< "$client") || return 1
             fi
         fi
     fi
     if jq -e '.tls.alpn!=null' <<< "$inbound" >/dev/null && [[ "$profile" != *_ws && "$profile" != shadowsocks ]]; then
-        client=$(jq --argjson inbound "$inbound" '.tls.alpn=$inbound.tls.alpn' <<< "$client") || return 1
+        client=$(jq --slurpfile inbound "$stage/adopt-inbound.json" '.tls.alpn=$inbound[0].tls.alpn' <<< "$client") || return 1
     fi
     name=$(jq -r .name "$stage/adopt-facts.json") || return 1
-    content=$(jq -n --arg id "$id" --arg tag "$tag" --arg profile "$profile" --arg name "$name" --argjson client "$client" --argjson source "$source" --argjson share "$share" --argjson facts "$facts" '
-        {id:$id,inbound_tag:$tag,profile:$profile,name:$name,client:$client,tls_source:$source,share:$share} +
+    content=$(jq -n --arg id "$id" --arg tag "$tag" --arg profile "$profile" --arg name "$name" --slurpfile client <(printf '%s' "$client") --argjson source "$source" --argjson share "$share" --argjson facts "$facts" '
+        {id:$id,inbound_tag:$tag,profile:$profile,name:$name,client:$client[0],tls_source:$source,share:$share} +
         (if $source.kind=="certificate" then {certificate_id:$source.id} else {} end) +
         (if $source.kind=="cdn" then {ingress:{type:"cdn",host:$facts.cdn.host,origin_port:$facts.cdn.origin_port}} else {} end)') || return 1
     sbd_record_write "$stage/adopt-node.json" "$content" || return 1

@@ -32,7 +32,7 @@ sbd_reset() {
             return 0 ;;
         *) _error '未知 reset 类别'; return 1 ;;
     esac
-    content=$(python3 "$SBD_APP/support/policy_records.py" reset "$stage" "$category") || return 1
+    content=$(python3 -I "$SBD_APP/support/policy_records.py" reset "$stage" "$category") || return 1
     sbd_record_write "$stage/reset-bundle.json" "$content" || return 1
     content=$(jq -c .config "$stage/reset-bundle.json") || return 1
     sbd_record_write "$stage/config.json" "$content" || return 1

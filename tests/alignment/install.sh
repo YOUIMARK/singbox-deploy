@@ -80,7 +80,7 @@ main_local_install() {
         case "$1" in
             root) printf '%s/root\n' "$CASE_TMP" ;;
             command) printf '%s/bin/sd\n' "$CASE_TMP" ;;
-            lock) printf '%s/write.lock\n' "$CASE_TMP" ;;
+            lock) printf '%s/root/run/write.lock\n' "$CASE_TMP" ;;
             *) return 1 ;;
         esac
     }

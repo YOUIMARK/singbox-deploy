@@ -54,6 +54,13 @@ check_boundary() {
     t_run 0 sbd_prepare_config "$CASE_TMP/stage"
     t_assert '坏引用未被手工改写' jq -e '.route.final=="missing-outbound"' "$CASE_TMP/stage/config.json"
 }
+python_cwd_isolation() {
+    t_seed
+    mkdir "$CASE_TMP/py" || exit 1
+    printf 'raise RuntimeError("cwd import must not run")\n' > "$CASE_TMP/py/jsonschema.py" || exit 1
+    t_run 0 bash -c 'cd "$1" && python3 -I "$2" "$3" "$4"' _ "$CASE_TMP/py" "$SBD_APP/support/validate_schema.py" "$SBD_SCHEMA" "$SBD_CONFIG"
+    t_run 0 bash -c 'cd "$1" && _error(){ printf "%s\n" "$*" >&2; } && source "$2/lib/host.sh" && sbd_dependencies' _ "$CASE_TMP/py" "$SBD_APP"
+}
 version_gate() {
     t_fresh
     printf '#!/usr/bin/env bash\nprintf "sing-box version 1.13.9\\n"\n' > "$CASE_TMP/old-core" || exit 1
@@ -70,6 +77,7 @@ version_gate() {
 t_case '目标核心生成、校验和 format/check' prepare_valid
 t_case '格式化后仍保留证书路径事实' certificate_paths_only
 t_case '真实 Schema 拒绝非法枚举值' wrong_type
+t_case 'Python 不从当前目录导入模块' python_cwd_isolation
 t_case '真实 check 拒绝非法 SS2022 密钥' semantic_failure
 t_case '如实记录 check 对路由引用的边界' check_boundary
 t_case '旧核心与缺核心明确拒绝' version_gate

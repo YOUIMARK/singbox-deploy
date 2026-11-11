@@ -28,6 +28,11 @@ SS_METHODS = {
     "2022-blake3-aes-256-gcm",
     "2022-blake3-chacha20-poly1305",
 }
+CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def safe_text(value):
+    return CONTROL_RE.sub(lambda match: "\\x%02x" % ord(match.group()), str(value))
 VMESS_SECURITY = {
     "auto": "auto",
     "none": "none",
@@ -819,7 +824,7 @@ def parse_vmess_legacy(raw, fragment):
     text = decode_base64_text(raw, "VMess 链接")
     try:
         data = json.loads(text)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         fail("VMess Base64 内容不是有效 JSON")
     if not isinstance(data, dict):
         fail("VMess Base64 内容必须是 JSON 对象")
@@ -1242,12 +1247,13 @@ def parse_many_collect(text, depth=0, skip_errors=False, prefix=""):
                 failures.extend(nested_failures)
             else:
                 results.append(parse(link))
-        except LinkError as exc:
+        except Exception as exc:
+            message = str(exc) if isinstance(exc, (LinkError, ValueError, RecursionError)) else "解析器内部错误"
             if skip_errors:
-                failures.append((label, str(exc)))
-                print("已跳过第 %s 条: %s" % (label, exc), file=sys.stderr)
+                failures.append((label, message))
+                print("已跳过第 %s 条: %s" % (label, safe_text(message)), file=sys.stderr)
             elif multiple:
-                fail("第 %d 条: %s" % (index, exc))
+                fail("第 %d 条: %s" % (index, message))
             else:
                 raise
     return results, failures
@@ -1289,7 +1295,7 @@ def main():
             print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
         return 0
     except LinkError as exc:
-        print("链接解析失败: %s" % exc, file=sys.stderr)
+        print("链接解析失败: %s" % safe_text(exc), file=sys.stderr)
         return 1
     except Exception:
         print("链接解析失败: 解析器内部错误", file=sys.stderr)

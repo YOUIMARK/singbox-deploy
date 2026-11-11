@@ -26,7 +26,7 @@ sbd_binary_version() {
 sbd_version() { sbd_binary_version "$SBD_BINARY"; }
 
 sbd_validate_schema() {
-    python3 "$SBD_APP/support/validate_schema.py" "$1" "$2" || { _error '官方 JSON Schema 校验未通过'; return 1; }
+    python3 -I "$SBD_APP/support/validate_schema.py" "$1" "$2" || { _error '官方 JSON Schema 校验未通过'; return 1; }
 }
 
 sbd_config_stage_current() {

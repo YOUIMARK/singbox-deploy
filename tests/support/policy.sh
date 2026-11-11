@@ -28,14 +28,19 @@ t_policy_udp() {
 t_policy_http() {
     python3 - "$CASE_TMP" <<'PY' > "$CASE_TMP/http.log" 2>&1 &
 import http.server, pathlib, sys
-root = pathlib.Path(sys.argv[1])
+from urllib.parse import unquote, urlsplit
+root = pathlib.Path(sys.argv[1]).resolve()
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         with (root / "requests").open("a") as f:
             f.write(self.path + "\n")
-        path = root / self.path.lstrip("/").split("?", 1)[0]
-        data = path.read_bytes() if path.is_file() else b"not found"
-        self.send_response(200 if path.is_file() else 404)
+        try:
+            path = (root / unquote(urlsplit(self.path).path).lstrip("/")).resolve()
+            path.relative_to(root)
+        except (OSError, ValueError):
+            path = None
+        data = path.read_bytes() if path is not None and path.is_file() else b"not found"
+        self.send_response(200 if path is not None and path.is_file() else 404)
         self.end_headers()
         self.wfile.write(data)
 server = http.server.HTTPServer(("127.0.0.1", 0), Handler)

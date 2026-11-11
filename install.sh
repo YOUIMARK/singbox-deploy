@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -u
 umask 077
+export PYTHONSAFEPATH=1
 
 _error() { printf '[错误] %s\n' "$*" >&2; }
 
@@ -16,14 +17,33 @@ sbd_install_manifest() {
         SBD_INSTALL_FILES+=("$rel")
     done < "$source/manifest.txt"
     # 清单必须含入口加载与运行所需文件；缺一项安装后无法启动。
-    for rel in install.sh singbox-deploy.sh VERSION manifest.txt lib/input.sh lib/host.sh lib/records.sh lib/apply.sh lib/console.sh lib/outbounds.sh support/validate_schema.py support/policy_records.py support/dns_settings.py support/outbound_link.py support/warp.py support/uninstall_plan.py presets/base.json; do
+    for rel in install.sh singbox-deploy.sh VERSION manifest.txt SHA256SUMS lib/input.sh lib/host.sh lib/records.sh lib/apply.sh lib/console.sh lib/outbounds.sh support/validate_schema.py support/policy_records.py support/dns_settings.py support/outbound_link.py support/warp.py support/uninstall_plan.py presets/base.json; do
         [[ -n "${seen[$rel]:-}" ]] || { _error "发布清单缺少入口依赖: $rel"; return 1; }
     done
 }
 
 sbd_install_validate() {
-    local source="$1" rel version
+    local source="$1"
+    local rel version hash sums
+    sums="$source/SHA256SUMS"
+    local -A seen=()
+    local -A checksums=()
     sbd_install_manifest "$source" || return 1
+    for rel in "${SBD_INSTALL_FILES[@]}"; do seen["$rel"]=1; done
+    [[ -s "$sums" ]] || { _error '发布摘要清单缺失'; return 1; }
+    while read -r hash rel; do
+        [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || { _error '发布摘要格式无效'; return 1; }
+        [[ "$rel" =~ ^[A-Za-z0-9_./-]+$ && "$rel" != /* && ! "$rel" =~ (^|/)\.\.(/|$) && "$rel" != SHA256SUMS ]] || { _error '发布摘要路径无效'; return 1; }
+        [[ -z "${checksums[$rel]:-}" ]] || { _error "发布摘要重复: $rel"; return 1; }
+        checksums["$rel"]=1
+    done < "$sums"
+    for rel in "${SBD_INSTALL_FILES[@]}"; do
+        [[ "$rel" = SHA256SUMS ]] || [[ -n "${checksums[$rel]:-}" ]] || { _error "发布摘要缺少文件: $rel"; return 1; }
+    done
+    for rel in "${!checksums[@]}"; do
+        [[ -n "${seen[$rel]:-}" ]] || { _error "发布摘要包含清单外文件: $rel"; return 1; }
+    done
+    ( cd -- "$source" && sha256sum -c SHA256SUMS >/dev/null ) || { _error '发布文件 SHA-256 校验失败'; return 1; }
     for rel in "${SBD_INSTALL_FILES[@]}"; do
         [[ -f "$source/$rel" && -s "$source/$rel" ]] || { _error "发布文件缺失或为空: $rel"; return 1; }
         if [[ "$rel" = *.sh ]]; then
@@ -36,8 +56,9 @@ sbd_install_validate() {
 
 sbd_install_fetch() {
     local url="$1" target="$2"
+    [[ "$url" = https://* ]] || { _error '安装下载地址必须使用 HTTPS'; return 1; }
     if command -v curl >/dev/null 2>&1; then
-        curl -fLsS --connect-timeout 15 --max-time 120 "$url" -o "$target" || { _error "下载失败: $url"; return 1; }
+        curl -fLsS --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 "$url" -o "$target" || { _error "下载失败: $url"; return 1; }
     elif command -v wget >/dev/null 2>&1; then
         wget -q -T 120 -O "$target" "$url" || { _error "下载失败: $url"; return 1; }
     else
@@ -48,7 +69,13 @@ sbd_install_fetch() {
 }
 
 sbd_install_download() {
-    local stage="$1" rel base='https://raw.githubusercontent.com/YOUIMARK/singbox-deploy/main'
+    local stage="$1" rel ref="${SBD_INSTALL_REF:-}" base
+    if [[ -z "$ref" ]]; then
+        sbd_install_fetch 'https://api.github.com/repos/YOUIMARK/singbox-deploy/commits/main' "$stage/commit.json" || return 1
+        ref=$(jq -r '.sha // empty' "$stage/commit.json") || { _error '无法解析安装提交'; return 1; }
+    fi
+    [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { _error '安装提交号无效'; return 1; }
+    base="https://raw.githubusercontent.com/YOUIMARK/singbox-deploy/$ref"
     sbd_install_fetch "$base/manifest.txt" "$stage/manifest.txt" || return 1
     sbd_install_manifest "$stage" || return 1
     for rel in "${SBD_INSTALL_FILES[@]}"; do
@@ -132,7 +159,7 @@ sbd_install_target() {
     case "$1" in
         root) printf '/opt/singbox-deploy\n' ;;
         command) printf '/usr/local/bin/sd\n' ;;
-        lock) printf '/run/lock/singbox-deploy.lock\n' ;;
+        lock) printf '%s/run/singbox-deploy.lock\n' "${SBD_ROOT:-/opt/singbox-deploy}" ;;
         *) _error '未知安装路径类别'; return 1 ;;
     esac
 }
@@ -155,6 +182,8 @@ sbd_install_main() (
     [[ "$local_mode" != 1 || "$update" != 1 ]] || { _error '--local 与 --update 不能同时使用'; return 1; }
     sbd_install_require_root || return 1
     (( BASH_VERSINFO[0] >= 5 )) || { _error '需要 Bash 5 或更新版本'; return 1; }
+    command -v jq >/dev/null 2>&1 || { _error '缺少依赖: jq'; return 1; }
+    command -v sha256sum >/dev/null 2>&1 || { _error '缺少依赖: sha256sum'; return 1; }
     SBD_INSTALL_STAGE=$(mktemp -d "${TMPDIR:-/tmp}/singbox-install.XXXXXX") || { _error '无法创建安装暂存目录'; return 1; }
     trap 'sbd_install_cleanup "$SBD_INSTALL_STAGE" || exit 1' EXIT
     if [[ "$local_mode" = 1 ]]; then

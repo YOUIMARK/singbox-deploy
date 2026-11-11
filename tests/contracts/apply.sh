@@ -138,6 +138,7 @@ kill_recovery() {
 }
 lock_collision() {
     t_seed
+    mkdir -p -m 700 -- "$(dirname -- "$SBD_LOCK")" || exit 1
     exec {held}>"$SBD_LOCK" || exit 1
     flock -n "$held" || exit 1
     t_run 1 sbd_apply t_edit_debug
