@@ -159,7 +159,7 @@ sbd_download() {
     if command -v curl >/dev/null 2>&1; then
         curl -fLsS --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 "$url" -o "$target" || { _error "下载失败: $url"; return 1; }
     elif command -v wget >/dev/null 2>&1; then
-        wget -q -T 120 -O "$target" "$url" || { _error "下载失败: $url"; return 1; }
+        wget --max-redirect=0 -q -T 120 -O "$target" "$url" || { _error "下载失败: $url"; return 1; }
     else
         _error '需要 curl 或 wget'
         return 1

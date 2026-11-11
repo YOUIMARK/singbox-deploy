@@ -110,6 +110,20 @@ public_ip_wget_fallback() {
     t_assert '没有 curl 时用 wget 获取地址' test "$(cat "$CASE_TMP/output")" = 1.1.1.1
     t_contains "$CASE_TMP/http-calls" '-q -T 4 -O - https://api.ipify.org'
 }
+download_wget_no_redirect() {
+    command() {
+        if [[ "$*" = '-v curl' ]]; then return 1; fi
+        builtin command "$@"
+    }
+    wget() {
+        printf '%s\n' "$*" >> "$CASE_TMP/download-calls"
+        printf 'payload' > "$CASE_TMP/downloaded"
+    }
+    : > "$CASE_TMP/download-calls"
+    t_run 0 sbd_download https://example.com/rules.srs "$CASE_TMP/downloaded"
+    t_assert 'Wget 下载成功' test "$(cat "$CASE_TMP/downloaded")" = payload
+    t_contains "$CASE_TMP/download-calls" '--max-redirect=0'
+}
 t_case '发行版契约' os_contract
 t_case '架构契约' arch_contract
 t_case '路径上下文与根目录拒绝' context_contract
@@ -119,4 +133,5 @@ t_case '公网 IPv4 响应规范化并优先返回' public_ip_ipv4
 t_case '公网 IPv4 失败后回退 IPv6' public_ip_ipv6_fallback
 t_case '公网地址检测拒绝无效和非公网响应' public_ip_rejects_invalid
 t_case '缺少 curl 时公网地址检测回退 wget' public_ip_wget_fallback
+t_case 'Wget 下载禁止重定向降级' download_wget_no_redirect
 t_finish
