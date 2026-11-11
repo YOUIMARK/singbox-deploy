@@ -104,6 +104,32 @@ public_ip_rejects_invalid() {
         t_assert '无效或非公网响应不输出默认地址' test ! -s "$CASE_TMP/output"
     done
 }
+download_https_only() {
+    local target="$CASE_TMP/download"
+    t_run 1 sbd_download http://example.com/pkg "$target"
+    t_contains "$CASE_TMP/output" '下载地址必须使用 HTTPS'
+    command() {
+        if [[ "$*" = '-v curl' ]]; then return 1; fi
+        builtin command "$@"
+    }
+    t_run 1 sbd_download https://example.com/pkg "$target"
+    t_contains "$CASE_TMP/output" '需要 curl 才能安全下载'
+    t_assert '拒绝时不留下下载文件' test ! -e "$target"
+    unset -f command
+    # 桩 curl 记录参数：初始请求与全部重定向都必须限制在 HTTPS，防止 302 降级为明文。
+    curl() {
+        printf '%s\n' "$*" >> "$CASE_TMP/http-calls"
+        while [[ "$#" -gt 0 ]]; do
+            if [[ "$1" = -o ]]; then printf 'payload\n' > "$2"; fi
+            shift
+        done
+    }
+    : > "$CASE_TMP/http-calls"
+    t_run 0 sbd_download https://example.com/pkg "$target"
+    t_assert '下载文件已写入' test -s "$target"
+    t_contains "$CASE_TMP/http-calls" '--proto =https'
+    t_contains "$CASE_TMP/http-calls" '--proto-redir =https'
+}
 public_ip_wget_fallback() {
     command() {
         if [[ "$*" = '-v curl' ]]; then return 1; fi
@@ -123,6 +149,7 @@ t_case '架构契约' arch_contract
 t_case '路径上下文与根目录拒绝' context_contract
 t_case '真实 Draft202012 依赖不可降级' draft_required
 t_case '安全下载要求 curl' curl_required
+t_case '安全下载限制初始与重定向协议' download_https_only
 t_case 'Go 软内存限制按物理内存与 cgroup 最小值计算' go_memlimit_contract
 t_case '公网 IPv4 响应规范化并优先返回' public_ip_ipv4
 t_case '公网 IPv4 失败后回退 IPv6' public_ip_ipv6_fallback

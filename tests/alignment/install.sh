@@ -92,6 +92,32 @@ main_local_install() {
     t_run 0 "$CASE_TMP/bin/sd" --help
     t_assert '不自动初始化业务配置' test ! -e "$CASE_TMP/root/confs/config.json"
 }
+fetch_https_only() {
+    local target="$CASE_TMP/release.tar.gz"
+    t_run 1 sbd_install_fetch http://example.com/pkg "$target"
+    t_contains "$CASE_TMP/output" '安装下载地址必须使用 HTTPS'
+    command() {
+        if [[ "$*" = '-v curl' ]]; then return 1; fi
+        builtin command "$@"
+    }
+    t_run 1 sbd_install_fetch https://example.com/pkg "$target"
+    t_contains "$CASE_TMP/output" '需要 curl 才能安全下载发布文件'
+    t_assert '拒绝时不留下下载文件' test ! -e "$target"
+    unset -f command
+    # 桩 curl 记录参数：安装器下载同样禁止 HTTPS→HTTP 重定向降级。
+    curl() {
+        printf '%s\n' "$*" >> "$CASE_TMP/http-calls"
+        while [[ "$#" -gt 0 ]]; do
+            if [[ "$1" = -o ]]; then printf 'payload\n' > "$2"; fi
+            shift
+        done
+    }
+    : > "$CASE_TMP/http-calls"
+    t_run 0 sbd_install_fetch https://example.com/pkg "$target"
+    t_assert '发布文件已写入' test -s "$target"
+    t_contains "$CASE_TMP/http-calls" '--proto =https'
+    t_contains "$CASE_TMP/http-calls" '--proto-redir =https'
+}
 root_guard() {
     if [[ "$EUID" = 0 ]]; then
         t_run 0 sbd_install_require_root
@@ -108,4 +134,5 @@ t_case '安装 SIGKILL 后同一记录恢复' crashed_install
 t_case '坏清单不能逃逸路径' broken_manifest
 t_case '真实 --local --no-menu 安装入口隔离运行' main_local_install
 t_case '真实权限谓词拒绝非 root 安装' root_guard
+t_case '安装下载限制初始与重定向协议' fetch_https_only
 t_finish
