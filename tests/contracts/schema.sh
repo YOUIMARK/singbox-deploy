@@ -54,6 +54,16 @@ check_boundary() {
     t_run 0 sbd_prepare_config "$CASE_TMP/stage"
     t_assert '坏引用未被手工改写' jq -e '.route.final=="missing-outbound"' "$CASE_TMP/stage/config.json"
 }
+cleartext_persisted_urls() {
+    t_fresh
+    mkdir "$CASE_TMP/stage" || exit 1
+    jq '.route.rule_set=[{type:"remote",tag:"cleartext",url:"http://example.com/rules.srs"}]' "$ROOT/presets/base.json" > "$CASE_TMP/stage/config.json" || exit 1
+    t_run 1 sbd_prepare_config "$CASE_TMP/stage"
+    t_contains "$CASE_TMP/output" 'HTTPS'
+    jq '.certificate_providers=[{type:"acme",tag:"cleartext",dns01_challenge:{provider:"acmedns",server_url:"http://acme.example.com"}}]' "$ROOT/presets/base.json" > "$CASE_TMP/stage/config.json" || exit 1
+    t_run 1 sbd_prepare_config "$CASE_TMP/stage"
+    t_contains "$CASE_TMP/output" 'HTTPS'
+}
 python_cwd_isolation() {
     t_seed
     mkdir "$CASE_TMP/py" || exit 1
@@ -80,5 +90,6 @@ t_case '真实 Schema 拒绝非法枚举值' wrong_type
 t_case 'Python 不从当前目录导入模块' python_cwd_isolation
 t_case '真实 check 拒绝非法 SS2022 密钥' semantic_failure
 t_case '如实记录 check 对路由引用的边界' check_boundary
+t_case '已有 HTTP 规则集和 ACME-DNS 配置被拒绝' cleartext_persisted_urls
 t_case '旧核心与缺核心明确拒绝' version_gate
 t_finish

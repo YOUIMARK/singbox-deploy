@@ -159,7 +159,7 @@ sbd_install_target() {
     case "$1" in
         root) printf '/opt/singbox-deploy\n' ;;
         command) printf '/usr/local/bin/sd\n' ;;
-        lock) printf '%s/run/singbox-deploy.lock\n' "${SBD_ROOT:-/opt/singbox-deploy}" ;;
+        lock) printf '/opt/singbox-deploy/run/singbox-deploy.lock\n' ;;
         *) _error '未知安装路径类别'; return 1 ;;
     esac
 }

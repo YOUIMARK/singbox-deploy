@@ -44,9 +44,26 @@ sbd_config_stage_current() {
     cp -- "$source" "$target" || { _error "暂存配置失败: $source"; return 1; }
 }
 
+sbd_config_url_contract() {
+    local config="$1" urls url
+    urls=$(jq -r '[.route.rule_set[]? | select(.type=="remote") | .url | select(type=="string")] | .[]' "$config") ||
+        { _error '读取远端规则集 URL 失败'; return 1; }
+    while IFS= read -r url; do
+        [[ -z "$url" ]] || sbd_rule_url "$url" || return 1
+    done <<< "$urls"
+    urls=$(jq -r '[.certificate_providers[]? | select(.type=="acme") | .dns01_challenge.server_url | select(type=="string")] | .[]' "$config") ||
+        { _error '读取 ACME-DNS 服务地址失败'; return 1; }
+    while IFS= read -r url; do
+        if [[ -n "$url" ]]; then
+            sbd_tls_acme_url "$url" || { _error 'ACME-DNS 服务地址必须使用 HTTPS'; return 1; }
+        fi
+    done <<< "$urls"
+}
+
 # 流水线：核心生成 Schema → Draft 2020-12 校验 → format → check；全部通过后才替换暂存配置。
 sbd_prepare_config() {
     local stage="$1" version
+    sbd_config_url_contract "$stage/config.json" || return 1
     version=$(sbd_version) || return 1
     "$SBD_BINARY" schema -o "$stage/schema.json" || { _error '核心生成 Schema 失败'; return 1; }
     [[ -s "$stage/schema.json" ]] || { _error '核心生成了空 Schema'; return 1; }

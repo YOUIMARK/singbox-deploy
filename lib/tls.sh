@@ -54,6 +54,21 @@ sbd_tls_pin() (
         openssl dgst -sha256 -binary | openssl base64 -A || { _error '证书公钥 pin 生成失败'; return 1; }
 )
 
+sbd_tls_acme_url() {
+    printf '%s' "$1" | python3 -I -c '
+import sys
+from urllib.parse import urlsplit
+value = sys.stdin.read()
+try:
+    u = urlsplit(value)
+except ValueError:
+    raise SystemExit(1)
+if (u.scheme != "https" or not u.hostname or u.username is not None
+        or u.password is not None or any(c.isspace() for c in value)):
+    raise SystemExit(1)
+'
+}
+
 sbd_tls_provider_add() {
     local stage="$1" tag="$2" domain="$3" email="$4" challenge="$5" content identity url
     sbd_tls_tag "$tag" || return 1
@@ -67,18 +82,7 @@ sbd_tls_provider_add() {
         else false end' <<< "$challenge" >/dev/null 2>&1 || { _error 'DNS-01 provider 或必填凭据无效'; return 1; }
     if [[ "$(jq -r '.provider' <<< "$challenge")" = acmedns ]]; then
         url=$(jq -r '.server_url' <<< "$challenge") || { _error 'ACME-DNS 服务地址无效'; return 1; }
-        printf '%s' "$url" | python3 -I -c '
-import sys
-from urllib.parse import urlsplit
-value = sys.stdin.read()
-try:
-    u = urlsplit(value)
-except ValueError:
-    raise SystemExit(1)
-if (u.scheme != "https" or not u.hostname or u.username is not None
-        or u.password is not None or any(c.isspace() for c in value)):
-    raise SystemExit(1)
-' || { _error 'ACME-DNS 服务地址必须使用 HTTPS'; return 1; }
+        sbd_tls_acme_url "$url" || { _error 'ACME-DNS 服务地址必须使用 HTTPS'; return 1; }
     fi
     jq -e --arg tag "$tag" 'all((.certificate_providers // [])[]; .tag!=$tag)' "$stage/config.json" >/dev/null || { _error '此 provider 标识已存在，不覆盖自定义或正在使用的配置'; return 1; }
     content=$(jq --arg tag "$tag" --arg domain "$domain" --arg email "$email" --arg dir "$SBD_CERT_DIR/acme/$tag" --slurpfile challenge <(printf '%s' "$challenge") '
@@ -94,13 +98,13 @@ sbd_tls_material_add() {
     identity=$(sbd_tls_identity "$name") || { _error '证书名称须为 DNS 名称或 IP 地址'; return 1; }
     case "$kind" in
         self_signed)
-            # 先登记最终的独立路径，再生成材料；从不覆盖核心正在监视的旧证书。
+            # 先创建独立的最终路径，再登记材料；从不覆盖核心正在监视的旧证书。
             directory=$(mktemp -d "$stage/cert.XXXXXXXX") || { _error '创建证书候选位置失败'; return 1; }
             id="${directory##*/}"; directory="$SBD_CERT_DIR/$id"
-            sbd_material_note created_materials "$directory" || return 1
             if ! mkdir -p -- "$SBD_CERT_DIR" || ! chmod 700 -- "$SBD_CERT_DIR" || ! mkdir -m 700 -- "$directory"; then
                 _error '创建证书材料目录失败'; return 1
             fi
+            sbd_material_note created_materials "$directory" || { rmdir -- "$directory" 2>/dev/null || true; return 1; }
             cert="$directory/cert.pem" key="$directory/key.pem"
             if ! openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -sha256 -days 3650 \
                 -subj "/CN=$name" -addext "subjectAltName=$identity" -addext 'basicConstraints=critical,CA:FALSE' \
@@ -115,9 +119,9 @@ sbd_tls_material_add() {
             [[ "$cert" != "$key" && -f "$cert" && -f "$key" ]] || { _error '证书和私钥必须是两个可读文件'; return 1; }
             id=$(openssl rand -hex 4) || { _error '生成证书标识失败'; return 1; }
             id="cert.$id"; directory="$SBD_CERT_DIR/$id"
-            sbd_material_note created_materials "$directory" || return 1
             mkdir -p -- "$SBD_CERT_DIR" && chmod 700 -- "$SBD_CERT_DIR" || { _error '创建证书材料目录失败'; return 1; }
             mkdir -m 700 -- "$directory" || { _error '创建导入证书目录失败'; return 1; }
+            sbd_material_note created_materials "$directory" || { rmdir -- "$directory" 2>/dev/null || true; return 1; }
             cp -- "$cert" "$directory/cert.pem" && cp -- "$key" "$directory/key.pem" || { _error '复制导入证书失败'; return 1; }
             chmod 644 -- "$directory/cert.pem" && chmod 600 -- "$directory/key.pem" || { _error '设置导入证书权限失败'; return 1; }
             cert="$directory/cert.pem" key="$directory/key.pem"
@@ -255,18 +259,7 @@ sbd_tls_provider_prompt() {
             sbd_read_required 'ACME-DNS subdomain' || return $?; subdomain="$SBD_REPLY"
             while true; do
                 sbd_read_required 'ACME-DNS server_url' || return $?; url="$SBD_REPLY"
-                if printf '%s' "$url" | python3 -I -c '
-import sys
-from urllib.parse import urlsplit
-try:
-    value = sys.stdin.read()
-    u = urlsplit(value)
-    valid = u.scheme == "https" and bool(u.hostname) and u.username is None and u.password is None and not any(c.isspace() for c in value)
-except ValueError:
-    valid = False
-raise SystemExit(0 if valid else 1)
-'
-                then break; fi
+                if sbd_tls_acme_url "$url"; then break; fi
                 _error 'server_url 必须使用 HTTPS，请仅重新填写此字段'
             done
             challenge=$(jq -n --rawfile user <(printf '%s' "$username") --rawfile password <(printf '%s' "$password") --rawfile sub <(printf '%s' "$subdomain") --rawfile url <(printf '%s' "$url") '{provider:"acmedns",username:$user,password:$password,subdomain:$sub,server_url:$url}') || return 1 ;;
