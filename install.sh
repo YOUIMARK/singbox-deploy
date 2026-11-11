@@ -68,11 +68,18 @@ sbd_install_fetch() {
     [[ -s "$target" ]] || { _error "下载为空: $url"; return 1; }
 }
 
+sbd_install_commit() {
+    local file="$1" ref
+    ref=$(awk -F'"' '/"sha"[[:space:]]*:[[:space:]]*"/ { print $4; exit }' "$file") || return 1
+    [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || return 1
+    printf '%s\n' "$ref"
+}
+
 sbd_install_download() {
     local stage="$1" rel ref="${SBD_INSTALL_REF:-}" base
     if [[ -z "$ref" ]]; then
         sbd_install_fetch 'https://api.github.com/repos/YOUIMARK/singbox-deploy/commits/main' "$stage/commit.json" || return 1
-        ref=$(jq -r '.sha // empty' "$stage/commit.json") || { _error '无法解析安装提交'; return 1; }
+        ref=$(sbd_install_commit "$stage/commit.json") || { _error '无法解析安装提交'; return 1; }
     fi
     [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { _error '安装提交号无效'; return 1; }
     base="https://raw.githubusercontent.com/YOUIMARK/singbox-deploy/$ref"
@@ -182,7 +189,6 @@ sbd_install_main() (
     [[ "$local_mode" != 1 || "$update" != 1 ]] || { _error '--local 与 --update 不能同时使用'; return 1; }
     sbd_install_require_root || return 1
     (( BASH_VERSINFO[0] >= 5 )) || { _error '需要 Bash 5 或更新版本'; return 1; }
-    command -v jq >/dev/null 2>&1 || { _error '缺少依赖: jq'; return 1; }
     command -v sha256sum >/dev/null 2>&1 || { _error '缺少依赖: sha256sum'; return 1; }
     SBD_INSTALL_STAGE=$(mktemp -d "${TMPDIR:-/tmp}/singbox-install.XXXXXX") || { _error '无法创建安装暂存目录'; return 1; }
     trap 'sbd_install_cleanup "$SBD_INSTALL_STAGE" || exit 1' EXIT

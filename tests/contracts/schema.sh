@@ -55,12 +55,18 @@ check_boundary() {
     t_assert '坏引用未被手工改写' jq -e '.route.final=="missing-outbound"' "$CASE_TMP/stage/config.json"
 }
 cleartext_persisted_urls() {
-    t_fresh
+    t_seed
     mkdir "$CASE_TMP/stage" || exit 1
-    jq '.route.rule_set=[{type:"remote",tag:"cleartext",url:"http://example.com/rules.srs"}]' "$ROOT/presets/base.json" > "$CASE_TMP/stage/config.json" || exit 1
+    t_patch_config '.route.rule_set=[{type:"remote",tag:"cleartext",url:"http://example.com/rules.srs"}]'
+    t_run 1 sbd_check_config
+    t_contains "$CASE_TMP/output" 'HTTPS'
+    cp -- "$SBD_CONFIG" "$CASE_TMP/stage/config.json" || exit 1
     t_run 1 sbd_prepare_config "$CASE_TMP/stage"
     t_contains "$CASE_TMP/output" 'HTTPS'
-    jq '.certificate_providers=[{type:"acme",tag:"cleartext",dns01_challenge:{provider:"acmedns",server_url:"http://acme.example.com"}}]' "$ROOT/presets/base.json" > "$CASE_TMP/stage/config.json" || exit 1
+    t_patch_config '.route.rule_set=[] | .certificate_providers=[{type:"acme",tag:"cleartext",dns01_challenge:{provider:"acmedns",server_url:"http://acme.example.com"}}]'
+    t_run 1 sbd_check_config
+    t_contains "$CASE_TMP/output" 'HTTPS'
+    cp -- "$SBD_CONFIG" "$CASE_TMP/stage/config.json" || exit 1
     t_run 1 sbd_prepare_config "$CASE_TMP/stage"
     t_contains "$CASE_TMP/output" 'HTTPS'
 }

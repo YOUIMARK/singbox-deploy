@@ -153,15 +153,16 @@ PY
 }
 
 sbd_entry_provider_name() {
-    python3 -I - "$1" "$2" <<'PY' || { _error 'SNI 不在 provider 的签发域名内'; return 1; }
+    local name="$1"
+    python3 -I -c '
 import json, sys
-domains = json.loads(sys.argv[1]).get("domain", [])
+domains = json.load(sys.stdin).get("domain", [])
 if isinstance(domains, str):
     domains = [domains]
-name = sys.argv[2].lower()
+name = sys.argv[1].lower()
 valid = any(name == d.lower() or (d.startswith("*.") and name.endswith(d[1:].lower()) and name.count(".") == d.count(".")) for d in domains)
 raise SystemExit(0 if valid else 1)
-PY
+' "$name" || { _error 'SNI 不在 provider 的签发域名内'; return 1; }
 }
 
 sbd_entry_tls() {
@@ -216,7 +217,7 @@ sbd_entry_tls() {
         name=$(sbd_entry_text "$stage/source-facts.json" .server_name SNI) || return 1
         sbd_entry_host "$name" || return 1
         provider=$(jq -c --arg id "$id" '.certificate_providers[] | select(.tag==$id)' "$stage/config.json") || return 1
-        sbd_entry_provider_name "$provider" "$name" || return 1
+        sbd_entry_provider_name "$name" <<< "$provider" || return 1
         content=$(jq -n --arg name "$name" '{enabled:true,server_name:$name}') || return 1
         sbd_record_write "$stage/source-client.json" "$content" || return 1
         content='{}'
@@ -287,7 +288,7 @@ sbd_entry_align() {
                 value=$(sbd_entry_text "$node" .tls_source.server_name SNI) || return 1
                 [[ "$(jq -r '.client.tls.server_name' "$node")" = "$value" ]] || { _error 'provider SNI 与客户端资料不一致'; return 1; }
                 provider=$(jq -c --arg id "$id" '.certificate_providers[]|select(.tag==$id)' "$stage/config.json") || return 1
-                sbd_entry_provider_name "$provider" "$value" || return 1
+                sbd_entry_provider_name "$value" <<< "$provider" || return 1
                 if [[ "$profile" = hysteria2 && "$(jq -r '.key_type // "p256"' <<< "$provider")" = ed25519 ]]; then
                     _error '当前 Hysteria2 模板不能搭配 Ed25519 ACME provider，请选择 P-256/RSA 来源'; return 1
                 fi
@@ -757,7 +758,7 @@ sbd_entry_tls_prompt() {
             sbd_entry_choose "$values" '选择 provider' || return $?; id="$SBD_REPLY"
             while true; do
                 sbd_entry_host_prompt '客户端 SNI（须被签发域名覆盖）' || return $?; name="$SBD_REPLY"
-                sbd_entry_provider_name "$(jq -c --arg id "$id" '.certificate_providers[]|select(.tag==$id)' "$SBD_CONFIG")" "$name" && break
+                sbd_entry_provider_name "$name" <<< "$(jq -c --arg id "$id" '.certificate_providers[]|select(.tag==$id)' "$SBD_CONFIG")" && break
             done
             SBD_TLS_REQUEST=$(jq -n --arg id "$id" --arg name "$name" '{kind:"provider",id:$id,server_name:$name}') || return 1
             return 0 ;;

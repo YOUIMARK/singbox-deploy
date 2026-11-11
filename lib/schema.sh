@@ -79,6 +79,7 @@ sbd_prepare_config() {
 
 sbd_check_config() {
     [[ -f "$SBD_CONFIG" && -f "$SBD_SCHEMA" ]] || { _error '配置或本地 Schema 不存在'; return 1; }
+    sbd_config_url_contract "$SBD_CONFIG" || return 1
     sbd_version >/dev/null || return 1
     sbd_validate_schema "$SBD_SCHEMA" "$SBD_CONFIG" || return 1
     "$SBD_BINARY" check -c "$SBD_CONFIG" -D "$SBD_ROOT" || { _error '核心语义检查失败'; return 1; }
