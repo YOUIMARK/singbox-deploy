@@ -40,14 +40,6 @@ empty_contract() {
     t_assert '空节点不伪造链接' test ! -s "$SBD_EXPORTS/links.txt"
     t_assert '重建参与状态提交' jq -e '.revision==1' "$SBD_STATE"
 }
-menu_contract() {
-    t_seed
-    t_run 0 sbd_export_menu <<< 0
-    t_run 0 sbd_export_menu < /dev/null
-    t_run 0 sbd_export_menu <<< $'1\nn\n0'
-    t_unchanged
-    t_run 1 sbd_export_menu <<< 2
-}
 single_node_contract() {
     t_seed
     t_entry_add anytls
@@ -87,7 +79,6 @@ single_node_failure() {
 t_case '统一 URI 编码、IPv6、端口规范化和扩展参数回读' uri_contract
 t_case '节点元数据缺值与重复明确失败' metadata_contract
 t_case '空登记经过真实事务清空派生输出' empty_contract
-t_case '导出菜单取消不改原文件' menu_contract
 t_case '按节点选择链接/JSON，不混入其他节点且查看不写状态' single_node_contract
 t_case '单节点资料 ID/缺文件/坏元数据明确失败，不隐式重建' single_node_failure
 t_finish

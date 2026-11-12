@@ -78,24 +78,22 @@ public_ip_fixture() {
         fi
     }
 }
-public_ip_ipv4() {
+public_ip_contract() {
     public_ip_fixture
     IP4_BODY=$' 8.8.8.8\n'
     t_run 0 sbd_public_ip
     t_assert 'IPv4 响应去除首尾空白' test "$(cat "$CASE_TMP/output")" = 8.8.8.8
     t_assert 'IPv4 成功后不请求 IPv6' test "$(wc -l < "$CASE_TMP/http-calls")" = 1
     t_contains "$CASE_TMP/http-calls" '-4 --connect-timeout 2 --max-time 4 https://api.ipify.org'
-}
-public_ip_ipv6_fallback() {
-    public_ip_fixture
+
+    : > "$CASE_TMP/http-calls"
     IP4_FAIL=true
     IP6_BODY='2606:4700:4700:0:0:0:0:1111'
     t_run 0 sbd_public_ip
     t_assert 'IPv4 失败后返回规范化 IPv6' test "$(cat "$CASE_TMP/output")" = 2606:4700:4700::1111
     t_contains "$CASE_TMP/http-calls" '-6 --connect-timeout 2 --max-time 4 https://api64.ipify.org'
-}
-public_ip_rejects_invalid() {
-    public_ip_fixture
+
+    IP4_FAIL=false
     IP6_FAIL=true
     local response
     for response in '<html>error</html>' example.com 192.168.1.1 127.0.0.1 100.64.0.1 224.0.0.1 2001:db8::1 '8.8.8.8 extra'; do
@@ -151,8 +149,6 @@ t_case '真实 Draft202012 依赖不可降级' draft_required
 t_case '安全下载要求 curl' curl_required
 t_case '安全下载限制初始与重定向协议' download_https_only
 t_case 'Go 软内存限制按物理内存与 cgroup 最小值计算' go_memlimit_contract
-t_case '公网 IPv4 响应规范化并优先返回' public_ip_ipv4
-t_case '公网 IPv4 失败后回退 IPv6' public_ip_ipv6_fallback
-t_case '公网地址检测拒绝无效和非公网响应' public_ip_rejects_invalid
+t_case '公网地址规范化、IPv6 回退与无效响应拒绝' public_ip_contract
 t_case '缺少 curl 时公网地址检测回退 wget' public_ip_wget_fallback
 t_finish

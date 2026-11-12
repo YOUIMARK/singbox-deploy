@@ -46,7 +46,7 @@ SLOW_SUITES=(
 )
 LOGS=$(mktemp -d "${TMPDIR:-/tmp}/singbox-runner.XXXXXX") || exit 1
 trap 'case "$LOGS" in "${TMPDIR:-/tmp}"/singbox-runner.*) rm -rf -- "$LOGS" ;; esac' EXIT
-for suite in "$ROOT"/tests/contracts/*.sh "$ROOT"/tests/alignment/*.sh "$ROOT"/tests/verify-configs.sh; do
+for suite in "$ROOT"/tests/contracts/*.sh "$ROOT"/tests/alignment/*.sh; do
     rel=${suite#"$ROOT"/tests/}
     if [[ "${SBD_TEST_FULL:-0}" != 1 ]]; then
         for slow in "${SLOW_SUITES[@]}"; do

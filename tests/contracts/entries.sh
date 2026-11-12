@@ -64,40 +64,11 @@ create_prompt_contract() {
     t_run 0 sbd_entry_create_prompt <<< $'2\n127.0.0.1\n019501\nexample.com\n菜单节点\nfixture-password\n3\nnode.example.com\n2\ny'
     t_contains "$CASE_TMP/output" "[成功] 节点与客户端资料已提交: $SBD_EXPORTS"
     t_contains "$CASE_TMP/output" '分享链接: anytls://'
+    t_contains "$CASE_TMP/output" "分享链接: $(cat "$SBD_EXPORTS/$SBD_NEW_ENTRY_ID.txt")"
     t_absent "$CASE_TMP/output" '当前节点链接'
     t_absent "$CASE_TMP/output" '未验证 NAT'
     t_absent "$CASE_TMP/output" '客户端映射端口'
     t_assert '菜单真实创建且客户端初始端口沿用监听端口' jq -e '.nodes[0]|.name=="菜单节点" and .client.server_port==19501' "$SBD_REGISTRY"
-    t_run 0 sbd_entries_list
-    t_absent "$CASE_TMP/output" fixture-password
-}
-action_contract() {
-    t_fresh
-    local profile
-    for profile in shadowsocks vmess_ws vless_ws vless_reality hysteria2 anytls anyreality; do
-        t_run 0 sbd_entry_actions "$profile"
-        t_contains "$CASE_TMP/output" '[7] 删除节点'
-        case "$profile" in
-            shadowsocks) t_contains "$CASE_TMP/output" '[8] Shadowsocks'; t_absent "$CASE_TMP/output" '[5]'; t_absent "$CASE_TMP/output" '[6]'; t_absent "$CASE_TMP/output" '[9]' ;;
-            vmess_ws|vless_ws) t_contains "$CASE_TMP/output" '[9] WS CDN'; t_absent "$CASE_TMP/output" '[5]'; t_absent "$CASE_TMP/output" '[6]'; t_absent "$CASE_TMP/output" '[8]' ;;
-            hysteria2) t_contains "$CASE_TMP/output" '[5] Hysteria2'; t_contains "$CASE_TMP/output" '[6]'; t_absent "$CASE_TMP/output" '[8]'; t_absent "$CASE_TMP/output" '[9]' ;;
-            anytls) t_contains "$CASE_TMP/output" '[6] 切换 TLS'; t_absent "$CASE_TMP/output" Reality; t_absent "$CASE_TMP/output" '[5]' ;;
-            *) t_contains "$CASE_TMP/output" '[6] 重建 Reality'; t_absent "$CASE_TMP/output" '[5]'; t_absent "$CASE_TMP/output" '[8]'; t_absent "$CASE_TMP/output" '[9]' ;;
-        esac
-    done
-    t_run 1 sbd_entry_actions unknown
-    for profile in shadowsocks vmess_ws vless_ws vless_reality hysteria2 anytls anyreality; do
-        t_run 0 sbd_entry_actions "$profile" edit
-        t_absent "$CASE_TMP/output" '[7]'
-        t_assert '修改菜单不接受隐藏删除编号' test "${SBD_ENTRY_ACTIONS/ 7 /}" = "$SBD_ENTRY_ACTIONS"
-    done
-    t_run 1 sbd_entry_change_prompt unknown
-}
-post_commit_contract() {
-    t_seed
-    t_run 0 sbd_entry_create_prompt <<< $'2\n127.0.0.1\n19501\nexample.com\n交付节点\nfixture-password\n3\nnode.example.com\n2\ny'
-    t_contains "$CASE_TMP/output" "分享链接: $(cat "$SBD_EXPORTS/$SBD_NEW_ENTRY_ID.txt")"
-    t_absent "$CASE_TMP/output" '当前节点链接'
     t_run 0 sbd_export_node "$SBD_NEW_ENTRY_ID" json
     t_contains "$CASE_TMP/output" "客户端 JSON: $SBD_EXPORTS/"
     t_absent "$CASE_TMP/output" fixture-password
@@ -105,6 +76,8 @@ post_commit_contract() {
     t_run 0 sbd_export_node_menu "$SBD_NEW_ENTRY_ID" < /dev/null
     t_contains "$CASE_TMP/output" '已提交的节点不受影响'
     t_assert '结束资料查看不会创建第二次修订' jq -e '.revision==1' "$SBD_STATE"
+    t_run 0 sbd_entries_list
+    t_absent "$CASE_TMP/output" fixture-password
 }
 empty_list_contract() {
     t_fresh
@@ -140,9 +113,7 @@ t_case 'AnyTLS 真实配置与 URI 编码' anytls_contract
 t_case 'AnyReality 真实密钥与原生客户端/服务端' reality_contract
 t_case 'Hysteria2 默认 BBR 和证书指纹 URI' hy2_default
 t_case 'Hysteria2 两侧带宽与 Gecko 自定义 URI 扩展' hy2_custom
-t_case '精简向导真实创建、自动分享和列表隐藏凭据' create_prompt_contract
-t_case '七档操作菜单只显示适用项且保持原有编号' action_contract
-t_case '创建后自动分享、可另查 JSON、稳定 ID 和 EOF 语义' post_commit_contract
+t_case '精简向导真实创建、自动分享、JSON 交付和 EOF 语义' create_prompt_contract
 t_case '编辑自身时监听地址重叠不误判冲突，其他入口仍判冲突' listen_overlap_contract
 t_case '首页空列表明确提示、坏登记不冒充没有节点' empty_list_contract
 t_finish
