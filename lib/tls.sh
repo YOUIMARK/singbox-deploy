@@ -27,10 +27,6 @@ sbd_tls_pair() {
         return 1
     fi
     [[ -f "$key" ]] || { _error '私钥文件不可读'; return 1; }
-    if (( 8#$(stat -c '%a' -- "$key") & 077 )); then
-        _error '私钥文件权限过宽，必须仅所有者可读'
-        return 1
-    fi
     identity=$(sbd_tls_identity "$name") || { _error '证书名称须为 DNS 名称或 IP 地址'; return 1; }
     if ! openssl x509 -in "$cert" -noout -checkend 0 >/dev/null 2>&1; then _error '证书不可读、无效或已过期'; return 1; fi
     if ! openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null | grep -q 'Subject Alternative Name'; then

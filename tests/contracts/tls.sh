@@ -44,6 +44,10 @@ self_signed_contract() {
     t_run 1 sbd_tls_pair "$cert" "$key" 192.0.2.1 "$CASE_TMP"
     t_run 1 sbd_tls_pair "$cert" "$cert" 2001:db8::1 "$CASE_TMP"
     t_contains "$CASE_TMP/output" '不能是同一文件'
+    # 自建自用，不校验私钥文件权限；宽权限不拒绝。
+    chmod 644 -- "$key" || exit 1
+    t_run 0 sbd_tls_pair "$cert" "$key" 2001:db8::1 "$CASE_TMP"
+    chmod 600 -- "$key" || exit 1
     openssl pkey -in "$key" -text -noout > "$CASE_TMP/key-info" || exit 1
     t_contains "$CASE_TMP/key-info" prime256v1
     t_assert '私钥权限 600' test "$(stat -c %a "$key")" = 600
