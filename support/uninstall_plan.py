@@ -82,6 +82,8 @@ def build(root, mode):
             "data/uninstall.json",
             "assets/cache.db",
             "logs/sing-box.log",
+            # 部署私有写锁；不删除会让 purge 后的 rmdir 部署根必然失败。
+            "run/singbox-deploy.lock",
         ):
             files.add(str(root / name))
         parts = root / "confs"

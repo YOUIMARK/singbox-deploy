@@ -26,20 +26,18 @@ sbd_peer_change() {
             if [[ "$port" != 0 ]]; then sbd_entry_port "$stage" :: "$port" udp "$exclude" || return 1; fi
         fi
     else _error '未知连接对象操作'; return 1; fi
-    request=$(jq -n --arg area "$area" --arg action "$action" --arg tag "$tag" --argjson value "$value" '{area:$area,action:$action,id:$tag,value:$value}') || { _error '连接对象请求不是有效 JSON'; return 1; }
+    request=$(jq -n --arg area "$area" --arg action "$action" --arg tag "$tag" --slurpfile value <(printf '%s' "$value") '{area:$area,action:$action,id:$tag,value:$value[0]}') || { _error '连接对象请求不是有效 JSON'; return 1; }
     sbd_policy_bundle "$stage" edit "$request" || return 1
     sbd_policy_finish "$stage"
 }
 
 sbd_peer_key() {
-    python3 - "$1" <<'PY' || { _error 'WireGuard 密钥须为标准 Base64 编码的 32 bytes'; return 1; }
-import base64, binascii, sys
+    python3 -I -c 'import base64, binascii, sys
 try:
-    if len(base64.b64decode(sys.argv[1], validate=True)) != 32:
+    if len(base64.b64decode(sys.stdin.read().strip(), validate=True)) != 32:
         raise ValueError()
 except (ValueError, binascii.Error):
-    raise SystemExit(1)
-PY
+    raise SystemExit(1)' || { _error 'WireGuard 密钥须为标准 Base64 编码的 32 bytes'; return 1; }
 }
 
 sbd_peer_key_prompt() {
@@ -49,7 +47,7 @@ sbd_peer_key_prompt() {
         else sbd_read_secret "$label" || return $?; fi
         value="$SBD_REPLY"
         if [[ "$optional" = true && -z "$value" ]]; then return 0; fi
-        sbd_peer_key "$value" && return 0
+        sbd_peer_key <<< "$value" && return 0
     done
 }
 
@@ -57,7 +55,7 @@ sbd_peer_prefix_prompt() {
     local field="$1" value
     while true; do
         sbd_read_required "$field（多个用逗号分隔）" || return $?
-        if value=$(python3 - "$field" "$SBD_REPLY" <<'PY'
+        if value=$(python3 -I - "$field" "$SBD_REPLY" <<'PY'
 import ipaddress, json, sys
 try:
     parse = ipaddress.ip_interface if sys.argv[1] == "address" else lambda v: ipaddress.ip_network(v, strict=False)
@@ -121,7 +119,7 @@ sbd_peer_warp_obtain() {
         _error 'WARP 自动注册失败：未取得注册 API 响应，配置未修改'
         return 1
     fi
-    if ! value=$(python3 "$SBD_APP/support/warp.py" normalize "$raw" 2>/dev/null); then
+    if ! value=$(python3 -I "$SBD_APP/support/warp.py" normalize "$raw" 2>/dev/null); then
         rm -f -- "$raw"
         _error 'WARP 自动注册响应无效，配置未修改'
         return 1
@@ -160,12 +158,12 @@ sbd_peer_wireguard_prompt() {
             sbd_policy_target dns default || return $?
             resolver="$SBD_REPLY"
         fi
-        peer=$(jq -n --arg address "$host" --argjson port "$port" --arg public "$public" --arg psk "$psk" --argjson allowed "$allowed" --argjson reserved "$reserved" --argjson keepalive "$keepalive" \
+        peer=$(jq -n --arg address "$host" --argjson port "$port" --arg public "$public" --rawfile psk <(printf '%s' "$psk") --argjson allowed "$allowed" --argjson reserved "$reserved" --argjson keepalive "$keepalive" \
             '{address:$address,port:$port,public_key:$public,allowed_ips:$allowed,reserved:$reserved,persistent_keepalive_interval:$keepalive} + (if $psk!="" then {pre_shared_key:$psk} else {} end)') || return 1
-        peers=$(jq --argjson peer "$peer" '. + [$peer]' <<< "$peers") || return 1
+        peers=$(jq --slurpfile peer <(printf '%s' "$peer") '. + $peer' <<< "$peers") || return 1
     done
-    value=$(jq -n --argjson address "$address" --arg private "$private" --argjson mtu "$mtu" --argjson listen "$listen" --argjson peers "$peers" --arg resolver "$resolver" \
-        '{type:"wireguard",address:$address,private_key:$private,mtu:$mtu,listen_port:$listen,system:false,peers:$peers} + (if $resolver!="" then {domain_resolver:$resolver} else {} end)') || return 1
+    value=$(jq -n --argjson address "$address" --rawfile private <(printf '%s' "$private") --argjson mtu "$mtu" --argjson listen "$listen" --slurpfile peers <(printf '%s' "$peers") --arg resolver "$resolver" \
+        '{type:"wireguard",address:$address,private_key:$private,mtu:$mtu,listen_port:$listen,system:false,peers:$peers[0]} + (if $resolver!="" then {domain_resolver:$resolver} else {} end)') || return 1
     SBD_PEER_VALUE="$value"
 }
 
@@ -173,7 +171,7 @@ sbd_peer_token_prompt() {
     local value config
     while true; do
         sbd_read_secret 'Cloudflare Tunnel token（只填 token，不填安装命令）' || return $?; value="$SBD_REPLY"
-        config=$(jq -n --arg token "$value" '{inbounds:[{type:"cloudflared",tag:"token-probe",token:$token,protocol:"quic"}],outbounds:[{type:"direct",tag:"direct"}],route:{final:"direct"}}') || return 1
+        config=$(jq -n --rawfile token <(printf '%s' "$value") '{inbounds:[{type:"cloudflared",tag:"token-probe",token:$token,protocol:"quic"}],outbounds:[{type:"direct",tag:"direct"}],route:{final:"direct"}}') || return 1
         if "$SBD_BINARY" check -c /dev/stdin -D "$SBD_ROOT" <<< "$config" >/dev/null 2>&1; then SBD_REPLY="$value"; return 0; fi
         _error '核心拒绝此 token，请重新填写；未连接 Cloudflare 验证凭据'
     done
@@ -187,7 +185,7 @@ sbd_peer_cloudflare_prompt() {
     sbd_ui_options '[1] 自动（默认）' '[2] 仅 IPv4' '[3] 仅 IPv6'
     sbd_entry_number_prompt 'Cloudflare 边缘 IP 协议栈' 1 3 1 || return $?
     if [[ "$SBD_REPLY" = 2 ]]; then edge=4; elif [[ "$SBD_REPLY" = 3 ]]; then edge=6; fi
-    SBD_PEER_VALUE=$(jq -n --arg token "$token" --arg protocol "$protocol" --argjson edge "$edge" \
+    SBD_PEER_VALUE=$(jq -n --rawfile token <(printf '%s' "$token") --arg protocol "$protocol" --argjson edge "$edge" \
         '{type:"cloudflared",token:$token,protocol:$protocol} + (if $edge!=0 then {edge_ip_version:$edge} else {} end)') || return 1
     sbd_info '域名与回源目标请在 Cloudflare 控制台设置'
 }
@@ -196,7 +194,7 @@ sbd_peer_cloudflare_edit() {
     local tag="$1" token value
     sbd_peer_token_prompt || return $?
     token="$SBD_REPLY"
-    value=$(jq -c --arg tag "$tag" --arg token "$token" \
+    value=$(jq -c --arg tag "$tag" --rawfile token <(printf '%s' "$token") \
         '.inbounds[]? | select(.tag==$tag and .type=="cloudflared") | .token=$token' "$SBD_CONFIG") || { _error '读取现有隧道失败'; return 1; }
     [[ -n "$value" ]] || { _error '未找到该 Cloudflare Tunnel'; return 1; }
     sbd_policy_confirm || return $?

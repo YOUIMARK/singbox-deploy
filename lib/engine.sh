@@ -286,7 +286,7 @@ sbd_engine_asset() {
 }
 
 sbd_engine_fetch() {
-    local requested="$1" stage="$2" arch family version asset endpoint tag
+    local requested="$1" stage="$2" arch family version asset endpoint tag digest
     if ! arch=$(sbd_arch) || ! family=$(sbd_os); then return 1; fi
     if [[ "$requested" = latest ]]; then
         endpoint='https://api.github.com/repos/SagerNet/sing-box/releases/latest'
@@ -300,7 +300,9 @@ sbd_engine_fetch() {
     if [[ "$requested" != latest && "$version" != "$(sbd_release_version "$requested")" ]]; then _error '返回的 release 与指定版本不符'; return 1; fi
     asset=$(sbd_engine_asset "$version" "$arch" "$family") || return 1
     jq -e --arg name "$asset" '[.assets[]? | select(.name==$name)] | length==1' "$stage/release.json" >/dev/null || { _error "官方发行包不存在: $asset"; return 1; }
+    digest=$(jq -er --arg name "$asset" '.assets[] | select(.name==$name) | .digest | select(type=="string" and startswith("sha256:"))' "$stage/release.json") || { _error '官方发行包缺少 SHA-256 摘要'; return 1; }
     sbd_download "https://github.com/SagerNet/sing-box/releases/download/v$version/$asset" "$stage/release.tar.gz" || return 1
+    printf '%s  %s\n' "${digest#sha256:}" "$stage/release.tar.gz" | sha256sum -c - >/dev/null || { _error '发行包 SHA-256 校验失败'; return 1; }
     sbd_engine_unpack "$stage/release.tar.gz" "$stage/engine" "$version" "$asset"
 }
 
@@ -318,7 +320,7 @@ sbd_engine_unpack() {
         [[ -s "$target/libcronet.so" ]] || { _error '官方默认包缺少随包运行库 libcronet.so'; return 1; }
     fi
     # 记录包内自有文件清单，卸载时只删除这些文件，不碰部署根下的其他内容。
-    python3 - "$target" <<'PY' || { _error '记录自有核心包文件清单失败'; return 1; }
+    python3 -I - "$target" <<'PY' || { _error '记录自有核心包文件清单失败'; return 1; }
 from pathlib import Path
 import sys
 root=Path(sys.argv[1])
@@ -512,7 +514,7 @@ sbd_service_after_change() {
 }
 
 sbd_uninstall_plan() {
-    python3 "$SBD_APP/support/uninstall_plan.py" plan "$SBD_ROOT" "$1" || { _error '不能生成已知自有资源清单'; return 1; }
+    python3 -I "$SBD_APP/support/uninstall_plan.py" plan "$SBD_ROOT" "$1" || { _error '不能生成已知自有资源清单'; return 1; }
 }
 
 sbd_uninstall_locked() {
@@ -533,7 +535,7 @@ sbd_uninstall_locked() {
     if [[ -e "$rotate" ]] && ! rm -- "$rotate"; then _error '轮换文件删除失败，卸载未完成'; return 1; fi
     sbd_service_reload || return 1
     # helper 与清单保留在部署树内，部分失败时可按准确路径重试，不假报完整卸载。
-    python3 "$helper" apply "$SBD_STATE_DIR/uninstall.json" || { _error "文件卸载未完成；清单: $SBD_STATE_DIR/uninstall.json；重试: python3 $helper apply $SBD_STATE_DIR/uninstall.json"; return 1; }
+    python3 -I "$helper" apply "$SBD_STATE_DIR/uninstall.json" || { _error "文件卸载未完成；清单: $SBD_STATE_DIR/uninstall.json；重试: python3 -I $helper apply $SBD_STATE_DIR/uninstall.json"; return 1; }
     if [[ "$mode" = keep ]]; then
         content=$(jq '. + {installed:false}' "$SBD_STATE") || return 1
         sbd_record_write "$SBD_STATE" "$content" || return 1

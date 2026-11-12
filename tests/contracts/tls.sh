@@ -29,6 +29,8 @@ provider_contract() {
     t_assert '离线 check 没有签发或创建 ACME 存储' test ! -e "$SBD_CERT_DIR/acme"
     t_run 1 sbd_apply sbd_tls_provider_add cloudflare other.example.com admin@example.com '{"provider":"cloudflare","api_token":"secret"}'
     t_contains "$CASE_TMP/output" '已存在'
+    t_run 1 sbd_apply sbd_tls_provider_add insecure-dns example.com admin@example.com '{"provider":"acmedns","username":"fixture-user","password":"fixture-secret","subdomain":"fixture-sub","server_url":"http://acme-dns.example.com"}'
+    t_contains "$CASE_TMP/output" 'HTTPS'
     t_run 1 sbd_apply sbd_tls_provider_add empty example.com admin@example.com '{"provider":"cloudflare"}'
 }
 self_signed_contract() {
@@ -40,6 +42,12 @@ self_signed_contract() {
     id=$(jq -r '.tls.certificates[0].id' "$SBD_REGISTRY")
     t_run 0 sbd_tls_pair "$cert" "$key" 2001:db8::1 "$CASE_TMP"
     t_run 1 sbd_tls_pair "$cert" "$key" 192.0.2.1 "$CASE_TMP"
+    t_run 1 sbd_tls_pair "$cert" "$cert" 2001:db8::1 "$CASE_TMP"
+    t_contains "$CASE_TMP/output" '不能是同一文件'
+    # 自建自用，不校验私钥文件权限；宽权限不拒绝。
+    chmod 644 -- "$key" || exit 1
+    t_run 0 sbd_tls_pair "$cert" "$key" 2001:db8::1 "$CASE_TMP"
+    chmod 600 -- "$key" || exit 1
     openssl pkey -in "$key" -text -noout > "$CASE_TMP/key-info" || exit 1
     t_contains "$CASE_TMP/key-info" prime256v1
     t_assert '私钥权限 600' test "$(stat -c %a "$key")" = 600
@@ -55,8 +63,16 @@ external_contract() {
     cp "$CASE_TMP/external-cert.pem" "$CASE_TMP/cert-before" || exit 1
     cp "$CASE_TMP/external-key.pem" "$CASE_TMP/key-before" || exit 1
     t_run 0 sbd_apply sbd_tls_material_add import import.example.com "$CASE_TMP/external-cert.pem" "$CASE_TMP/external-key.pem"
-    local id
+    local id cert imported
     id=$(jq -r '.tls.certificates[0].id' "$SBD_REGISTRY")
+    cert=$(jq -r '.tls.certificates[0].certificate_path' "$SBD_REGISTRY")
+    t_assert '导入私钥复制为 600' test "$(stat -c %a "$(jq -r '.tls.certificates[0].key_path' "$SBD_REGISTRY")")" = 600
+    imported="$CASE_TMP/imported-cert.pem"
+    cp -- "$cert" "$imported" || exit 1
+    cat -- "$CASE_TMP/external-key.pem" >> "$cert" || exit 1
+    t_run 1 sbd_tls_client "$SBD_STATE_DIR" "$id" certificate
+    t_contains "$CASE_TMP/output" '包含私钥块'
+    cp -- "$imported" "$cert" || exit 1
     t_run 0 sbd_apply sbd_tls_remove certificate "$id"
     t_run 0 sbd_apply t_edit_debug
     t_assert '导入证书原文件保留' cmp -s "$CASE_TMP/external-cert.pem" "$CASE_TMP/cert-before"

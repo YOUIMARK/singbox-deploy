@@ -19,7 +19,7 @@ field_contract() {
     t_run 2 sbd_entry_password_prompt 密码 < /dev/null
     sbd_entry_uuid_prompt > "$CASE_TMP/prompt" 2>&1 <<< '' || exit 1
     generated="$SBD_REPLY"
-    t_assert '显式空行生成合法 UUID' test "$generated" = "$(sbd_entry_uuid "$generated")"
+    t_assert '显式空行生成合法 UUID' test "$generated" = "$(sbd_entry_uuid <<< "$generated")"
     t_contains "$CASE_TMP/prompt" '随机 UUID:'
     sbd_entry_choose '[{"id":"node.first","name":"同名"},{"id":"node.second","name":"同名"}]' 选择 > "$CASE_TMP/prompt" 2>&1 <<< 2 || exit 1
     t_assert '同名节点按稳定 ID 选择' test "$SBD_REPLY" = node.second

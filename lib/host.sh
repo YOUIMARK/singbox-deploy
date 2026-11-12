@@ -24,7 +24,7 @@ sbd_paths() {
     SBD_REGISTRY="$SBD_STATE_DIR/registry.json"
     SBD_EXPORTS="$SBD_ROOT/exports"
     SBD_WORK="$SBD_ROOT/work"
-    SBD_LOCK="${2:-/run/lock/singbox-deploy.lock}"
+    SBD_LOCK="${2:-$SBD_ROOT/run/singbox-deploy.lock}"
     SBD_COMMAND="${3:-/usr/local/bin/sd}"
     SBD_SERVICE=singbox-deploy
     SBD_LOG="$SBD_LOG_DIR/sing-box.log"
@@ -106,13 +106,10 @@ sbd_go_memlimit_mb() {
 sbd_dependencies() {
     local tool
     (( BASH_VERSINFO[0] >= 5 )) || { _error '需要 Bash 5 或更新版本'; return 1; }
-    for tool in jq python3 flock tar cmp mktemp readlink openssl; do
+    for tool in curl jq python3 flock tar cmp mktemp readlink openssl sha256sum; do
         command -v "$tool" >/dev/null 2>&1 || { _error "缺少依赖: $tool"; return 1; }
     done
-    if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
-        _error '缺少 curl/wget 下载客户端'; return 1
-    fi
-    if ! python3 -c 'from jsonschema import Draft202012Validator' >/dev/null 2>&1; then
+    if ! python3 -I -c 'from jsonschema import Draft202012Validator' >/dev/null 2>&1; then
         _error 'Python jsonschema 必须提供 Draft202012Validator，不能降级为仅运行 check'
         return 1
     fi
@@ -145,7 +142,7 @@ sbd_public_ip() {
             ip=$(wget -q -T 4 -O - "$url" 2>/dev/null) || continue
         else return 1; fi
         # 外部响应必须是公网 IP 字面量，不能将错误页、域名或内网地址用作默认值。
-        if ip=$(python3 -c 'import ipaddress,sys; ip=ipaddress.ip_address(sys.argv[1].strip()); sys.exit(1) if not ip.is_global or ip.is_multicast else print(ip)' "$ip" 2>/dev/null); then
+        if ip=$(python3 -I -c 'import ipaddress,sys; ip=ipaddress.ip_address(sys.argv[1].strip()); sys.exit(1) if not ip.is_global or ip.is_multicast else print(ip)' "$ip" 2>/dev/null); then
             printf '%s\n' "$ip"
             return 0
         fi
@@ -155,20 +152,22 @@ sbd_public_ip() {
 
 sbd_download() {
     local url="$1" target="$2"
+    [[ "$url" = https://* ]] || { _error '下载地址必须使用 HTTPS'; return 1; }
     if command -v curl >/dev/null 2>&1; then
-        curl -fLsS --connect-timeout 15 --max-time 120 "$url" -o "$target" || { _error "下载失败: $url"; return 1; }
-    elif command -v wget >/dev/null 2>&1; then
-        wget -q -T 120 -O "$target" "$url" || { _error "下载失败: $url"; return 1; }
+        curl -fLsS --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 "$url" -o "$target" || { _error "下载失败: $url"; return 1; }
     else
-        _error '需要 curl 或 wget'
+        _error '需要 curl 才能安全下载'
         return 1
     fi
     [[ -s "$target" ]] || { _error "下载结果为空: $url"; return 1; }
 }
 
 sbd_write_lock() (
-    mkdir -p -- "$(dirname -- "$SBD_LOCK")" || { _error '无法创建锁目录'; return 1; }
+    [[ "$SBD_LOCK" = "$SBD_ROOT"/run/* ]] || { _error '写锁必须位于部署私有目录'; return 1; }
+    mkdir -p -m 700 -- "$SBD_ROOT/run" || { _error '无法创建锁目录'; return 1; }
+    chmod 700 -- "$SBD_ROOT/run" || { _error '无法保护锁目录'; return 1; }
     { exec {SBD_WRITE_FD}>"$SBD_LOCK"; } || { _error '无法打开写锁'; return 1; }
+    [[ ! -L "$SBD_LOCK" && -f "$SBD_LOCK" ]] || { _error '写锁路径不安全'; return 1; }
     flock -n "$SBD_WRITE_FD" || { _error '另一个操作正在修改部署，请稍后重试'; return 1; }
     "$@"
 )

@@ -18,12 +18,12 @@ ss_contract() {
 ss_key_contract() {
     local method
     for method in 2022-blake3-aes-256-gcm 2022-blake3-chacha20-poly1305; do
-        t_run 1 sbd_entry_ss_key "$method" not-base64
-        t_run 1 sbd_entry_ss_key "$method" YWJjZA==
-        t_run 1 sbd_entry_ss_key "$method" '__________________________________________8='
+        t_run 1 sbd_entry_ss_key "$method" <<< 'not-base64'
+        t_run 1 sbd_entry_ss_key "$method" <<< 'YWJjZA=='
+        t_run 1 sbd_entry_ss_key "$method" <<< '__________________________________________8='
     done
-    t_run 1 sbd_entry_ss_key aes-128-gcm abc
-    t_run 1 sbd_entry_ss_key aes-256-gcm ''
+    t_run 1 sbd_entry_ss_key aes-128-gcm <<< 'abc'
+    t_run 1 sbd_entry_ss_key aes-256-gcm <<< ''
 }
 ws_contract() {
     t_seed

@@ -25,7 +25,7 @@ remote_lazy() {
     t_policy_seed
     t_policy_http
     local value
-    value=$(jq -n --arg url "http://127.0.0.1:$POLICY_HTTP_PORT/missing.srs" '{type:"remote",tag:"remote",format:"binary",url:$url,update_interval:"1h",http_client:{version:2,domain_resolver:"system"}}') || exit 1
+    value=$(jq -n --arg url "https://127.0.0.1:$POLICY_HTTP_PORT/missing.srs" '{type:"remote",tag:"remote",format:"binary",url:$url,update_interval:"1h",http_client:{version:2,domain_resolver:"system"}}') || exit 1
     t_run 0 sbd_apply sbd_rule_set add remote "$value"
     t_assert '4B：check/提交不主动发起远程下载' test ! -e "$CASE_TMP/requests"
     t_assert '不写种子或弃用下载字段，保留显式 HTTP client' jq -e '.route.rule_set[0]|.type=="remote" and (has("initial_path") or has("download_detour")|not) and has("http_client")' "$SBD_CONFIG"

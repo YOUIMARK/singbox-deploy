@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 sbd_tls_identity() {
-    python3 - "$1" <<'PY'
+    python3 -I - "$1" <<'PY'
 import ipaddress
 import re
 import sys
@@ -21,6 +21,12 @@ sbd_tls_tag() {
 
 sbd_tls_pair() {
     local cert="$1" key="$2" name="$3" dir="$4" identity
+    [[ "$cert" != "$key" ]] || { _error '证书与私钥不能是同一文件'; return 1; }
+    if grep -q -- '-----BEGIN .*PRIVATE KEY-----' "$cert" 2>/dev/null; then
+        _error '证书文件不得包含私钥块'
+        return 1
+    fi
+    [[ -f "$key" ]] || { _error '私钥文件不可读'; return 1; }
     identity=$(sbd_tls_identity "$name") || { _error '证书名称须为 DNS 名称或 IP 地址'; return 1; }
     if ! openssl x509 -in "$cert" -noout -checkend 0 >/dev/null 2>&1; then _error '证书不可读、无效或已过期'; return 1; fi
     if ! openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null | grep -q 'Subject Alternative Name'; then
@@ -44,8 +50,23 @@ sbd_tls_pin() (
         openssl dgst -sha256 -binary | openssl base64 -A || { _error '证书公钥 pin 生成失败'; return 1; }
 )
 
+sbd_tls_acme_url() {
+    printf '%s' "$1" | python3 -I -c '
+import sys
+from urllib.parse import urlsplit
+value = sys.stdin.read()
+try:
+    u = urlsplit(value)
+except ValueError:
+    raise SystemExit(1)
+if (u.scheme != "https" or not u.hostname or u.username is not None
+        or u.password is not None or any(c.isspace() for c in value)):
+    raise SystemExit(1)
+'
+}
+
 sbd_tls_provider_add() {
-    local stage="$1" tag="$2" domain="$3" email="$4" challenge="$5" content identity
+    local stage="$1" tag="$2" domain="$3" email="$4" challenge="$5" content identity url
     sbd_tls_tag "$tag" || return 1
     identity=$(sbd_tls_identity "${domain#\*.}") || { _error 'ACME 域名无效'; return 1; }
     [[ "$identity" = DNS:* && "$email" = ?*@?* ]] || { _error 'DNS-01 需要域名和联系邮箱'; return 1; }
@@ -55,10 +76,14 @@ sbd_tls_provider_add() {
         elif .provider=="alidns" then (.access_key_id|nonempty) and (.access_key_secret|nonempty)
         elif .provider=="acmedns" then (.username|nonempty) and (.password|nonempty) and (.subdomain|nonempty) and (.server_url|nonempty)
         else false end' <<< "$challenge" >/dev/null 2>&1 || { _error 'DNS-01 provider 或必填凭据无效'; return 1; }
+    if [[ "$(jq -r '.provider' <<< "$challenge")" = acmedns ]]; then
+        url=$(jq -r '.server_url' <<< "$challenge") || { _error 'ACME-DNS 服务地址无效'; return 1; }
+        sbd_tls_acme_url "$url" || { _error 'ACME-DNS 服务地址必须使用 HTTPS'; return 1; }
+    fi
     jq -e --arg tag "$tag" 'all((.certificate_providers // [])[]; .tag!=$tag)' "$stage/config.json" >/dev/null || { _error '此 provider 标识已存在，不覆盖自定义或正在使用的配置'; return 1; }
-    content=$(jq --arg tag "$tag" --arg domain "$domain" --arg email "$email" --arg dir "$SBD_CERT_DIR/acme/$tag" --argjson challenge "$challenge" '
+    content=$(jq --arg tag "$tag" --arg domain "$domain" --arg email "$email" --arg dir "$SBD_CERT_DIR/acme/$tag" --slurpfile challenge <(printf '%s' "$challenge") '
         .certificate_providers = ((.certificate_providers // []) + [{type:"acme",tag:$tag,domain:[$domain],email:$email,
-        data_directory:$dir,key_type:"p256",dns01_challenge:$challenge}])' "$stage/config.json") || { _error '构造 ACME provider 失败'; return 1; }
+        data_directory:$dir,key_type:"p256",dns01_challenge:$challenge[0]}])' "$stage/config.json") || { _error '构造 ACME provider 失败'; return 1; }
     sbd_record_write "$stage/config.json" "$content" || return 1
     content=$(jq --arg tag "$tag" '.tls.providers = ((.tls.providers // []) + [$tag])' "$stage/registry.json") || return 1
     sbd_record_write "$stage/registry.json" "$content"
@@ -69,13 +94,13 @@ sbd_tls_material_add() {
     identity=$(sbd_tls_identity "$name") || { _error '证书名称须为 DNS 名称或 IP 地址'; return 1; }
     case "$kind" in
         self_signed)
-            # 先登记最终的独立路径，再生成材料；从不覆盖核心正在监视的旧证书。
+            # 先创建独立的最终路径，再登记材料；从不覆盖核心正在监视的旧证书。
             directory=$(mktemp -d "$stage/cert.XXXXXXXX") || { _error '创建证书候选位置失败'; return 1; }
             id="${directory##*/}"; directory="$SBD_CERT_DIR/$id"
-            sbd_material_note created_materials "$directory" || return 1
             if ! mkdir -p -- "$SBD_CERT_DIR" || ! chmod 700 -- "$SBD_CERT_DIR" || ! mkdir -m 700 -- "$directory"; then
                 _error '创建证书材料目录失败'; return 1
             fi
+            sbd_material_note created_materials "$directory" || { rmdir -- "$directory" 2>/dev/null || true; return 1; }
             cert="$directory/cert.pem" key="$directory/key.pem"
             if ! openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -sha256 -days 3650 \
                 -subj "/CN=$name" -addext "subjectAltName=$identity" -addext 'basicConstraints=critical,CA:FALSE' \
@@ -87,8 +112,15 @@ sbd_tls_material_add() {
             ;;
         import)
             [[ "$cert" = /* && "$key" = /* ]] || { _error '导入证书和私钥必须使用绝对路径'; return 1; }
-            id=$(openssl rand -hex 8) || { _error '生成证书标识失败'; return 1; }
-            id="pem.$id"; directory=''
+            [[ "$cert" != "$key" && -f "$cert" && -f "$key" ]] || { _error '证书和私钥必须是两个可读文件'; return 1; }
+            id=$(openssl rand -hex 4) || { _error '生成证书标识失败'; return 1; }
+            id="cert.$id"; directory="$SBD_CERT_DIR/$id"
+            mkdir -p -- "$SBD_CERT_DIR" && chmod 700 -- "$SBD_CERT_DIR" || { _error '创建证书材料目录失败'; return 1; }
+            mkdir -m 700 -- "$directory" || { _error '创建导入证书目录失败'; return 1; }
+            sbd_material_note created_materials "$directory" || { rmdir -- "$directory" 2>/dev/null || true; return 1; }
+            cp -- "$cert" "$directory/cert.pem" && cp -- "$key" "$directory/key.pem" || { _error '复制导入证书失败'; return 1; }
+            chmod 644 -- "$directory/cert.pem" && chmod 600 -- "$directory/key.pem" || { _error '设置导入证书权限失败'; return 1; }
+            cert="$directory/cert.pem" key="$directory/key.pem"
             ;;
         *) _error '未知证书来源'; return 1 ;;
     esac
@@ -124,6 +156,10 @@ sbd_tls_client() {
     value=$(jq -ce --arg id "$id" '[.tls.certificates[]? | select(.id==$id)] | select(length==1) | .[0]' "$stage/registry.json") || { _error '客户端证书资料缺失'; return 1; }
     if ! name=$(jq -er '.server_name | select(type=="string" and length>0)' <<< "$value") ||
         ! cert=$(jq -er '.certificate_path | select(type=="string" and length>0)' <<< "$value"); then _error '客户端证书资料不完整'; return 1; fi
+    if grep -q -- '-----BEGIN .*PRIVATE KEY-----' "$cert" 2>/dev/null; then
+        _error '证书文件包含私钥块，不能导出为客户端信任证书'
+        return 1
+    fi
     case "$trust" in
         pin)
             pin=$(sbd_tls_pin "$cert") || return 1
@@ -206,33 +242,23 @@ sbd_tls_provider_prompt() {
         1)
             sbd_read_secret 'Cloudflare API token' || return $?; token="$SBD_REPLY"
             sbd_read_optional 'Cloudflare zone_token（需要独立 Zone token 时填写，不回显）' true || return $?; optional="$SBD_REPLY"
-            challenge=$(jq -n --arg token "$token" --arg optional "$optional" '{provider:"cloudflare",api_token:$token} + (if $optional!="" then {zone_token:$optional} else {} end)') || return 1 ;;
+            challenge=$(jq -n --rawfile token <(printf '%s' "$token") --rawfile optional <(printf '%s' "$optional") '{provider:"cloudflare",api_token:$token} + (if $optional!="" then {zone_token:$optional} else {} end)') || return 1 ;;
         2)
             sbd_read_required 'AliDNS access_key_id' || return $?; token="$SBD_REPLY"
             sbd_read_secret 'AliDNS access_key_secret' || return $?; key="$SBD_REPLY"
             sbd_read_optional 'AliDNS region_id（可留空）' || return $?; region="$SBD_REPLY"
             sbd_read_optional 'AliDNS security_token（使用 STS 时填写，不回显）' true || return $?; optional="$SBD_REPLY"
-            challenge=$(jq -n --arg id "$token" --arg key "$key" --arg region "$region" --arg optional "$optional" '{provider:"alidns",access_key_id:$id,access_key_secret:$key} + (if $region!="" then {region_id:$region} else {} end) + (if $optional!="" then {security_token:$optional} else {} end)') || return 1 ;;
+            challenge=$(jq -n --rawfile id <(printf '%s' "$token") --rawfile key <(printf '%s' "$key") --rawfile region <(printf '%s' "$region") --rawfile optional <(printf '%s' "$optional") '{provider:"alidns",access_key_id:$id,access_key_secret:$key} + (if $region!="" then {region_id:$region} else {} end) + (if $optional!="" then {security_token:$optional} else {} end)') || return 1 ;;
         3)
             sbd_read_required 'ACME-DNS username' || return $?; username="$SBD_REPLY"
             sbd_read_secret 'ACME-DNS password' || return $?; password="$SBD_REPLY"
             sbd_read_required 'ACME-DNS subdomain' || return $?; subdomain="$SBD_REPLY"
             while true; do
                 sbd_read_required 'ACME-DNS server_url' || return $?; url="$SBD_REPLY"
-                if python3 - "$url" <<'PY'
-import sys
-from urllib.parse import urlsplit
-try:
-    u = urlsplit(sys.argv[1])
-    valid = u.scheme in ("https", "http") and bool(u.hostname) and not any(c.isspace() for c in sys.argv[1])
-except ValueError:
-    valid = False
-raise SystemExit(0 if valid else 1)
-PY
-                then break; fi
-                _error 'server_url 须为完整 HTTP/HTTPS 地址，请仅重新填写此字段'
+                if sbd_tls_acme_url "$url"; then break; fi
+                _error 'server_url 必须使用 HTTPS，请仅重新填写此字段'
             done
-            challenge=$(jq -n --arg user "$username" --arg password "$password" --arg sub "$subdomain" --arg url "$url" '{provider:"acmedns",username:$user,password:$password,subdomain:$sub,server_url:$url}') || return 1 ;;
+            challenge=$(jq -n --rawfile user <(printf '%s' "$username") --rawfile password <(printf '%s' "$password") --rawfile sub <(printf '%s' "$subdomain") --rawfile url <(printf '%s' "$url") '{provider:"acmedns",username:$user,password:$password,subdomain:$sub,server_url:$url}') || return 1 ;;
     esac
     sbd_apply sbd_tls_provider_add "$tag" "$domain" "$email" "$challenge" || return 1
     sbd_success 'ACME provider 配置已提交；未验证签发，首次使用时由核心申请和续期'

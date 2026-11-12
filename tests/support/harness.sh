@@ -53,7 +53,7 @@ t_finish() { printf 'SUMMARY pass=%s fail=%s\n' "$PASS" "$FAIL"; [[ "$FAIL" = 0 
 t_fresh() {
     local mode="${1:-warm}" rel
     mkdir -p -- "$CASE_TMP/root" "$CASE_TMP/bin" || exit 1
-    sbd_paths "$CASE_TMP/root" "$CASE_TMP/write.lock" "$CASE_TMP/bin/sd" || exit 1
+    sbd_paths "$CASE_TMP/root" "$CASE_TMP/root/run/write.lock" "$CASE_TMP/bin/sd" || exit 1
     sbd_directories || exit 1
     if [[ "$mode" = warm ]]; then
         while IFS= read -r rel; do

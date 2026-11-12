@@ -12,8 +12,8 @@ export SBD_TEST_BIN
 for tool in jq python3 flock cmp mktemp openssl; do
     command -v "$tool" >/dev/null 2>&1 || { printf '失败: 缺少 %s\nSUMMARY pass=0 fail=1\n' "$tool" >&2; exit 1; }
 done
-if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
-    printf '失败: 缺少 curl/wget，拒绝让安装测试触发真实包安装\nSUMMARY pass=0 fail=1\n' >&2
+if ! command -v curl >/dev/null 2>&1; then
+    printf '失败: 缺少 curl，拒绝让安装测试触发真实包安装\nSUMMARY pass=0 fail=1\n' >&2
     exit 1
 fi
 python3 -c 'from jsonschema import Draft202012Validator' >/dev/null 2>&1 || { printf '失败: 缺少 Draft202012Validator\nSUMMARY pass=0 fail=1\n' >&2; exit 1; }

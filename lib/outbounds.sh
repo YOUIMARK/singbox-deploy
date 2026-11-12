@@ -33,7 +33,7 @@ sbd_outbound_parse_batch() {
         _error '分享链接不能为空'
         return 1
     fi
-    content=$(printf '%s\n' "$@" | python3 "$SBD_APP/support/outbound_link.py" --batch) || return 1
+    content=$(printf '%s\n' "$@" | python3 -I "$SBD_APP/support/outbound_link.py" --batch) || return 1
     jq -e '
         type == "array" and length > 0 and
         all(.[];
@@ -156,7 +156,7 @@ sbd_outbound_read_links() {
             # 纯 Base64 链接行不含 ://，交给解析器自身判定，避免被当成 tag 预取而丢掉后续行。
             if [[ "$line" == *"://"* ]] ||
                 { [[ "$line" =~ ^[A-Za-z0-9+/=_-]+$ ]] &&
-                  printf '%s\n' "$line" | python3 "$SBD_APP/support/outbound_link.py" --batch >/dev/null 2>&1; }; then
+                  printf '%s\n' "$line" | python3 -I "$SBD_APP/support/outbound_link.py" --batch >/dev/null 2>&1; }; then
                 SBD_OUTBOUND_INPUTS+=("$line")
             else
                 SBD_OUTBOUND_PREFETCH="$line"
@@ -223,9 +223,9 @@ sbd_outbound_add_prompt() {
         _error '构造出口 tag 列表失败'
         return 1
     }
-    request=$(jq -cn --argjson batch "$SBD_OUTBOUND_BATCH" --argjson tags "$tags_json" '
-        [range(0; ($batch | length)) as $i | $batch[$i].outbound + {tag: $tags[$i]}]
-    ') || { _error '构造出口失败'; return 1; }
+    request=$(jq -c --argjson tags "$tags_json" '
+        [range(0; length) as $i | .[$i].outbound + {tag: $tags[$i]}]
+    ' <<< "$SBD_OUTBOUND_BATCH") || { _error '构造出口失败'; return 1; }
     joined=$(printf '%s, ' "${tags[@]}") || return 1
     joined=${joined%, }
     if ((count == 1)); then

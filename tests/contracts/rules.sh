@@ -5,6 +5,7 @@
 
 url_validation() {
     t_run 0 sbd_rule_url 'https://example.com/geosite-cn.srs'
+    t_run 1 sbd_rule_url 'http://example.com/geosite-cn.srs'
     t_run 1 sbd_rule_url 'bad/path'
     export PYTHONOPTIMIZE=1
     t_run 1 sbd_rule_url 'https://example.com:0/geosite-cn.srs'

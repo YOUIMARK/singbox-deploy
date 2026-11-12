@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 
 sbd_policy_begin() {
-    python3 "$SBD_APP/support/policy_records.py" align "$1" || { _error '策略登记与配置不一致，取消变更'; return 1; }
+    python3 -I "$SBD_APP/support/policy_records.py" align "$1" || { _error '策略登记与配置不一致，取消变更'; return 1; }
 }
 
 sbd_policy_bundle() {
     local stage="$1" command="$2" request="${3:-}" content
-    content=$(python3 "$SBD_APP/support/policy_records.py" "$command" "$stage" "$request") || return 1
+    content=$(printf '%s' "$request" | python3 -I "$SBD_APP/support/policy_records.py" "$command" "$stage") || return 1
     sbd_record_write "$stage/policy-bundle.json" "$content" || return 1
     content=$(jq -c '.config' "$stage/policy-bundle.json") || return 1
     sbd_record_write "$stage/config.json" "$content" || return 1
@@ -16,7 +16,7 @@ sbd_policy_bundle() {
 
 sbd_policy_finish() {
     sbd_prepare_config "$1" || return 1
-    python3 "$SBD_APP/support/policy_records.py" refs "$1" || return 1
+    python3 -I "$SBD_APP/support/policy_records.py" refs "$1" || return 1
     sbd_policy_bundle "$1" sync
 }
 
@@ -55,12 +55,12 @@ sbd_policy_rule() {
 }
 
 sbd_rule_url() {
-    python3 - "$1" <<'PY' || { _error '规则集 URL 须为有效的 HTTP/HTTPS 地址'; return 1; }
+    python3 -I - "$1" <<'PY' || { _error '规则集 URL 必须使用 HTTPS'; return 1; }
 import sys
 from urllib.parse import urlsplit
 try:
     u = urlsplit(sys.argv[1])
-    valid = u.scheme in ("http", "https") and bool(u.hostname) and u.port != 0
+    valid = u.scheme == "https" and bool(u.hostname) and u.port != 0 and u.username is None and u.password is None
 except ValueError:
     raise SystemExit(1)
 if not valid:
@@ -365,7 +365,7 @@ sbd_rule_set_prompt() {
         value=$(jq -n --arg tag "$tag" --arg url "$url" --arg format "$format" \
             '{type:"remote",tag:$tag,format:$format,url:$url,update_interval:"1d"}') || return 1
         origin='{}'
-        sbd_info "规则集 $tag 由核心按 1d 间隔下载并缓存；保存配置不代表远端已下载成功"
+        sbd_info "规则集 $tag 由核心按 1d 间隔下载并缓存；HTTPS 仅保护传输，核心会自动刷新源站内容"
     else
         value=$(jq -n --arg tag "$tag" '{type:"local",tag:$tag}') || return 1
         origin=$(jq -n --arg path "$path" --arg format "$format" '{kind:"file",value:$path,format:$format}') || return 1
@@ -435,7 +435,7 @@ sbd_route_custom_outbounds() {
 
 # 解析混输的域名与 IP/CIDR：域名转小写和 Punycode，裸 IP 补全前缀。
 sbd_route_custom_parse() {
-    python3 - "$1" <<'PY'
+    python3 -I - "$1" <<'PY'
 import ipaddress
 import json
 import re
@@ -672,7 +672,7 @@ sbd_route_defaults() {
     defaults=$(jq -c '.route.rules // []' "$SBD_APP/presets/base.json") || { _error '读取默认路由规则失败'; return 1; }
     jq -e 'type=="array" and length>0' <<< "$defaults" >/dev/null || { _error '默认路由规则缺失'; return 1; }
     sbd_policy_begin "$stage" || return 1
-    content=$(python3 "$SBD_APP/support/policy_records.py" defaults "$stage" "$defaults") || { _error '补齐默认路由规则失败'; return 1; }
+    content=$(python3 -I "$SBD_APP/support/policy_records.py" defaults "$stage" "$defaults") || { _error '补齐默认路由规则失败'; return 1; }
     sbd_record_write "$stage/config.json" "$(jq -c '.config' <<< "$content")" || return 1
     sbd_record_write "$stage/registry.json" "$(jq -c '.registry' <<< "$content")" || return 1
     sbd_policy_finish "$stage"

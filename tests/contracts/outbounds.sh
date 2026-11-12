@@ -313,6 +313,31 @@ batch_skip_invalid_contract() {
     t_run 0 sbd_check_config
 }
 
+control_character_contract() {
+    t_seed
+    t_run 1 sbd_outbound_add_prompt <<< 'ss://YmFkG1szMW06c2VjcmV0QGV4YW1wbGUuY29tOjgzODg=#x'$'\n'
+    t_contains "$CASE_TMP/output" '\x1b'
+    t_absent "$CASE_TMP/output" $'\x1b'
+    t_unchanged
+}
+
+malformed_vmess_batch_contract() {
+    t_seed
+    local first second final bad
+    first='hysteria2://one@hy2.example.com:443?sni=hy2.example.com#Malformed-First'
+    second='anytls://two@any.example.com:443#Malformed-Second'
+    bad='vmess://W10='
+    final=$(jq -r '.route.final' "$SBD_CONFIG") || exit 1
+    t_run 0 sbd_outbound_add_prompt <<< "$first"$'\n'"$bad"$'\n'"$second"$'\n\n\ny\n'
+    t_contains "$CASE_TMP/output" '已跳过第 2 条'
+    t_assert '坏 VMess 不阻断后续条目' jq -e '
+        ([.outbounds[].tag] | index("Malformed-First") != null) and
+        ([.outbounds[].tag] | index("Malformed-Second") != null)
+    ' "$SBD_CONFIG"
+    t_assert '坏 VMess 批量不改默认路由' test "$(jq -r '.route.final' "$SBD_CONFIG")" = "$final"
+    t_run 0 sbd_check_config
+}
+
 delayed_plain_batch_contract() {
     t_seed
     local first second final
@@ -526,6 +551,8 @@ t_case '整串 Base64 批量添加且不改默认路由' base64_batch_contract
 t_case '多行纯 Base64 链接不被误判为 tag' multi_base64_batch_contract
 t_case '普通多行链接一次粘贴批量添加（CRLF）' plain_batch_contract
 t_case '批量解析跳过失败项并添加成功项' batch_skip_invalid_contract
+t_case '控制字符不回显到终端' control_character_contract
+t_case '畸形 VMess 不阻断整批导入' malformed_vmess_batch_contract
 t_case '后续分享链接延迟到达时仍能批量识别' delayed_plain_batch_contract
 t_case '无换行连续协议头链接批量识别' concatenated_scheme_batch_contract
 t_case '空格/换行/中英文逗号分号分隔批量解析' separator_batch_contract

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
 sbd_uri_escape() {
-    python3 - "$1" <<'PY'
+    printf '%s' "$1" | python3 -I -c '
 import sys
 from urllib.parse import quote
-print(quote(sys.argv[1], safe=""))
-PY
+print(quote(sys.stdin.read(), safe=""))
+'
 }
 
 # userinfo 由协议适配器逐字段编码；不能把 SS2022 的 method:password 整段 Base64。
@@ -13,13 +13,15 @@ sbd_uri_build() {
     local scheme="$1" userinfo="$2" host="$3" port="$4" query="$5" name="$6" authority fragment parameters
     [[ "$scheme" =~ ^[a-z][a-z0-9+.-]*$ && -n "$userinfo" && -n "$host" && -n "$name" ]] || { _error '分享链接必填字段缺失'; return 1; }
     port=$(sbd_integer "$port" 1 65535) || { _error '分享端口无效'; return 1; }
-    authority=$(python3 - "$host" "$userinfo" <<'PY'
+    authority=$(python3 -I - "$host" <(printf '%s' "$userinfo") <<'PY'
 import ipaddress
 import re
 import sys
 from urllib.parse import quote
 host = sys.argv[1]
-if not re.fullmatch(r"(?:[A-Za-z0-9._~!$&'()*+,;=:-]|%[0-9A-Fa-f]{2})+", sys.argv[2]):
+with open(sys.argv[2], encoding="utf-8") as f:
+    userinfo = f.read()
+if not re.fullmatch(r"(?:[A-Za-z0-9._~!$&'()*+,;=:-]|%[0-9A-Fa-f]{2})+", userinfo):
     raise SystemExit(1)
 try:
     ip = ipaddress.ip_address(host)
@@ -30,11 +32,12 @@ except ValueError:
     print(quote(host, safe=".-"))
 PY
     ) || { _error '分享地址或 userinfo 编码无效（IPv6 请勿自行添加方括号）'; return 1; }
-    parameters=$(python3 - "$query" <<'PY'
+    parameters=$(python3 -I - <(printf '%s' "$query") <<'PY'
 import json
 import sys
 from urllib.parse import urlencode, quote
-data = json.loads(sys.argv[1])
+with open(sys.argv[1], encoding="utf-8") as f:
+    data = json.load(f)
 if not isinstance(data, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
     raise SystemExit(1)
 print(urlencode(data, quote_via=quote, safe=""))
@@ -98,8 +101,8 @@ sbd_share_shadowsocks() {
     local node="$1" method password userinfo server port name
     jq -e '.profile=="shadowsocks" and .client.type=="shadowsocks" and ((.client.plugin // "")=="")' "$node" >/dev/null || { _error 'Shadowsocks 分享配置档或插件不在本包范围'; return 1; }
     method=$(sbd_entry_text "$node" .client.method 算法) && password=$(sbd_entry_text "$node" .client.password 密码) || return 1
-    sbd_entry_ss_key "$method" "$password" || return 1
-    userinfo=$(python3 - "$node" <<'PY'
+    sbd_entry_ss_key "$method" <<< "$password" || return 1
+    userinfo=$(python3 -I - "$node" <<'PY'
 import base64, json, sys
 from urllib.parse import quote
 c = json.load(open(sys.argv[1]))["client"]
@@ -116,7 +119,7 @@ PY
 
 sbd_share_uuid_emit() {
     local node="$1" scheme="$2" query="$3" uuid auth server port name
-    uuid=$(sbd_entry_text "$node" .client.uuid UUID) && uuid=$(sbd_entry_uuid "$uuid") || return 1
+    uuid=$(sbd_entry_text "$node" .client.uuid UUID) && uuid=$(sbd_entry_uuid <<< "$uuid") || return 1
     auth=$(sbd_uri_escape "$uuid") || return 1
     server=$(sbd_entry_text "$node" .client.server 对外地址) && name=$(sbd_entry_text "$node" .name 名称) || return 1
     port=$(jq -er '.client.server_port' "$node") || { _error '缺少分享端口'; return 1; }
@@ -184,7 +187,7 @@ sbd_share_hysteria2() {
         none) ;;
         salamander|gecko)
             password=$(sbd_entry_text "$node" .client.obfs.password 混淆密码) || return 1
-            query=$(jq --arg kind "$kind" --arg password "$password" '. + {obfs:$kind,"obfs-password":$password}' <<< "$query") || return 1
+            query=$(jq --arg kind "$kind" --rawfile password <(printf '%s' "$password") '. + {obfs:$kind,"obfs-password":$password}' <<< "$query") || return 1
             if [[ "$kind" = gecko ]]; then
                 if ! low=$(jq -r '.client.obfs.min_packet_size // 512' "$node") || ! low=$(sbd_integer "$low" 1 65535) ||
                     ! high=$(jq -r '.client.obfs.max_packet_size // 1200' "$node") || ! high=$(sbd_integer "$high" "$low" 65535); then _error 'Gecko 尺寸无效'; return 1; fi
@@ -229,7 +232,7 @@ sbd_export_rebuild() {
         jq -e --slurpfile node "$work/node.json" '[.inbounds[]? | select(.tag==$node[0].inbound_tag)] | length==1 and .[0].type==$node[0].client.type' "$stage/config.json" >/dev/null || { _error '节点关联的 inbound 缺失、重复或协议不一致，保留旧输出'; return 1; }
         sbd_entry_align "$stage" "$work/node.json" || return 1
         outbound=$(jq '.client + {tag:.id}' "$work/node.json") || return 1
-        content=$(jq -n --argjson outbound "$outbound" --arg id "$id" '{log:{level:"warn"},dns:{servers:[{type:"local",tag:"system"}],final:"system"},outbounds:[$outbound],route:{final:$id,default_domain_resolver:"system"}}') || return 1
+        content=$(jq -n --slurpfile outbound <(printf '%s' "$outbound") --arg id "$id" '{log:{level:"warn"},dns:{servers:[{type:"local",tag:"system"}],final:"system"},outbounds:$outbound,route:{final:$id,default_domain_resolver:"system"}}') || return 1
         sbd_record_write "$work/config.json" "$content" || return 1
         sbd_prepare_config "$work" || { _error "客户端配置检查失败: $id"; return 1; }
         uri=$(sbd_share_build "$work/node.json") || return 1
@@ -249,7 +252,7 @@ sbd_export_node() {
     local id="$1" kind="$2" display="${3:-normal}" node path metadata
     [[ "$id" =~ ^[A-Za-z][A-Za-z0-9_.-]{0,63}$ && "$id" != schema && "$id" != links ]] || { _error '无效的节点资料 ID'; return 1; }
     node=$(jq -ce --arg id "$id" '[.nodes[]?|select(.id==$id)]|select(length==1)|.[0]' "$SBD_REGISTRY") || { _error '该节点登记已不存在或重复，不显示其他节点资料'; return 1; }
-    metadata=$(jq -n --argjson node "$node" '{format:1,nodes:[$node]}') || return 1
+    metadata=$(jq -n --slurpfile node <(printf '%s' "$node") '{format:1,nodes:$node}') || return 1
     sbd_export_metadata_check /dev/stdin <<< "$metadata" || return 1
     case "$kind" in link) path="$SBD_EXPORTS/$id.txt" ;; json) path="$SBD_EXPORTS/$id.json" ;; *) _error '未知节点资料类型'; return 1 ;; esac
     [[ -s "$path" ]] || { _error "该节点尚无可读取的已提交导出: $path"; return 1; }
