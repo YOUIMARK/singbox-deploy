@@ -50,6 +50,8 @@ uninstall_purge() {
     printf 'external keep\n' > "$CASE_TMP/external.pem" || exit 1
     mkdir -p "$SBD_STATE_DIR/tailscale/user-unmanaged" || exit 1
     printf 'unmanaged state\n' > "$SBD_STATE_DIR/tailscale/user-unmanaged/state" || exit 1
+    mkdir -p "$SBD_ROOT/run" || exit 1
+    printf 'lock\n' > "$SBD_ROOT/run/singbox-deploy.lock" || exit 1
     jq --arg path "$SBD_STATE_DIR/tailscale/user-unmanaged" '.endpoints += [{type:"tailscale",tag:"user-unmanaged",state_directory:$path}]' "$SBD_CONFIG" > "$CASE_TMP/custom" || exit 1
     cp "$CASE_TMP/custom" "$SBD_CONFIG" || exit 1
     plan=$(sbd_uninstall_plan purge) || exit 1
@@ -61,6 +63,7 @@ uninstall_purge() {
     t_assert '清除旧布局分片' test ! -e "$SBD_CONF_DIR/00_base.json"
     t_contains "$SBD_CONF_DIR/user-notes.txt" 'unknown config file'
     t_assert '清除状态' test ! -e "$SBD_STATE"
+    t_assert '清除部署私有写锁' test ! -e "$SBD_ROOT/run/singbox-deploy.lock"
     t_contains "$SBD_ROOT/user-notes.txt" 'unknown user'
     t_contains "$CASE_TMP/external.pem" 'external keep'
     t_contains "$SBD_STATE_DIR/tailscale/user-unmanaged/state" 'unmanaged state'

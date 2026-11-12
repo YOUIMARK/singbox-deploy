@@ -75,8 +75,18 @@ purge_plan_legacy_backup() {
     t_assert '清单包含旧布局迁移备份' jq -e --arg d "$backup" '.trees|index($d)!=null' <<< "$plan"
 }
 
+purge_plan_write_lock() {
+    t_fresh
+    local plan
+    mkdir -p "$SBD_ROOT/run" || exit 1
+    printf '' > "$SBD_ROOT/run/singbox-deploy.lock" || exit 1
+    plan=$(sbd_uninstall_plan purge) || exit 1
+    t_assert '清单包含部署私有写锁' jq -e --arg f "$SBD_ROOT/run/singbox-deploy.lock" '.files|index($f)!=null' <<< "$plan"
+}
+
 t_case '第一代布局 purge 清单回退读取旧数据' purge_plan_gen1
 t_case '第一代托管目录进入 purge 清单' purge_plan_gen1_material_dirs
 t_case '旧布局迁移备份进入 purge 清单' purge_plan_legacy_backup
 t_case 'purge 清单优先当前布局 registry' purge_plan_prefers_current
+t_case 'purge 清单包含部署私有写锁' purge_plan_write_lock
 t_finish
