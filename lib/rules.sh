@@ -234,6 +234,24 @@ sbd_rule_geosite_tag() {
     printf 'geosite-%s\n' "$slug"
 }
 
+sbd_rule_geoip_url() {
+    printf 'https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/%s.srs\n' "$1"
+}
+
+sbd_rule_geoip_tag() {
+    local name="$1" slug digest
+    [[ "$name" =~ ^[A-Za-z0-9_@.!-]+$ ]] || {
+        _error 'geoip 名称只能包含字母、数字、下划线、@、点、感叹号和横线'
+        return 1
+    }
+    slug="${name//[^A-Za-z0-9_.-]/-}"
+    if [[ "$slug" != "$name" ]] || (( ${#slug} > 55 )); then
+        digest=$(printf '%s' "$name" | openssl dgst -sha256 -r | cut -c1-12) || return 1
+        slug="${slug:0:43}-$digest"
+    fi
+    printf 'geoip-%s\n' "$slug"
+}
+
 # 解析多选编号：逗号/顿号/空白分隔，支持 3-5 区间；去重后按编号升序逐行输出。
 sbd_rule_selection() {
     local raw="$1" count="$2" token low high n i out=''
@@ -274,7 +292,7 @@ sbd_read_selection() {
 }
 
 sbd_rule_preset_entries() {
-    local raw="$1" item name tag url entry entries='[]'
+    local raw="$1" kind="${2:-geosite}" item name tag url entry entries='[]'
     local -a names=()
     raw="${raw//，/ }"; raw="${raw//、/ }"; raw="${raw//,/ }"; raw="${raw//；/ }"; raw="${raw//;/ }"
     read -ra names <<< "$raw" || true
@@ -282,13 +300,19 @@ sbd_rule_preset_entries() {
         item=$(printf '%s' "$item" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//') || return 1
         [[ -n "$item" ]] || continue
         name=$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]') || return 1
-        name=${name#geosite:}
-        if entry=$(sbd_rule_catalog_lookup "$name"); then
-            tag=$(jq -r '.tag' <<< "$entry") || return 1
-            url=$(jq -r '.url' <<< "$entry") || return 1
+        if [[ "$kind" = geoip ]]; then
+            name=${name#geoip:}
+            tag=$(sbd_rule_geoip_tag "$name") || return 1
+            url=$(sbd_rule_geoip_url "$name") || return 1
         else
-            tag=$(sbd_rule_geosite_tag "$name") || return 1
-            url=$(sbd_rule_geosite_url "$name") || return 1
+            name=${name#geosite:}
+            if entry=$(sbd_rule_catalog_lookup "$name"); then
+                tag=$(jq -r '.tag' <<< "$entry") || return 1
+                url=$(jq -r '.url' <<< "$entry") || return 1
+            else
+                tag=$(sbd_rule_geosite_tag "$name") || return 1
+                url=$(sbd_rule_geosite_url "$name") || return 1
+            fi
         fi
         entries=$(jq --arg tag "$tag" --arg url "$url" '
             . + [{tag:$tag,value:{type:"remote",tag:$tag,format:"binary",url:$url,update_interval:"1d"},origin:{}}]
@@ -301,8 +325,8 @@ sbd_rule_preset_entries() {
 
 sbd_rule_set_prompt() {
     local pick source tag url path format base default origin value catalog count i
-    sbd_ui_options '[1] 常用规则集（预设目录）' '[2] 自定义链接' '[3] 本地文件' '[4] 预设名称（如 openai）'
-    sbd_read_integer '规则集来源' 1 4 || return $?
+    sbd_ui_options '[1] 常用规则集（预设目录）' '[2] 自定义链接' '[3] 本地文件' '[4] geosite 预设名称' '[5] geoip 预设名称'
+    sbd_read_integer '规则集来源' 1 5 || return $?
     pick="$SBD_REPLY"
     source=remote
     case "$pick" in
@@ -335,10 +359,16 @@ sbd_rule_set_prompt() {
                 _error '请输入可读文件的绝对路径'
             done ;;
         4)
-            sbd_info '名称映射到 MetaCubeX/meta-rules-dat；可输入多个，如 openai,netflix,github'
+            sbd_info 'geosite 名称映射到 MetaCubeX/meta-rules-dat；可输入多个，如 openai,netflix,github'
             while true; do
                 sbd_read_required '预设名称（逗号或空格分隔）' || return $?
                 sbd_rule_preset_entries "$SBD_REPLY" && return 0
+            done ;;
+        5)
+            sbd_info 'geoip 名称映射到 MetaCubeX/meta-rules-dat；可输入多个，如 cn,private'
+            while true; do
+                sbd_read_required 'geoip 预设名称（逗号或空格分隔）' || return $?
+                sbd_rule_preset_entries "$SBD_REPLY" geoip && return 0
             done ;;
     esac
     if [[ "$source" = local ]]; then base="$path"; else base="$url"; fi

@@ -104,6 +104,17 @@ menu_add_named_preset() {
     t_assert '预设名称逐条登记归属' jq -e '[.policy.rule_sets[].id]==["geosite-openai","geosite-github"]' "$SBD_REGISTRY"
     t_assert '预设名称共用核心缓存' jq -e '.experimental.cache_file.enabled==true and (.route.rule_set|length)==2' "$SBD_CONFIG"
 }
+menu_add_geoip_preset() {
+    t_policy_seed
+    t_run 0 sbd_rules_menu <<< $'6\n5\nGEOIP:CN, private, cn\ny\n0'
+    t_contains "$CASE_TMP/output" '规则集 geoip-cn, geoip-private 已添加'
+    t_assert 'GeoIP 预设映射到 MetaCubeX 并去重' jq -e '
+        [.route.rule_set[] | {tag,url,format:(.format // "binary"),update_interval,http_client}] == [
+          {tag:"geoip-cn",url:"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs",format:"binary",update_interval:"24h0m0s",http_client:{version:2}},
+          {tag:"geoip-private",url:"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/private.srs",format:"binary",update_interval:"24h0m0s",http_client:{version:2}}
+        ]' "$SBD_CONFIG"
+    t_assert 'GeoIP 预设名称逐条登记归属' jq -e '[.policy.rule_sets[].id]==["geoip-cn","geoip-private"]' "$SBD_REGISTRY"
+}
 menu_delete_referenced() {
     t_policy_seed
     t_run 0 sbd_apply sbd_rule_set add inline-domains '{"tag":"inline-domains","rules":[{"domain_suffix":"example.com"}]}'
@@ -225,6 +236,7 @@ t_case '自定义域名/IP 输入归一化与拒绝协议路径通配符' route_
 t_case '菜单添加远端规则集、缓存与归属登记' menu_add_remote
 t_case '菜单按预设目录添加规则集' menu_add_preset
 t_case '菜单按预设名称添加 MetaCubeX 规则集' menu_add_named_preset
+t_case '菜单按 GeoIP 预设名称添加 MetaCubeX 规则集' menu_add_geoip_preset
 t_case '被规则引用的规则集拒绝删除，解除后真实删除' menu_delete_referenced
 t_case '菜单用脚本与手工规则集添加路由规则' menu_add_route_rule_set
 t_case '菜单添加域名+CIDR 逻辑 OR 与 reject drop 规则' menu_add_route_custom

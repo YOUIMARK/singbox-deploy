@@ -920,8 +920,8 @@ sbd_entry_hy2_prompt() {
 sbd_entry_create_prompt() {
     local choice profile listen port server password name source options='{}' request network
     sbd_ui_begin '添加节点'
-    sbd_ui_options '[1] Hysteria2（UDP）' '[2] AnyTLS（TCP）' '[3] AnyReality（AnyTLS + Reality，TCP）' \
-        '[4] Shadowsocks（三算法）' '[5] VMess+WS CDN' '[6] VLESS+Reality Vision' '[7] VLESS+WS CDN' '[0] 返回上一级'
+    sbd_ui_options '[1] Hysteria2' '[2] AnyTLS' '[3] AnyReality' \
+        '[4] Shadowsocks' '[5] VMess+WS CDN' '[6] VLESS+Reality Vision' '[7] VLESS+WS CDN' '[0] 返回上一级'
     sbd_read_integer '选择配置档' 0 7 || return $?; choice="$SBD_REPLY"
     [[ "$choice" != 0 ]] || return 2
     sbd_version >/dev/null || return 1

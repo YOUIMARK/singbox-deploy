@@ -80,6 +80,23 @@ field_contract() {
     t_run 2 sbd_peer_key_prompt 密钥 < /dev/null
     t_run 2 sbd_peer_token_prompt < /dev/null
 }
+token_input_contract() {
+    t_fresh
+    local token input
+    token=$(jq -r .token "$ROOT/tests/fixtures/inbound-cloudflared.json") || exit 1
+    for input in \
+        "$token" \
+        "cloudflared.exe service install $token" \
+        "sudo cloudflared service install $token" \
+        "cloudflared tunnel run --token $token" \
+        "brew install cloudflared && sudo cloudflared service install $token" \
+        "docker run cloudflare/cloudflared:latest tunnel --no-autoupdate run --token $token" \
+        "cloudflared tunnel run --token=$token"; do
+        sbd_peer_token_prompt > "$CASE_TMP/prompt" 2>&1 <<< "$input" || exit 1
+        t_assert '裸 token 和 cloudflared 命令均提取原 token' test "$SBD_REPLY" = "$token"
+        t_absent "$CASE_TMP/prompt" "$token"
+    done
+}
 tagless_target_contract() {
     t_policy_seed
     sbd_peer_tag_prompt > "$CASE_TMP/prompt" 2>&1 <<< $'direct\nfree-tag' || exit 1
@@ -98,5 +115,6 @@ t_case 'WARP 下载/JSON/密钥/reserved 失败均不写入' warp_failures
 t_case 'WireGuard 原生 endpoints 与 peer reserved 真实检查' wireguard_contract
 t_case 'Cloudflared QUIC/HTTP2 原生入站和秘密不回显' cloudflare_contract
 t_case '密钥/token/CIDR 字段重问与核心 token 解析' field_contract
+t_case 'Cloudflare Tunnel 裸 token 与安装/运行命令输入' token_input_contract
 t_case '原生无 tag 的 DNS 不显示为伪造 null 目标' tagless_target_contract
 t_finish
