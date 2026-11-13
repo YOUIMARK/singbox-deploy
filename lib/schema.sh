@@ -108,21 +108,23 @@ sbd_check_config_tidy_locked() {
     elif ! sbd_policy_reconcile "$stage"; then
         rc=1
     else
-        # 格式整理不改变语义；登记始终依据已通过核心校验的当前配置。
-        if ! cmp -s -- "$stage/config.json" "$SBD_CONFIG"; then
-            if sbd_atomic_file "$stage/config.json" "$SBD_CONFIG"; then
-                sbd_info '配置缩进已整理；运行中的服务不会自动重载'
-            else
-                rc=1
-            fi
-        else
-            sbd_info '配置缩进已符合核心格式'
-        fi
-        if [[ "$rc" = 0 ]] && ! cmp -s -- "$stage/registry.json" "$SBD_REGISTRY"; then
+        # 登记先落盘：整理只改缩进不改语义，任一写入失败时登记与配置仍语义一致。
+        if ! cmp -s -- "$stage/registry.json" "$SBD_REGISTRY"; then
             if sbd_atomic_file "$stage/registry.json" "$SBD_REGISTRY"; then
                 sbd_info '已发现并同步手动修改的配置登记'
             else
                 rc=1
+            fi
+        fi
+        if [[ "$rc" = 0 ]]; then
+            if ! cmp -s -- "$stage/config.json" "$SBD_CONFIG"; then
+                if sbd_atomic_file "$stage/config.json" "$SBD_CONFIG"; then
+                    sbd_info '配置缩进已整理；运行中的服务不会自动重载'
+                else
+                    rc=1
+                fi
+            else
+                sbd_info '配置缩进已符合核心格式'
             fi
         fi
         [[ "$rc" != 0 ]] || sbd_info '配置已检查并整理；运行中的服务不会自动重载'

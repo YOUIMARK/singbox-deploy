@@ -50,8 +50,8 @@ uninstall_purge() {
     printf 'external keep\n' > "$CASE_TMP/external.pem" || exit 1
     mkdir -p "$SBD_STATE_DIR/tailscale/user-unmanaged" || exit 1
     printf 'unmanaged state\n' > "$SBD_STATE_DIR/tailscale/user-unmanaged/state" || exit 1
-    mkdir -p "$SBD_ROOT/run" || exit 1
-    printf 'lock\n' > "$SBD_ROOT/run/singbox-deploy.lock" || exit 1
+    mkdir -p -- "$SBD_ROOT/run" || exit 1
+    printf 'lock\n' > "$SBD_LOCK" || exit 1
     jq --arg path "$SBD_STATE_DIR/tailscale/user-unmanaged" '.endpoints += [{type:"tailscale",tag:"user-unmanaged",state_directory:$path}]' "$SBD_CONFIG" > "$CASE_TMP/custom" || exit 1
     cp "$CASE_TMP/custom" "$SBD_CONFIG" || exit 1
     plan=$(sbd_uninstall_plan purge) || exit 1
@@ -63,7 +63,8 @@ uninstall_purge() {
     t_assert '清除旧布局分片' test ! -e "$SBD_CONF_DIR/00_base.json"
     t_contains "$SBD_CONF_DIR/user-notes.txt" 'unknown config file'
     t_assert '清除状态' test ! -e "$SBD_STATE"
-    t_assert '清除部署私有写锁' test ! -e "$SBD_ROOT/run/singbox-deploy.lock"
+    t_assert '清除部署私有写锁' test ! -e "$SBD_LOCK"
+    t_assert '清除部署私有的 run 目录' test ! -e "$SBD_ROOT/run"
     t_contains "$SBD_ROOT/user-notes.txt" 'unknown user'
     t_contains "$CASE_TMP/external.pem" 'external keep'
     t_contains "$SBD_STATE_DIR/tailscale/user-unmanaged/state" 'unmanaged state'
@@ -93,6 +94,15 @@ history_engine() {
     t_contains "$SBD_BIN_DIR/libcronet.so" old-library
     t_run 0 sbd_check_config
 }
+purge_root_removed() {
+    u_seed
+    rm -f "$SBD_EXPORTS/node.txt" || exit 1
+    local plan
+    plan=$(sbd_uninstall_plan purge) || exit 1
+    t_run 0 sbd_write_lock sbd_uninstall_locked purge "$plan"
+    t_assert '无未知文件时部署根被删除' test ! -e "$SBD_ROOT"
+}
+t_case 'purge 无未知文件时删除部署根' purge_root_removed
 t_case '保留模式卸载运行文件，原路径数据与未知文件保留' uninstall_keep
 t_case '明确 purge 只清已知自有数据，外部/未知文件保留' uninstall_purge
 t_case '卸载停止失败保留入口和可重试记录' uninstall_failure

@@ -11,6 +11,8 @@ address_parser() {
     done
     t_run 0 python3 "$SBD_APP/support/dns_settings.py" parse 'https://[2001:db8::53]:08443/custom-path'
     t_assert 'IPv6 URL、前导零端口与自定义 path 正确拆分' jq -e '.server=="2001:db8::53" and .server_port==8443 and .path=="/custom-path" and .tls=={enabled:true,server_name:"2001:db8::53"}' "$CASE_TMP/output"
+    t_run 0 python3 "$SBD_APP/support/dns_settings.py" parse '1.1.1.1，tls://dns.example.com、9.9.9.9'
+    t_assert '多地址兼容中文逗号/顿号/分号' jq -e 'length==3 and .[0].server=="1.1.1.1" and .[1].server=="dns.example.com" and .[2].server=="9.9.9.9"' "$CASE_TMP/output"
     for address in '' 'bad/path' 'https://user:pass@dns.example.com' 'https://dns.example.com:' 'https://dns.example.com:0' 'https://dns.example.com:65536' 'https://dns.example.com?a=b' 'https://dns.example.com#fragment' 'tls://dns.example.com/wrong-path' 'http://dns.example.com' 'https://2001:db8::1' 'https://dns.example.com bad' $'dns.example.com\033[2J'; do
         t_run 1 python3 "$SBD_APP/support/dns_settings.py" parse "$address"
         t_contains "$CASE_TMP/output" '[错误]'
