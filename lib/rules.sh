@@ -40,20 +40,6 @@ sbd_policy_edit() {
     sbd_policy_finish "$stage"
 }
 
-sbd_policy_adopt() {
-    local stage="$1" area="$2" id="$3" position="${4:--1}" request old=''
-    case "$area" in route_rules|dns_rules|dns_servers|rule_sets|endpoints|connectors) ;; *) _error '未知接管区域'; return 1 ;; esac
-    if [[ "$area" = *_rules && -z "$id" ]]; then id=$(openssl rand -hex 8) || return 1; id="rule.$id"; fi
-    sbd_tls_tag "$id" || return 1
-    if [[ "$area" = rule_sets ]]; then old=$(jq -r --arg id "$id" '.policy.rule_sets[]?|select(.id==$id)|.directory // empty' "$stage/registry.json") || return 1; fi
-    request=$(jq -n --arg area "$area" --arg id "$id" --argjson position "$position" '{area:$area,id:$id,position:$position}') || return 1
-    sbd_policy_bundle "$stage" adopt "$request" || return 1
-    if [[ -n "$old" ]] && ! jq -e --arg old "$old" --arg id "$id" 'any(.policy.rule_sets[]?;.id==$id and .directory==$old)' "$stage/registry.json" >/dev/null; then
-        sbd_material_note retired_materials "$old" || return 1
-    fi
-    sbd_policy_finish "$stage"
-}
-
 sbd_policy_rule() {
     local stage="$1" area="$2" action="$3" id="$4" value="${5:-}" position="${6:--1}" request
     [[ -n "$value" ]] || value='{}'

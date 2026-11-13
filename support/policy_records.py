@@ -195,43 +195,6 @@ def edit(config, registry, request):
     rec["expected"] = copy.deepcopy(request["value"])
 
 
-def adopt(config, registry, request):
-    area, ident = request["area"], request["id"]
-    owned = records(registry, area)
-    found = [r for r in owned if r["id"] == ident]
-    if len(found) > 1:
-        raise ValueError("登记重复，不能选择一条覆盖")
-    if area in POSITIONAL:
-        index = request["position"]
-        if not isinstance(index, int) or index < 0 or index >= len(array(config, area)):
-            raise ValueError("实际规则位置无效")
-        if any(r["id"] != ident and r["index"] == index for r in owned):
-            raise ValueError("此位置已经关联另一个管理 ID")
-        actual = array(config, area)[index]
-    else:
-        matches = [v for v in array(config, area) if v.get("tag") == ident]
-        if len(matches) != 1:
-            raise ValueError("配置对象缺失、重复或没有单个 tag")
-        actual = matches[0]
-        if area == "endpoints" and actual.get("type") not in ("wireguard",):
-            raise ValueError("此 endpoint 不在托管范围")
-        if area == "connectors" and actual.get("type") != "cloudflared":
-            raise ValueError("此 inbound 不是 Cloudflared")
-    rec = found[0] if found else {"id": ident}
-    rec["expected"] = copy.deepcopy(actual)
-    if area in POSITIONAL:
-        rec["index"] = index
-    if area == "rule_sets":
-        # 采用现有路径不授予目录删除权；外部来源可再显式导入为自有版本。
-        directory = rec.get("directory", "")
-        if not directory or not actual.get("path", "").startswith(directory + "/"):
-            rec["directory"] = ""
-            rec["origin"] = {"kind": "file", "value": actual["path"], "format": actual.get("format", "binary" if actual["path"].endswith(".srs") else "source")} if actual.get("type") == "local" else {}
-    if not found:
-        owned.append(rec)
-    align(config, registry)
-
-
 def reset(config, registry, category):
     align(config, registry)
     if category == "nodes":
@@ -449,8 +412,6 @@ def main():
             return 0
         if command == "edit":
             edit(config, registry, json.loads(request_data()))
-        elif command == "adopt":
-            adopt(config, registry, json.loads(request_data()))
         elif command == "reset":
             reset(config, registry, sys.argv[3])
         elif command == "reconcile":
