@@ -203,6 +203,13 @@ resolve_order_contract() {
         *) printf 'summary 忽略了最终动作对 resolve 的阻断: %s\n' "$summary"; exit 1 ;;
     esac
 }
+manual_unused_server() {
+    t_seed
+    t_patch_config '.dns.servers += [{type:"tcp",tag:"manual-unused",server:"192.0.2.53"}]'
+    t_run 0 sbd_apply sbd_resolver_switch https://1.1.1.1/dns-query
+    t_assert '自动检测手工上游后切换预设不清理用户备用上游' jq -e 'any(.dns.servers[]; .tag=="manual-unused" and .server=="192.0.2.53")' "$SBD_CONFIG"
+}
+t_case '自动同步不扩大手工 DNS 上游清理范围' manual_unused_server
 t_case 'DNS 完整地址解析、IPv6/自定义端口/path 与错误拒绝' address_parser
 t_case '五种常用预设原生校验、独立 bootstrap 与反复切换复用' presets_and_reuse
 t_case '六种自定义协议可真正提交并保留端口和 path' custom_types

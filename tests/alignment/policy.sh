@@ -53,59 +53,70 @@ rule_set_references() {
     t_run 1 sbd_apply sbd_rule_set delete domains
     t_entry_unchanged
 }
-drift_contract() {
+manual_drift_apply() {
     t_policy_seed
     t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"a.example","action":"reject"}'
-    local id
-    id=$(t_policy_id route_rules) || exit 1
     t_patch_config '.route.rules[0].domain="manual.example"'
-    t_entry_save
-    t_run 1 sbd_apply sbd_policy_rule route_rules delete "$id"
-    t_contains "$CASE_TMP/output" '漂移'
-    t_contains "$CASE_TMP/output" 'route_rules'
-    t_contains "$CASE_TMP/output" "$id"
-    t_contains "$CASE_TMP/output" 'domain'
-    t_absent "$CASE_TMP/output" 'manual.example'
-    t_entry_unchanged
-}
-adopt_drifted_record() {
-    t_policy_seed
-    t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"a.example","action":"reject"}'
-    local id
-    id=$(t_policy_id route_rules) || exit 1
-    t_patch_config '.route.rules[0].domain="manual.example"'
-    t_entry_save
-    t_run 0 sbd_apply sbd_policy_adopt route_rules "$id" 0
-    t_assert '显式接管同步当前规则预期值' jq -e --arg id "$id" '
-        .policy.route_rules[0].id==$id
-        and .policy.route_rules[0].expected.domain=="manual.example"' "$SBD_REGISTRY"
-    t_run 0 sbd_apply sbd_policy_rule route_rules delete "$id"
-    t_assert '接管后策略变更恢复可用' jq -e '(.route.rules|length)==0 and (.policy.route_rules|length)==0' "$SBD_CONFIG"
+    t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"b.example","action":"reject"}'
+    t_assert '添加规则前自动同步手动修改' jq -e '.policy.route_rules[0].expected.domain=="manual.example" and (.policy.route_rules|length)==2' "$SBD_REGISTRY"
+    t_assert '用户规则保持原样' jq -e '[.route.rules[].domain]==["manual.example","b.example"]' "$SBD_CONFIG"
 }
 manual_drift_check() {
     t_policy_seed
     t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"a.example","action":"reject"}'
-    local id
-    id=$(t_policy_id route_rules) || exit 1
     t_patch_config '.route.rules[0].domain="manual.example"'
-    t_entry_save
-    t_run 1 sbd_check_config_tidy
-    t_contains "$CASE_TMP/output" "$id"
-    t_contains "$CASE_TMP/output" 'domain'
-    t_entry_unchanged
+    t_run 0 sbd_check_config_tidy
+    t_contains "$CASE_TMP/output" '已发现并同步手动修改的配置登记'
+    t_assert '检查后登记采用手动修改值' jq -e '.policy.route_rules[0].expected.domain=="manual.example"' "$SBD_REGISTRY"
+    t_assert '自动同步不改写用户配置' jq -e '.route.rules[0].domain=="manual.example"' "$SBD_CONFIG"
+    cp "$SBD_REGISTRY" "$CASE_TMP/registry.synced" || exit 1
+    t_run 0 sbd_check_config_tidy
+    t_assert '重复检查不变更登记' cmp -s "$SBD_REGISTRY" "$CASE_TMP/registry.synced"
 }
-adopt_keeps_other_drift_blocked() {
+manual_reorder_and_delete() {
     t_policy_seed
     t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"a.example","action":"reject"}'
-    local first second
+    local first
     first=$(t_policy_id route_rules) || exit 1
     t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"b.example","action":"reject"}'
-    second=$(t_policy_id route_rules) || exit 1
-    t_patch_config '.route.rules[0].domain="manual-a.example" | .route.rules[1].domain="manual-b.example"'
+    t_patch_config '.route.rules = [{domain:"new.example",action:"reject"}, .route.rules[1], .route.rules[0]]'
+    t_run 0 sbd_check_config_tidy
+    t_assert '移动后原 ID 跟随原内容' jq -e --arg id "$first" '.policy.route_rules[2].id==$id and .policy.route_rules[2].index==2' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_policy_rule route_rules delete "$first"
+    t_assert '删除不会误选旧位置上的规则' jq -e '[.route.rules[].domain]==["new.example","b.example"]' "$SBD_CONFIG"
+    t_patch_config '.route.rules=[]'
+    t_run 0 sbd_check_config_tidy
+    t_assert '手动删除后清除失效登记' jq -e '.policy.route_rules==[]' "$SBD_REGISTRY"
+}
+manual_invalid_untouched() {
+    t_policy_seed
+    t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"a.example","action":"reject"}'
+    t_patch_config '.route.rules[0].outbound="missing" | .route.rules[0].action="route"'
     t_entry_save
-    t_run 1 sbd_apply sbd_policy_adopt route_rules "$first" 0
-    t_contains "$CASE_TMP/output" "$second"
+    t_run 1 sbd_check_config_tidy
     t_entry_unchanged
+}
+manual_rule_set_expansion() {
+    t_policy_seed
+    t_patch_config '.route.rule_set=[{tag:"geosite-ai",rules:[{domain:"ai.example"}]}]'
+    t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"rule_set":"geosite-ai","outbound":"direct"}'
+    t_patch_config '.route.rule_set += [{tag:"geosite-category-finance",rules:[{domain:"finance.example"}]},{tag:"geosite-twitter",rules:[{domain:"twitter.example"}]}] | .route.rules[0].rule_set=["geosite-ai","geosite-category-finance","geosite-twitter"]'
+    t_run 0 sbd_apply sbd_rule_set add geoip-telegram '{"tag":"geoip-telegram","rules":[{"ip_cidr":"91.108.4.0/22"}]}'
+    t_assert '手工扩展规则集匹配后继续添加规则集' jq -e '.route.rules[0].rule_set==["geosite-ai","geosite-category-finance","geosite-twitter"] and (.route.rule_set|length)==4' "$SBD_CONFIG"
+    t_assert '同步后的登记保存三个匹配项' jq -e '.policy.route_rules[0].expected.rule_set==["geosite-ai","geosite-category-finance","geosite-twitter"]' "$SBD_REGISTRY"
+}
+manual_external_rule_file() {
+    t_policy_seed
+    cp "$ROOT/tests/fixtures/rule-set-domains.json" "$CASE_TMP/source.json" || exit 1
+    t_policy_local domains "$CASE_TMP/source.json"
+    local directory
+    directory=$(jq -r '.policy.rule_sets[0].directory' "$SBD_REGISTRY") || exit 1
+    t_patch_config --arg path "$CASE_TMP/source.json" '.route.rule_set[0].path=$path | .route.rule_set[0].format="source"'
+    t_run 0 sbd_check_config_tidy
+    t_assert '手工改成外部文件后不保留旧目录删除权' jq -e --arg path "$CASE_TMP/source.json" '.policy.rule_sets[0].directory=="" and .policy.rule_sets[0].origin.value==$path' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_rule_set delete domains
+    t_assert '删除规则集不删除用户文件' test -s "$CASE_TMP/source.json"
+    t_assert '自动同步不会删除此前的材料目录' test -d "$directory"
 }
 server_references() {
     t_policy_seed
@@ -154,10 +165,12 @@ retirement_failure() {
 t_case '本地更新独立路径、最近恢复源和安全淘汰' local_update
 t_case 'remote 4B 延迟下载、原生缓存与无伪刷新' remote_lazy
 t_case 'DNS/逻辑路由存活引用阻止删除规则集' rule_set_references
-t_case '规则漂移拒绝覆盖并保留旧导出' drift_contract
-t_case '显式接管漂移规则后恢复策略变更' adopt_drifted_record
-t_case '检查配置发现手工修改并保留配置文件' manual_drift_check
-t_case '接管单条规则仍拒绝其他托管漂移' adopt_keeps_other_drift_blocked
+t_case '配置操作自动同步手动修改' manual_drift_apply
+t_case '检查配置自动同步且可重复执行' manual_drift_check
+t_case '插入移动删除规则自动匹配当前配置' manual_reorder_and_delete
+t_case '手动写入无效配置时不更新登记' manual_invalid_untouched
+t_case '手工扩展 geosite 匹配后继续添加 geoip' manual_rule_set_expansion
+t_case '手工替换规则集路径保留用户文件' manual_external_rule_file
 t_case 'DNS 默认项和 bootstrap 存活引用阻止删除' server_references
 t_case '原生路由 route/reject/sniff/resolve/hijack-dns' native_actions
 t_case '旧规则材料回收失败可重试而不回退已接受事实' retirement_failure

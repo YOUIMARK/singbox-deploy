@@ -4,6 +4,7 @@
 import copy
 import ipaddress
 import json
+import secrets
 import sys
 
 
@@ -33,11 +34,11 @@ def locate(config, area, record):
     if area in POSITIONAL:
         index = record["index"]
         if not isinstance(index, int) or index < 0 or index >= len(values):
-            raise ValueError("托管规则位置已变化，请先显式协调")
+            raise ValueError("规则位置已变化，请重新进入分流设置刷新列表")
         return values[index]
     found = [v for v in values if v.get("tag") == record["id"]]
     if len(found) != 1:
-        raise ValueError("托管标识缺失或重复，请先显式协调")
+        raise ValueError("配置标识缺失或重复，请检查配置后重试")
     return found[0]
 
 
@@ -60,8 +61,62 @@ def align(config, registry):
                     if actual.get(key) != rec["expected"].get(key)
                 )
                 raise ValueError(
-                    f"托管记录发生漂移：{area}/{rec['id']}，字段 {', '.join(fields)}；请先显式协调"
+                    f"配置在操作期间发生变化：{area}/{rec['id']}，字段 {', '.join(fields)}；请重新进入设置刷新列表"
                 )
+
+
+def reconcile(config, registry):
+    """以当前配置重建策略登记；规则按内容匹配，不把旧位置当作身份。"""
+    config = copy.deepcopy(config)
+    for area in AREAS:
+        values, owned = array(config, area), records(registry, area)
+        updated = []
+        if area in POSITIONAL:
+            remaining = list(owned)
+            reserved = {r["id"] for r in owned}
+            for index, actual in enumerate(values):
+                matches = [r for r in remaining if r.get("expected") == actual]
+                # 重复规则先保留原位置，再按登记顺序逐一匹配。
+                rec = next((r for r in matches if r["index"] == index), matches[0] if matches else None)
+                if rec is not None:
+                    remaining.remove(rec)
+                    rec = copy.deepcopy(rec)
+                else:
+                    ident = "rule." + secrets.token_hex(8)
+                    while ident in reserved:
+                        ident = "rule." + secrets.token_hex(8)
+                    reserved.add(ident)
+                    rec = {"id": ident}
+                rec.update(index=index, expected=copy.deepcopy(actual))
+                updated.append(rec)
+        else:
+            seen = set()
+            for actual in values:
+                if area == "endpoints" and actual.get("type") != "wireguard":
+                    continue
+                if area == "connectors" and actual.get("type") != "cloudflared":
+                    continue
+                ident = actual.get("tag")
+                if not isinstance(ident, str) or not ident:
+                    continue
+                if ident in seen:
+                    raise ValueError(f"{area} 存在重复 tag，无法同步登记")
+                seen.add(ident)
+                matches = [r for r in owned if r["id"] == ident]
+                rec = copy.deepcopy(matches[0]) if len(matches) == 1 else {"id": ident}
+                if area == "dns_servers" and not matches:
+                    # 检测到手工上游不代表切换预设时可以自动清理它。
+                    rec["external"] = True
+                if area == "rule_sets" and rec.get("expected") != actual:
+                    # 手工改来源后不沿用旧目录的删除权或导入来源。
+                    rec["directory"] = ""
+                    rec["origin"] = ({"kind": "file", "value": actual["path"],
+                                      "format": actual.get("format", "binary")}
+                                     if actual.get("type") == "local" else {})
+                rec["expected"] = copy.deepcopy(actual)
+                updated.append(rec)
+        owned[:] = updated
+    align(config, registry)
 
 
 def edit(config, registry, request):
@@ -99,7 +154,7 @@ def edit(config, registry, request):
         return
     else:
         if rec is None:
-            raise ValueError("未找到唯一托管对象；自定义配置须先显式接管")
+            raise ValueError("所选配置已变化，请重新进入设置刷新列表")
         if area in POSITIONAL:
             index = rec["index"]
         else:
@@ -398,6 +453,8 @@ def main():
             adopt(config, registry, json.loads(request_data()))
         elif command == "reset":
             reset(config, registry, sys.argv[3])
+        elif command == "reconcile":
+            reconcile(config, registry)
         elif command == "sync":
             for area in AREAS:
                 for rec in records(registry, area):

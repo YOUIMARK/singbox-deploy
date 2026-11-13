@@ -212,7 +212,7 @@ def remove_unused_servers(config, registry, selected):
     removed = []
     default_servers = default_config()["dns"]["servers"]
     while True:
-        managed = {rec["id"] for rec in policy.records(registry, "dns_servers")}
+        managed = {rec["id"] for rec in policy.records(registry, "dns_servers") if not rec.get("external")}
         candidates = [
             server for server in policy.array(config, "dns_servers")
             if server.get("tag") and server["tag"] != "system" and server["tag"] not in selected

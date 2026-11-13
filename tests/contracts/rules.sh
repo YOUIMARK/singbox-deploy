@@ -200,7 +200,7 @@ menu_delete_route_rule() {
     t_assert '只删除托管规则并保留手工规则' jq -e '
         [.route.rules[].domain] == ["b.example","manual.example"]' "$SBD_CONFIG"
     t_assert '剩余托管登记索引同步下移' jq -e --arg first "$first" '
-        (.policy.route_rules|length)==1
+        (.policy.route_rules|length)==2
         and .policy.route_rules[0].id!=$first
         and .policy.route_rules[0].index==0
         and .policy.route_rules[0].expected.domain=="b.example"' "$SBD_REGISTRY"
@@ -221,7 +221,7 @@ defaults_restore() {
     t_run 0 sbd_rules_menu <<< $'8\ny\n0'
     t_assert '反复补齐不复制规则' jq -e '(.route.rules|length)==5' "$SBD_CONFIG"
     t_assert '反复补齐保留托管登记' jq -e --arg id "$id" '
-        (.policy.route_rules|length)==1 and .policy.route_rules[0].index==4' "$SBD_REGISTRY"
+        any(.policy.route_rules[]; .id==$id and .index==4 and .expected.domain=="custom.example")' "$SBD_REGISTRY"
     t_run 0 sbd_apply sbd_policy_rule route_rules delete "$id"
     t_assert '补齐后仍可按登记删除自定义规则' jq -e '
         (.route.rules|length)==4 and ((.policy.route_rules // [])|length)==0' "$SBD_CONFIG"
