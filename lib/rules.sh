@@ -697,13 +697,17 @@ sbd_route_rule_remove() {
 }
 
 sbd_route_defaults() {
-    local stage="$1" defaults content
+    local stage="$1" defaults content tags tag
     defaults=$(jq -c '.route.rules // []' "$SBD_APP/presets/base.json") || { _error '读取默认路由规则失败'; return 1; }
     jq -e 'type=="array" and length>0' <<< "$defaults" >/dev/null || { _error '默认路由规则缺失'; return 1; }
     sbd_policy_begin "$stage" || return 1
     content=$(python3 -I "$SBD_APP/support/policy_records.py" defaults "$stage" "$defaults") || { _error '补齐默认路由规则失败'; return 1; }
     sbd_record_write "$stage/config.json" "$(jq -c '.config' <<< "$content")" || return 1
     sbd_record_write "$stage/registry.json" "$(jq -c '.registry' <<< "$content")" || return 1
+    tags=$(jq -r '.policy.connectors[]? | select(.expected.type=="cloudflared") | .id' "$stage/registry.json") || return 1
+    while IFS= read -r tag; do
+        [[ -z "$tag" ]] || sbd_peer_cloudflared_route "$stage" "$tag" add || return 1
+    done <<< "$tags"
     sbd_policy_finish "$stage"
 }
 
