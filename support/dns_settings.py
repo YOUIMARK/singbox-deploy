@@ -161,9 +161,10 @@ def ensure_server(config, registry, value, fixed_tag=None):
 
 
 def addresses(value):
-    values = [item.strip() for item in value.split(",")]
+    raw = value.replace("，", ",").replace("、", ",").replace("；", ",")
+    values = [item.strip() for item in raw.split(",")]
     if not all(values) or len(set(values)) != len(values):
-        raise ValueError("DNS 地址不能为空或重复；多个地址请用英文逗号分隔")
+        raise ValueError("DNS 地址不能为空或重复；多个地址请用逗号分隔（中英文均可）")
     for item in values:
         parse_address(item)
     return values

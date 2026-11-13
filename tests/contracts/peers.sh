@@ -121,6 +121,8 @@ field_contract() {
     t_absent "$CASE_TMP/prompt" "$key"
     sbd_peer_prefix_prompt address > "$CASE_TMP/prompt" 2>&1 <<< $'bad\n10.0.0.2/24, fd00::2/64' || exit 1
     t_assert '接口地址不能归一成网络地址丢掉 host bits' jq -e '.==["10.0.0.2/24","fd00::2/64"]' <<< "$SBD_REPLY"
+    sbd_peer_prefix_prompt address > "$CASE_TMP/prompt" 2>&1 <<< $'10.0.0.2/24，fd00::2/64、10.0.0.3/32' || exit 1
+    t_assert '接口地址兼容中文逗号/顿号/分号' jq -e '.==["10.0.0.2/24","fd00::2/64","10.0.0.3/32"]' <<< "$SBD_REPLY"
     sbd_peer_token_prompt > "$CASE_TMP/prompt" 2>&1 <<< "$(printf 'bad-token\n%s\n' "$token")" || exit 1
     t_assert 'token 用核心真实解析后保留原字节' test "$SBD_REPLY" = "$token"
     t_absent "$CASE_TMP/prompt" "$token"

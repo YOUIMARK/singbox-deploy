@@ -99,12 +99,13 @@ sbd_peer_key_prompt() {
 sbd_peer_prefix_prompt() {
     local field="$1" value
     while true; do
-        sbd_read_required "$field（多个用逗号分隔）" || return $?
+        sbd_read_required "$field（多个用逗号分隔，中英文均可）" || return $?
         if value=$(python3 -I - "$field" "$SBD_REPLY" <<'PY'
 import ipaddress, json, sys
 try:
     parse = ipaddress.ip_interface if sys.argv[1] == "address" else lambda v: ipaddress.ip_network(v, strict=False)
-    print(json.dumps([str(parse(v.strip())) for v in sys.argv[2].split(",")]))
+    raw = sys.argv[2].replace("，", ",").replace("、", ",").replace("；", ",")
+    print(json.dumps([str(parse(v.strip())) for v in raw.split(",")]))
 except ValueError:
     raise SystemExit(1)
 PY
