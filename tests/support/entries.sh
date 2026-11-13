@@ -54,6 +54,11 @@ else:
     assert sha != cert["public_key_sha256"]
 if profile == "hysteria2":
     assert not any(k in q for k in ("up", "down", "up_mbps", "down_mbps", "congestion", "bbr_profile"))
+    ports = node["client"].get("server_ports", [])
+    if ports:
+        assert q["mport"] == [",".join(p.replace(":", "-") for p in ports)]
+    else:
+        assert "mport" not in q
     obfs = node["client"].get("obfs")
     if obfs:
         assert q["obfs"] == [obfs["type"]] and q["obfs-password"] == [obfs["password"]]

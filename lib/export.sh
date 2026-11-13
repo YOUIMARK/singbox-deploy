@@ -196,6 +196,9 @@ sbd_share_hysteria2() {
             ;;
         *) _error '未知 Hysteria2 混淆'; return 1 ;;
     esac
+    if jq -e '(.client.server_ports // [] | length)>0' "$node" >/dev/null; then
+        query=$(jq --slurpfile node "$node" '. + {mport:($node[0].client.server_ports|map(gsub(":";"-"))|join(","))}' <<< "$query") || return 1
+    fi
     sbd_share_emit "$node" hysteria2 "$query"
 }
 

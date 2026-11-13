@@ -577,6 +577,49 @@ sbd_entry_change() {
             sbd_record_write "$stage/config.json" "$content" || return 1
             content=$(jq --slurpfile value <(printf '%s' "$value") '.client |= (del(.obfs,.up_mbps,.down_mbps) + ($value[0].client_options // {}) +
                 (if $value[0].obfs!=null then {obfs:$value[0].obfs} else {} end))' "$stage/entry-node.json") || return 1 ;;
+        hy2_hops)
+            [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
+            jq -e '.server_ports as $ports | ($ports|type=="array") and
+                (if ($ports|length)==0 then .hop_interval=="" else
+                    ($ports|length)==1 and ($ports[0]|test("^[0-9]{1,5}:[0-9]{1,5}$")) and
+                    (($ports[0]|split(":")|map(tonumber)) as $range | $range[0]>=1 and $range[0]<=$range[1] and $range[1]<=65535) and
+                    (.hop_interval|test("^[1-9][0-9]{0,3}s$")) and (.hop_interval|sub("s$";"")|tonumber)<=3600
+                end)' <<< "$value" >/dev/null || { _error 'Hysteria2 端口跳跃参数无效'; return 1; }
+            content=$(jq --argjson value "$value" '.client |= (del(.server_ports,.hop_interval) +
+                (if ($value.server_ports|length)>0 then {server_ports:$value.server_ports,hop_interval:$value.hop_interval} else {} end))' "$stage/entry-node.json") || return 1 ;;
+        hy2_client_bandwidth)
+            [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
+            jq -e 'if length==0 then true else (.up_mbps|type=="number" and floor==. and .>=1 and .<=999999999) and (.down_mbps|type=="number" and floor==. and .>=1 and .<=999999999) end' <<< "$value" >/dev/null || { _error 'Hysteria2 客户端带宽无效'; return 1; }
+            content=$(jq --argjson value "$value" '.client |= (del(.up_mbps,.down_mbps) + $value)' "$stage/entry-node.json") || return 1 ;;
+        hy2_server_bandwidth)
+            [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
+            jq -e 'if length==0 then true else (.up_mbps|type=="number" and floor==. and .>=1 and .<=999999999) and (.down_mbps|type=="number" and floor==. and .>=1 and .<=999999999) end' <<< "$value" >/dev/null || { _error 'Hysteria2 服务端带宽无效'; return 1; }
+            content=$(jq --arg tag "$tag" --argjson value "$value" '(.inbounds[]|select(.tag==$tag)) |= (del(.up_mbps,.down_mbps) + $value)' "$stage/config.json") || return 1
+            sbd_record_write "$stage/config.json" "$content" || return 1
+            content=$(cat "$stage/entry-node.json") || return 1 ;;
+        hy2_bandwidth)
+            [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
+            jq -e '(.client_options|type=="object") and (.server_options|type=="object") and
+                (all(.client_options,.server_options; if length==0 then true else
+                    (.up_mbps|type=="number" and floor==. and .>=1 and .<=999999999) and
+                    (.down_mbps|type=="number" and floor==. and .>=1 and .<=999999999) end)) and
+                ((.client_options|length==0)==(.server_options|length==0))' <<< "$value" >/dev/null || { _error 'Hysteria2 客户端与服务端带宽策略无效或不匹配'; return 1; }
+            jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.ignore_client_bandwidth==true' "$stage/config.json" >/dev/null || { _error '此节点未启用客户端带宽协调策略'; return 1; }
+            content=$(jq --arg tag "$tag" --argjson value "$value" '(.inbounds[]|select(.tag==$tag)) |= (del(.up_mbps,.down_mbps) + $value.server_options)' "$stage/config.json") || return 1
+            sbd_record_write "$stage/config.json" "$content" || return 1
+            content=$(jq --argjson value "$value" '.client |= (del(.up_mbps,.down_mbps) + $value.client_options)' "$stage/entry-node.json") || return 1 ;;
+        hy2_obfs)
+            [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
+            if [[ "$value" != null ]]; then
+                jq -e '(.type=="salamander" or .type=="gecko") and (.password|type=="string" and length>0) and
+                    (if .type=="gecko" then (.min_packet_size as $low | .max_packet_size as $high |
+                        ($low|type=="number" and floor==. and .>=1 and .<=65535) and ($high|type=="number" and floor==. and .>=$low and .<=65535)) else true end)' <<< "$value" >/dev/null || { _error 'Hysteria2 混淆参数无效'; return 1; }
+                content=$(jq --arg tag "$tag" --argjson value "$value" '(.inbounds[]|select(.tag==$tag)|.obfs)=$value' "$stage/config.json") || return 1
+            else
+                content=$(jq --arg tag "$tag" '(.inbounds[]|select(.tag==$tag))|=del(.obfs)' "$stage/config.json") || return 1
+            fi
+            sbd_record_write "$stage/config.json" "$content" || return 1
+            content=$(jq --argjson value "$value" 'if $value==null then del(.client.obfs) else .client.obfs=$value end' "$stage/entry-node.json") || return 1 ;;
         tls)
             case "$profile" in shadowsocks|vmess_ws|vless_ws) _error '此配置档不使用源站 TLS，不能添加证书或 Reality'; return 1 ;; esac
             if [[ "$profile" = anyreality || "$profile" = vless_reality ]]; then
@@ -905,7 +948,7 @@ sbd_entry_create_classic_prompt() {
 
 sbd_entry_hy2_prompt() {
     local choice up down obfs='null' server='{}' client='{}' password low high maximum
-    sbd_ui_options '[1] 客户端 BBR（默认）' '[2] 客户端 Hysteria CC，分别填写上/下行 Mbps'
+    sbd_ui_options '[1] 客户端 BBR（默认）' '[2] 客户端 Brutal，分别填写上/下行 Mbps'
     sbd_entry_number_prompt '客户端拥塞策略' 1 2 1 || return $?; choice="$SBD_REPLY"
     if [[ "$choice" = 2 ]]; then
         sbd_entry_number_prompt '客户端上传 Mbps（客户端→服务器）' 1 999999999 || return $?; up="$SBD_REPLY"
@@ -932,6 +975,102 @@ sbd_entry_hy2_prompt() {
         fi
     fi
     SBD_HY2_REQUEST=$(jq -n --argjson server "$server" --argjson client "$client" --slurpfile obfs <(printf '%s' "$obfs") '{server_options:$server,client_options:$client,obfs:$obfs[0]}') || return 1
+}
+
+sbd_entry_hy2_bandwidth_prompt() {
+    local choice up down client server
+    sbd_ui_options '[1] BBR + 不设置服务端上限' '[2] Brutal + 设置服务端上限（两侧数值分别填写）'
+    sbd_read_integer '客户端/服务端带宽策略' 1 2 || return $?; choice="$SBD_REPLY"
+    if [[ "$choice" = 1 ]]; then
+        SBD_HY2_REQUEST='{"client_options":{},"server_options":{}}'
+    else
+        sbd_entry_number_prompt '客户端上传 Mbps（客户端→服务器）' 1 999999999 || return $?; up="$SBD_REPLY"
+        sbd_entry_number_prompt '客户端下载 Mbps（服务器→客户端）' 1 999999999 || return $?; down="$SBD_REPLY"
+        client=$(jq -n --argjson up "$up" --argjson down "$down" '{up_mbps:$up,down_mbps:$down}') || return 1
+        sbd_entry_number_prompt '服务端上传 Mbps（服务器→客户端）' 1 999999999 || return $?; up="$SBD_REPLY"
+        sbd_entry_number_prompt '服务端下载 Mbps（客户端→服务器）' 1 999999999 || return $?; down="$SBD_REPLY"
+        server=$(jq -n --argjson up "$up" --argjson down "$down" '{up_mbps:$up,down_mbps:$down}') || return 1
+        SBD_HY2_REQUEST=$(jq -n --argjson client "$client" --argjson server "$server" '{client_options:$client,server_options:$server}') || return 1
+    fi
+    SBD_HY2_ACTION=hy2_bandwidth
+}
+
+sbd_entry_hy2_manage_prompt() {
+    local node="$1" choice="$2" up down password low high maximum start end interval tag paired
+    case "$choice" in
+        1)
+            sbd_ui_options '[1] 设置端口范围' '[2] 关闭端口跳跃'
+            sbd_read_integer '端口跳跃操作' 1 2 || return $?; choice="$SBD_REPLY"
+            if [[ "$choice" = 2 ]]; then
+                SBD_HY2_ACTION=hy2_hops
+                SBD_HY2_REQUEST='{"server_ports":[],"hop_interval":""}'
+                return 0
+            fi
+            sbd_info 'sing-box inbound 仍监听单端口；请确保服务器将此 UDP 范围转发到节点监听端口，否则端口跳跃无法连接'
+            sbd_entry_number_prompt '跳跃起始端口' 1 65534 "$(jq -r '.client.server_ports[0] // "" | split(":")[0]' <<< "$node")" || return $?; start="$SBD_REPLY"
+            sbd_entry_number_prompt '跳跃结束端口' "$((start + 1))" 65535 "$(jq -r '.client.server_ports[0] // "" | split(":")[1] // empty' <<< "$node")" || return $?; end="$SBD_REPLY"
+            sbd_entry_number_prompt '端口跳跃间隔（秒）' 1 3600 "$(jq -r '(.client.hop_interval // "30s") | sub("s$"; "")' <<< "$node")" || return $?; interval="$SBD_REPLY"
+            SBD_HY2_ACTION=hy2_hops
+            SBD_HY2_REQUEST=$(jq -n --arg start "$start" --arg end "$end" --arg interval "${interval}s" '{server_ports:[($start+":"+$end)],hop_interval:$interval}') || return 1
+            ;;
+        2)
+            tag=$(jq -r '.inbound_tag' <<< "$node") || return 1
+            paired=$(jq -r --arg tag "$tag" '[.inbounds[]|select(.tag==$tag)][0].ignore_client_bandwidth // false' "$SBD_CONFIG") || return 1
+            if [[ "$paired" = true ]]; then
+                sbd_entry_hy2_bandwidth_prompt
+                return $?
+            fi
+            sbd_ui_options '[1] BBR（不设定固定带宽）' '[2] Brutal（设置上/下行 Mbps）'
+            sbd_read_integer '客户端拥塞策略' 1 2 || return $?; choice="$SBD_REPLY"
+            if [[ "$choice" = 1 ]]; then SBD_HY2_REQUEST='{}'
+            else
+                sbd_entry_number_prompt '客户端上传 Mbps（客户端→服务器）' 1 999999999 || return $?; up="$SBD_REPLY"
+                sbd_entry_number_prompt '客户端下载 Mbps（服务器→客户端）' 1 999999999 || return $?; down="$SBD_REPLY"
+                SBD_HY2_REQUEST=$(jq -n --argjson up "$up" --argjson down "$down" '{up_mbps:$up,down_mbps:$down}') || return 1
+            fi
+            SBD_HY2_ACTION=hy2_client_bandwidth
+            ;;
+        3)
+            tag=$(jq -r '.inbound_tag' <<< "$node") || return 1
+            paired=$(jq -r --arg tag "$tag" '[.inbounds[]|select(.tag==$tag)][0].ignore_client_bandwidth // false' "$SBD_CONFIG") || return 1
+            if [[ "$paired" = true ]]; then
+                sbd_entry_hy2_bandwidth_prompt
+                return $?
+            fi
+            sbd_ui_options '[1] 不设定服务端上限' '[2] 设置服务端上/下行 Mbps'
+            sbd_read_integer '服务端带宽设置' 1 2 || return $?; choice="$SBD_REPLY"
+            if [[ "$choice" = 1 ]]; then SBD_HY2_REQUEST='{}'
+            else
+                sbd_entry_number_prompt '服务端上传 Mbps（服务器→客户端）' 1 999999999 || return $?; up="$SBD_REPLY"
+                sbd_entry_number_prompt '服务端下载 Mbps（客户端→服务器）' 1 999999999 || return $?; down="$SBD_REPLY"
+                SBD_HY2_REQUEST=$(jq -n --argjson up "$up" --argjson down "$down" '{up_mbps:$up,down_mbps:$down}') || return 1
+            fi
+            SBD_HY2_ACTION=hy2_server_bandwidth
+            ;;
+        4)
+            sbd_ui_options '[1] 关闭混淆' '[2] Salamander' '[3] Gecko（可设置尺寸）'
+            sbd_read_integer '混淆方式' 1 3 || return $?; choice="$SBD_REPLY"
+            if [[ "$choice" = 1 ]]; then SBD_HY2_REQUEST='null'
+            else
+                sbd_entry_password_prompt '混淆密码' || return $?; password="$SBD_REPLY"
+                if [[ "$choice" = 2 ]]; then
+                    SBD_HY2_REQUEST=$(jq -n --rawfile password <(printf '%s' "$password") '{type:"salamander",password:$password}') || return 1
+                else
+                    sbd_entry_number_prompt 'Gecko 最小包长（bytes）' 1 65535 512 || return $?; low="$SBD_REPLY"
+                    maximum=1200; (( low <= maximum )) || maximum="$low"
+                    sbd_entry_number_prompt 'Gecko 最大包长（bytes）' "$low" 65535 "$maximum" || return $?; high="$SBD_REPLY"
+                    SBD_HY2_REQUEST=$(jq -n --rawfile password <(printf '%s' "$password") --argjson low "$low" --argjson high "$high" '{type:"gecko",password:$password,min_packet_size:$low,max_packet_size:$high}') || return 1
+                fi
+            fi
+            SBD_HY2_ACTION=hy2_obfs
+            ;;
+    esac
+}
+
+sbd_entry_hy2_actions() {
+    sbd_ui_options '[1] 修改显示名' '[2] 更换认证密码' '[3] 修改客户端连接地址/映射端口' '[4] 修改本地监听'
+    sbd_ui_options '[5] 客户端端口跳跃' '[6] 客户端上/下行带宽' '[7] 服务端上/下行带宽' '[8] Salamander/Gecko 混淆' '[9] 切换 TLS 来源'
+    sbd_ui_options '[0] 返回节点选择'
 }
 
 sbd_entry_create_prompt() {
@@ -969,9 +1108,7 @@ sbd_entry_actions() {
     sbd_ui_options '[1] 修改显示名' '[2] 更换认证密码/UUID' '[3] 修改客户端连接地址/映射端口' '[4] 修改本地监听'
     SBD_ENTRY_ACTIONS=' 0 1 2 3 4 '
     case "$profile" in
-        hysteria2)
-            sbd_ui_options '[5] Hysteria2 带宽/混淆' '[6] 切换 TLS 来源'
-            SBD_ENTRY_ACTIONS+='5 6 ' ;;
+        hysteria2) sbd_ui_options '[5] 切换 TLS 来源'; SBD_ENTRY_ACTIONS+='5 ' ;;
         anytls) sbd_ui_options '[6] 切换 TLS 来源'; SBD_ENTRY_ACTIONS+='6 ' ;;
         anyreality|vless_reality) sbd_ui_options '[6] 重建 Reality 密钥及握手配置'; SBD_ENTRY_ACTIONS+='6 ' ;;
         shadowsocks|vmess_ws|vless_ws) ;;
@@ -996,23 +1133,31 @@ sbd_entry_change_prompt() {
         delete) title='删除节点' ;;
         *) _error '未知节点菜单操作'; return 1 ;;
     esac
-    sbd_ui_begin "$title"
-    values=$(jq -c '.nodes' "$SBD_REGISTRY") || return 1
-    sbd_entry_choose "$values" '选择节点' true || return $?; id="$SBD_REPLY"
-    node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || return 1
-    profile=$(jq -r '.profile' <<< "$node") || return 1
-    if [[ "$mode" = delete ]]; then
-        name=$(jq -r '.name' <<< "$node") || { _error '读取节点名称失败'; return 1; }
-        sbd_info "将删除节点: $name ($id)；保留证书资料"
-        choice=7
-    else
-        sbd_entry_actions "$profile" "$mode" || return 1
-        while true; do
-            sbd_read_integer '选择操作' 0 9 || return $?; choice="$SBD_REPLY"
-            [[ "$SBD_ENTRY_ACTIONS" = *" $choice "* ]] && break
-            _error '此操作不适用于当前配置档，请选择显示的编号'
-        done
-    fi
+    while true; do
+        sbd_ui_begin "$title"
+        values=$(jq -c '.nodes' "$SBD_REGISTRY") || return 1
+        sbd_entry_choose "$values" '选择节点' true || return $?; id="$SBD_REPLY"
+        node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || return 1
+        profile=$(jq -r '.profile' <<< "$node") || return 1
+        if [[ "$mode" = delete ]]; then
+            name=$(jq -r '.name' <<< "$node") || { _error '读取节点名称失败'; return 1; }
+            sbd_info "将删除节点: $name ($id)；保留证书资料"
+            choice=7
+        else
+            if [[ "$mode" = edit && "$profile" = hysteria2 ]]; then
+                sbd_ui_begin 'Hysteria2 节点管理'
+                sbd_entry_hy2_actions
+            else
+                sbd_entry_actions "$profile" "$mode" || return 1
+            fi
+            while true; do
+                sbd_read_integer '选择操作' 0 9 || return $?; choice="$SBD_REPLY"
+                if [[ "$mode" = edit && "$profile" = hysteria2 ]]; then break; fi
+                [[ "$SBD_ENTRY_ACTIONS" = *" $choice "* ]] && break
+                _error '此操作不适用于当前配置档，请选择显示的编号'
+            done
+            if [[ "$mode" = edit && "$profile" = hysteria2 && "$choice" = 0 ]]; then continue; fi
+        fi
     case "$choice" in
         0) return 2 ;;
         1) action=name; sbd_read_required '新显示名' || return $?; value="$SBD_REPLY" ;;
@@ -1039,28 +1184,49 @@ sbd_entry_change_prompt() {
             value=$(jq -n --arg listen "$server" --argjson port "$SBD_REPLY" '{listen:$listen,listen_port:$port}') || return 1 ;;
         5)
             [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
-            action=hy2; sbd_entry_hy2_prompt || return $?; value="$SBD_HY2_REQUEST" ;;
+            if [[ "$mode" = edit ]]; then
+                sbd_entry_hy2_manage_prompt "$node" 1 || return $?; action="$SBD_HY2_ACTION"; value="$SBD_HY2_REQUEST"
+            else
+                action=tls; sbd_entry_tls_prompt "$profile" "$(jq -r '.client.server' <<< "$node")" || return $?; value="$SBD_TLS_REQUEST"
+            fi ;;
         6)
-            case "$profile" in shadowsocks|*_ws) _error '此配置档不在源站使用 TLS；WS 请修改 CDN 参数'; return 1 ;; esac
-            action=tls; sbd_entry_tls_prompt "$profile" "$(jq -r '.client.server' <<< "$node")" || return $?; value="$SBD_TLS_REQUEST" ;;
-        7) action=delete; value='' ;;
+            if [[ "$mode" = edit && "$profile" = hysteria2 ]]; then
+                sbd_entry_hy2_manage_prompt "$node" 2 || return $?; action="$SBD_HY2_ACTION"; value="$SBD_HY2_REQUEST"
+            else
+                case "$profile" in shadowsocks|*_ws) _error '此配置档不在源站使用 TLS；WS 请修改 CDN 参数'; return 1 ;; esac
+                action=tls; sbd_entry_tls_prompt "$profile" "$(jq -r '.client.server' <<< "$node")" || return $?; value="$SBD_TLS_REQUEST"
+            fi ;;
+        7)
+            if [[ "$mode" = edit && "$profile" = hysteria2 ]]; then
+                sbd_entry_hy2_manage_prompt "$node" 3 || return $?; action="$SBD_HY2_ACTION"; value="$SBD_HY2_REQUEST"
+            else action=delete; value=''; fi ;;
         8)
-            [[ "$profile" = shadowsocks ]] || { _error '此节点不是 Shadowsocks'; return 1; }
-            action=ss; sbd_entry_ss_prompt || return $?; value="$SBD_SS_REQUEST" ;;
+            if [[ "$mode" = edit && "$profile" = hysteria2 ]]; then
+                sbd_entry_hy2_manage_prompt "$node" 4 || return $?; action="$SBD_HY2_ACTION"; value="$SBD_HY2_REQUEST"
+            else
+                [[ "$profile" = shadowsocks ]] || { _error '此节点不是 Shadowsocks'; return 1; }
+                action=ss; sbd_entry_ss_prompt || return $?; value="$SBD_SS_REQUEST"
+            fi ;;
         9)
-            [[ "$profile" = *_ws ]] || { _error '此节点不是 WS CDN 配置档'; return 1; }
-            action=cdn
-            tag=$(jq -r '.inbound_tag' <<< "$node") || return 1
-            port=$(jq -er --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.listen_port' "$SBD_CONFIG") || return 1
-            defaults=$(jq -c '.ingress + {server:.client.server,server_port:.client.server_port,path:.client.transport.path}' <<< "$node") || return 1
-            sbd_entry_cdn_prompt "$port" "$defaults" || return $?; value="$SBD_CDN_REQUEST" ;;
+            if [[ "$mode" = edit && "$profile" = hysteria2 ]]; then
+                action=tls; sbd_entry_tls_prompt "$profile" "$(jq -r '.client.server' <<< "$node")" || return $?; value="$SBD_TLS_REQUEST"
+            else
+                [[ "$profile" = *_ws ]] || { _error '此节点不是 WS CDN 配置档'; return 1; }
+                action=cdn
+                tag=$(jq -r '.inbound_tag' <<< "$node") || return 1
+                port=$(jq -er --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.listen_port' "$SBD_CONFIG") || return 1
+                defaults=$(jq -c '.ingress + {server:.client.server,server_port:.client.server_port,path:.client.transport.path}' <<< "$node") || return 1
+                sbd_entry_cdn_prompt "$port" "$defaults" || return $?; value="$SBD_CDN_REQUEST"
+            fi ;;
     esac
     sbd_read_required '确认此操作并按需重启？输入 y 确认，其他输入取消' || return $?
     [[ "$SBD_REPLY" = y ]] || return 2
     sbd_apply sbd_entry_change "$id" "$action" "$value" || return 1
     sbd_success '节点变更与分享资料已提交；未验证外网连通'
     sbd_service_after_change || sbd_info '变更已提交，但服务尚未运行；按上方提示处理后客户端才能连接'
-    sbd_ui_pause
+        sbd_ui_pause
+        [[ "$mode" = edit && "$profile" = hysteria2 ]] || return 0
+    done
 }
 
 sbd_entries_list() {

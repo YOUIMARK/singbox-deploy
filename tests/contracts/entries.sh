@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/harness.sh"
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/entries.sh"
+. "$(dirname -- "${BASH_SOURCE[0]}")/../support/classic.sh"
 
 field_contract() {
     local generated
@@ -58,6 +59,68 @@ hy2_custom() {
     t_assert '服务端方向独立' jq -e '.inbounds[0]|.up_mbps==25 and .down_mbps==5' "$SBD_CONFIG"
     t_assert '客户端方向独立' jq -e '.nodes[0].client|.up_mbps==3 and .down_mbps==12 and .obfs.min_packet_size==600 and .obfs.max_packet_size==1300' "$SBD_REGISTRY"
     t_run 0 t_entry_uri hysteria2
+}
+hy2_management() {
+    t_seed
+    t_entry_add vmess_ws
+    t_entry_add hysteria2
+    local id tag
+    id="$NODE_ID"
+    tag=$(jq -r --arg id "$id" '.nodes[]|select(.id==$id)|.inbound_tag' "$SBD_REGISTRY")
+    t_run 2 sbd_entry_change_prompt edit <<< $'2\n5\n1\n20000\n20100\n30\ny\n0\n'
+    t_absent "$CASE_TMP/output" '[5] Hysteria2 管理'
+    t_contains "$CASE_TMP/output" 'Hysteria2 节点管理'
+    t_contains "$CASE_TMP/output" '[5] 客户端端口跳跃'
+    t_contains "$CASE_TMP/output" 'sing-box inbound 仍监听单端口'
+    t_contains "$CASE_TMP/output" '[6] 客户端上/下行带宽'
+    t_contains "$CASE_TMP/output" '[7] 服务端上/下行带宽'
+    t_contains "$CASE_TMP/output" '[8] Salamander/Gecko 混淆'
+    t_assert '编辑菜单配置客户端跳跃端口和间隔' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|.server_ports==["20000:20100"] and .hop_interval=="30s"' "$SBD_REGISTRY"
+    t_assert 'sing-box 原生客户端导出携带跳跃配置' jq -e '.outbounds[0]|.server_ports=="20000:20100" and .hop_interval=="30s"' "$SBD_EXPORTS/$id.json"
+    t_run 0 t_entry_uri hysteria2
+    t_run 0 t_classic_uri
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_client_bandwidth '{"up_mbps":8,"down_mbps":40}'
+    t_assert '客户端带宽独立保存' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|.up_mbps==8 and .down_mbps==40' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_client_bandwidth '{}'
+    t_assert '切回 BBR 清除客户端带宽限制' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|(has("up_mbps") or has("down_mbps"))|not' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_server_bandwidth '{"up_mbps":100,"down_mbps":25}'
+    t_assert '服务端带宽写入 inbound' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.up_mbps==100 and .down_mbps==25' "$SBD_CONFIG"
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_obfs '{"type":"salamander","password":"fixture-obfs"}'
+    t_assert '服务端混淆已更新' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.obfs.type=="salamander"' "$SBD_CONFIG"
+    t_assert '客户端混淆已同步更新' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client.obfs.password=="fixture-obfs"' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_obfs null
+    t_assert '服务端混淆已清除' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|has("obfs")|not' "$SBD_CONFIG"
+    t_assert '客户端混淆已清除' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|has("obfs")|not' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":[],"hop_interval":""}'
+    t_assert '关闭端口跳跃清除导出和 URI 参数' jq -e --arg id "$id" '(.nodes[]|select(.id==$id)|.client|has("server_ports") or has("hop_interval"))|not' "$SBD_REGISTRY"
+    t_run 0 t_entry_uri hysteria2
+    t_run 1 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":["20100:20000"],"hop_interval":"30s"}'
+    t_run 0 sbd_check_config
+}
+hy2_paired_bandwidth() {
+    t_seed
+    t_entry_add hysteria2
+    local id tag node
+    id="$NODE_ID"
+    tag=$(jq -r --arg id "$id" '.nodes[]|select(.id==$id)|.inbound_tag' "$SBD_REGISTRY") || exit 1
+    t_patch_config --arg tag "$tag" '(.inbounds[]|select(.tag==$tag)).ignore_client_bandwidth=true'
+    node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || exit 1
+    sbd_entry_hy2_manage_prompt "$node" 2 > "$CASE_TMP/prompt" 2>&1 <<< $'2\n8\n40\n100\n25' || exit 1
+    t_assert '任一带宽菜单均进入成对管理' test "$SBD_HY2_ACTION" = hy2_bandwidth
+    t_assert '分别录入两侧带宽值' jq -e '.client_options=={up_mbps:8,down_mbps:40} and .server_options=={up_mbps:100,down_mbps:25}' <<< "$SBD_HY2_REQUEST"
+    t_entry_save
+    t_run 1 sbd_apply sbd_entry_change "$id" hy2_server_bandwidth '{"up_mbps":100,"down_mbps":25}'
+    t_contains "$CASE_TMP/output" '节点认证、TLS、混淆或带宽策略与元数据不一致'
+    t_entry_unchanged
+    t_run 1 sbd_apply sbd_entry_change "$id" hy2_bandwidth '{"client_options":{"up_mbps":8,"down_mbps":40},"server_options":{}}'
+    t_contains "$CASE_TMP/output" '客户端与服务端带宽策略无效或不匹配'
+    t_entry_unchanged
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_bandwidth '{"client_options":{"up_mbps":8,"down_mbps":40},"server_options":{"up_mbps":100,"down_mbps":25}}'
+    t_assert '客户端带宽值独立保存' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|.up_mbps==8 and .down_mbps==40' "$SBD_REGISTRY"
+    t_assert '服务端带宽值独立保存' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.up_mbps==100 and .down_mbps==25' "$SBD_CONFIG"
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_bandwidth '{"client_options":{},"server_options":{}}'
+    t_assert 'BBR 模式清除客户端带宽' jq -e --arg id "$id" '[.nodes[]|select(.id==$id)|.client|(has("up_mbps") or has("down_mbps"))]|any|not' "$SBD_REGISTRY"
+    t_assert '服务端带宽同步清除' jq -e --arg tag "$tag" '[.inbounds[]|select(.tag==$tag)|has("up_mbps") or has("down_mbps")]|any|not' "$SBD_CONFIG"
 }
 create_prompt_contract() {
     t_seed
@@ -130,6 +193,8 @@ t_case 'AnyTLS 真实配置与 URI 编码' anytls_contract
 t_case 'AnyReality 真实密钥与原生客户端/服务端' reality_contract
 t_case 'Hysteria2 默认 BBR 和证书指纹 URI' hy2_default
 t_case 'Hysteria2 两侧带宽与 Gecko 自定义 URI 扩展' hy2_custom
+t_case 'Hysteria2 编辑管理：端口跳跃、两侧带宽与混淆' hy2_management
+t_case 'ignore_client_bandwidth 下成对修改带宽并保留独立数值' hy2_paired_bandwidth
 t_case '精简向导真实创建、自动分享、JSON 交付和 EOF 语义' create_prompt_contract
 t_case '添加节点时导入自定义 PEM 证书并选择客户端信任' custom_certificate_prompt_contract
 t_case '编辑自身时监听地址重叠不误判冲突，其他入口仍判冲突' listen_overlap_contract
