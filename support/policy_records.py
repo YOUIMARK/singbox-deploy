@@ -52,8 +52,16 @@ def align(config, registry):
                 if rec["index"] in indexes:
                     raise ValueError("托管规则位置登记重复")
                 indexes.add(rec["index"])
-            if locate(config, area, rec) != rec["expected"]:
-                raise ValueError("托管规则、上游或规则集发生漂移，请先显式协调")
+            actual = locate(config, area, rec)
+            if actual != rec["expected"]:
+                fields = sorted(
+                    key
+                    for key in set(actual) | set(rec["expected"])
+                    if actual.get(key) != rec["expected"].get(key)
+                )
+                raise ValueError(
+                    f"托管记录发生漂移：{area}/{rec['id']}，字段 {', '.join(fields)}；请先显式协调"
+                )
 
 
 def edit(config, registry, request):

@@ -62,6 +62,49 @@ drift_contract() {
     t_entry_save
     t_run 1 sbd_apply sbd_policy_rule route_rules delete "$id"
     t_contains "$CASE_TMP/output" '漂移'
+    t_contains "$CASE_TMP/output" 'route_rules'
+    t_contains "$CASE_TMP/output" "$id"
+    t_contains "$CASE_TMP/output" 'domain'
+    t_absent "$CASE_TMP/output" 'manual.example'
+    t_entry_unchanged
+}
+adopt_drifted_record() {
+    t_policy_seed
+    t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"a.example","action":"reject"}'
+    local id
+    id=$(t_policy_id route_rules) || exit 1
+    t_patch_config '.route.rules[0].domain="manual.example"'
+    t_entry_save
+    t_run 0 sbd_apply sbd_policy_adopt route_rules "$id" 0
+    t_assert '显式接管同步当前规则预期值' jq -e --arg id "$id" '
+        .policy.route_rules[0].id==$id
+        and .policy.route_rules[0].expected.domain=="manual.example"' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_policy_rule route_rules delete "$id"
+    t_assert '接管后策略变更恢复可用' jq -e '(.route.rules|length)==0 and (.policy.route_rules|length)==0' "$SBD_CONFIG"
+}
+manual_drift_check() {
+    t_policy_seed
+    t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"a.example","action":"reject"}'
+    local id
+    id=$(t_policy_id route_rules) || exit 1
+    t_patch_config '.route.rules[0].domain="manual.example"'
+    t_entry_save
+    t_run 1 sbd_check_config_tidy
+    t_contains "$CASE_TMP/output" "$id"
+    t_contains "$CASE_TMP/output" 'domain'
+    t_entry_unchanged
+}
+adopt_keeps_other_drift_blocked() {
+    t_policy_seed
+    t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"a.example","action":"reject"}'
+    local first second
+    first=$(t_policy_id route_rules) || exit 1
+    t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"b.example","action":"reject"}'
+    second=$(t_policy_id route_rules) || exit 1
+    t_patch_config '.route.rules[0].domain="manual-a.example" | .route.rules[1].domain="manual-b.example"'
+    t_entry_save
+    t_run 1 sbd_apply sbd_policy_adopt route_rules "$first" 0
+    t_contains "$CASE_TMP/output" "$second"
     t_entry_unchanged
 }
 server_references() {
@@ -112,6 +155,9 @@ t_case '本地更新独立路径、最近恢复源和安全淘汰' local_update
 t_case 'remote 4B 延迟下载、原生缓存与无伪刷新' remote_lazy
 t_case 'DNS/逻辑路由存活引用阻止删除规则集' rule_set_references
 t_case '规则漂移拒绝覆盖并保留旧导出' drift_contract
+t_case '显式接管漂移规则后恢复策略变更' adopt_drifted_record
+t_case '检查配置发现手工修改并保留配置文件' manual_drift_check
+t_case '接管单条规则仍拒绝其他托管漂移' adopt_keeps_other_drift_blocked
 t_case 'DNS 默认项和 bootstrap 存活引用阻止删除' server_references
 t_case '原生路由 route/reject/sniff/resolve/hijack-dns' native_actions
 t_case '旧规则材料回收失败可重试而不回退已接受事实' retirement_failure
