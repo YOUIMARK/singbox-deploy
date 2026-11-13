@@ -10,7 +10,15 @@ u = urlsplit(open(sys.argv[2]).read().strip())
 q = parse_qs(u.query, keep_blank_values=True)
 assert u.hostname == c["server"] and u.port == c["server_port"]
 assert unquote(u.fragment) == node["name"] and u.path == ""
-if node["profile"] == "shadowsocks":
+if node["profile"] == "hysteria2":
+    assert u.scheme == "hysteria2" and unquote(u.username) == c["password"]
+    assert q["sni"] == [c["tls"]["server_name"]]
+    ports = c.get("server_ports", [])
+    if ports:
+        assert q["mport"] == [",".join(p.replace(":", "-") for p in ports)]
+    else:
+        assert "mport" not in q
+elif node["profile"] == "shadowsocks":
     assert u.scheme == "ss" and not q
     info = u.netloc.rsplit("@", 1)[0]
     if c["method"].startswith("2022-"):
