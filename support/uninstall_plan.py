@@ -82,8 +82,6 @@ def build(root, mode):
             "data/uninstall.json",
             "assets/cache.db",
             "logs/sing-box.log",
-            # 部署私有写锁；不删除会让 purge 后的 rmdir 部署根必然失败。
-            "run/singbox-deploy.lock",
         ):
             files.add(str(root / name))
         parts = root / "confs"
@@ -128,13 +126,9 @@ def build(root, mode):
                 trees.add(str(directory))
     elif mode != "keep":
         raise ValueError("未知卸载模式")
-    ordered = sorted(files)
-    # 写锁排在清单末尾最后删除：卸载主体执行期间锁名仍在，跨进程互斥保持有效。
-    lock = str(root / "run/singbox-deploy.lock")
-    if lock in ordered:
-        ordered.remove(lock)
-        ordered.append(lock)
-    return {"format": 1, "mode": mode, "root": str(root), "files": ordered, "trees": sorted(trees)}
+    # 部署私有写锁不进清单：它由卸载收尾在所有清理动作完成后删除，
+    # 过早删除锁名会让并行操作取得新锁，与未完成的卸载交错。
+    return {"format": 1, "mode": mode, "root": str(root), "files": sorted(files), "trees": sorted(trees)}
 
 
 def main():

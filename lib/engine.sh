@@ -544,6 +544,8 @@ sbd_uninstall_locked() {
     fi
     rm -f -- "$SBD_COMMAND" || { _error '快捷命令清理失败'; return 1; }
     rm -f -- "$helper" "$SBD_STATE_DIR/uninstall.json" || { _error '卸载收尾未完成'; return 1; }
+    # 卸载收尾全部完成后再删除部署私有写锁；锁名过早消失会让并行操作取得新锁。
+    rm -f -- "$SBD_LOCK" || { _error '部署私有写锁清理失败'; return 1; }
     # helper 和可重试清单会暂时占用 state/work，收尾后只删除确定已空的目录。
     rmdir -- "$SBD_WORK" 2>/dev/null || true
     if [[ "$mode" = purge ]]; then
