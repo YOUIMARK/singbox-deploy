@@ -3,6 +3,44 @@
 # 第三方 WARP 注册接口；返回 sing-box endpoint，失败时不修改配置。
 SBD_PEER_WARP_API='https://warp.cloudflare.now.cc/?run=register&format=sing-box'
 
+sbd_peer_cloudflared_route() {
+    local stage="$1" tag="$2" action="$3" id="cloudflared.$2" request index owned
+    if [[ "$action" = delete ]]; then
+        if jq -e --arg id "$id" --arg tag "$tag" \
+            'any(.policy.route_rules[]?; .id==$id and .group==$id and .expected.inbound==$tag and (.expected.action//"route")=="route" and .expected.outbound=="direct" and ((.expected|keys)-["action","inbound","outbound"]|length)==0)' \
+            "$stage/registry.json" >/dev/null; then
+            request=$(jq -n --arg id "$id" '{area:"route_rules",action:"delete",id:$id,value:{}}') || return 1
+            sbd_policy_bundle "$stage" edit "$request" || return 1
+        fi
+        return 0
+    fi
+
+    index=$(jq -r '[.route.rules // [] | to_entries[] | select(.value.ip_is_private==true and .value.action=="reject") | .key][0] // -1' "$stage/config.json") || return 1
+    [[ "$index" != -1 ]] || return 0
+    if jq -e --arg tag "$tag" --argjson index "$index" \
+        'any(.route.rules[:$index][]; (.inbound | if type=="array" then index($tag)!=null else .==$tag end) and (.action//"route")=="route" and .outbound=="direct" and ((keys)-["action","inbound","outbound"]|length)==0)' \
+        "$stage/config.json" >/dev/null; then
+        return 0
+    fi
+    if jq -e --arg id "$id" 'any(.policy.route_rules[]?; .id==$id)' "$stage/registry.json" >/dev/null; then
+        owned=$(jq -er --arg id "$id" --arg tag "$tag" '
+            .policy.route_rules[] | select(.id==$id and .group==$id and .expected.inbound==$tag
+            and (.expected.action//"route")=="route" and .expected.outbound=="direct"
+            and ((.expected|keys)-["action","inbound","outbound"]|length)==0) | .index' "$stage/registry.json") || {
+            _error 'Cloudflare Tunnel 路由规则标识已被占用'; return 1;
+        }
+        # 恢复默认规则会把私网拒绝提前；移动原托管例外并保留规则 ID。
+        if (( owned > index )); then
+            request=$(jq -n --arg id "$id" --argjson position "$index" '{area:"route_rules",action:"move",id:$id,position:$position}') || return 1
+            sbd_policy_bundle "$stage" edit "$request" || return 1
+        fi
+        return 0
+    fi
+    request=$(jq -n --arg id "$id" --arg tag "$tag" --argjson position "$index" \
+        '{area:"route_rules",action:"add",id:$id,position:$position,value:{inbound:$tag,action:"route",outbound:"direct"},group:$id}') || return 1
+    sbd_policy_bundle "$stage" edit "$request"
+}
+
 sbd_peer_change() {
     local stage="$1" area="$2" action="$3" tag="$4" value="${5:-}" kind old request port exclude=''
     case "$area" in endpoints|connectors) ;; *) _error '未知连接对象区域'; return 1 ;; esac
@@ -11,6 +49,7 @@ sbd_peer_change() {
     if [[ "$action" != add ]]; then
         old=$(jq -ce --arg area "$area" --arg tag "$tag" '.policy[$area][]? | select(.id==$tag) | .expected' "$stage/registry.json") || { _error '此连接对象未托管，不自动接管'; return 1; }
         exclude="$tag"
+        kind=$(jq -r '.type' <<< "$old") || return 1
     fi
     if [[ "$action" = delete ]]; then value='{}'
     elif [[ "$action" = add || "$action" = replace ]]; then
@@ -27,7 +66,13 @@ sbd_peer_change() {
         fi
     else _error '未知连接对象操作'; return 1; fi
     request=$(jq -n --arg area "$area" --arg action "$action" --arg tag "$tag" --slurpfile value <(printf '%s' "$value") '{area:$area,action:$action,id:$tag,value:$value[0]}') || { _error '连接对象请求不是有效 JSON'; return 1; }
+    if [[ "$area" = connectors && "$kind" = cloudflared && "$action" = delete ]]; then
+        sbd_peer_cloudflared_route "$stage" "$tag" "$action" || return 1
+    fi
     sbd_policy_bundle "$stage" edit "$request" || return 1
+    if [[ "$area" = connectors && "$kind" = cloudflared && "$action" != delete ]]; then
+        sbd_peer_cloudflared_route "$stage" "$tag" "$action" || return 1
+    fi
     sbd_policy_finish "$stage"
 }
 
