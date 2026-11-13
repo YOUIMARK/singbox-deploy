@@ -4,6 +4,19 @@ sbd_policy_begin() {
     python3 -I "$SBD_APP/support/policy_records.py" align "$1" || { _error '策略登记与配置不一致，取消变更'; return 1; }
 }
 
+# 只重建暂存登记；提交和失败恢复仍交给现有事务。
+sbd_policy_reconcile() {
+    local stage="$1" content
+    content=$(python3 -I "$SBD_APP/support/policy_records.py" reconcile "$stage") || return 1
+    content=$(jq -c .registry <<< "$content") || return 1
+    sbd_record_write "$stage/registry.json" "$content"
+}
+
+sbd_policy_sync_current() {
+    [[ -f "$SBD_CONFIG" ]] || return 0
+    sbd_check_config_tidy
+}
+
 sbd_policy_bundle() {
     local stage="$1" command="$2" request="${3:-}" content
     content=$(printf '%s' "$request" | python3 -I "$SBD_APP/support/policy_records.py" "$command" "$stage") || return 1
@@ -420,7 +433,7 @@ sbd_rule_add_flow() {
 sbd_rule_set_remove() {
     local values tag count
     values=$(jq -c '[.policy.rule_sets[]? | {id, area:"rule_sets"}]' "$SBD_REGISTRY") || return 1
-    [[ "$(jq length <<< "$values")" != 0 ]] || { _error "没有脚本管理的规则集；手工写入的请直接编辑 $SBD_CONFIG"; return 1; }
+    [[ "$(jq length <<< "$values")" != 0 ]] || { _error '当前没有可管理的规则集'; return 1; }
     sbd_policy_pick "$values" '选择要删除的规则集' || return $?
     tag="$SBD_REPLY"
     count=$(jq --arg tag "$tag" '[(.route.rules // [])[], (.dns.rules // [])[]] |
@@ -679,10 +692,10 @@ sbd_route_rule_remove() {
         | sort_by(.index)' "$SBD_REGISTRY") || return 1
     count=$(jq 'length' <<< "$values") || return 1
     if (( count == 0 )); then
-        _error "没有脚本管理的路由规则；手工规则可在 [19] 脚本维护中接管，或直接编辑 $SBD_CONFIG"
+        _error '当前没有路由规则'
         return 1
     fi
-    sbd_info "只列出脚本托管的路由规则；手工规则可在 [19] 脚本维护中接管，或直接编辑 $SBD_CONFIG"
+    sbd_info '选择当前配置中的路由规则'
     for ((i=0; i<count; i++)); do
         index=$(jq -r --argjson i "$i" '.[$i].index' <<< "$values") || return 1
         rule=$(jq -c --argjson i "$i" '.[$i].rule' <<< "$values") || return 1
@@ -697,13 +710,17 @@ sbd_route_rule_remove() {
 }
 
 sbd_route_defaults() {
-    local stage="$1" defaults content
+    local stage="$1" defaults content tags tag
     defaults=$(jq -c '.route.rules // []' "$SBD_APP/presets/base.json") || { _error '读取默认路由规则失败'; return 1; }
     jq -e 'type=="array" and length>0' <<< "$defaults" >/dev/null || { _error '默认路由规则缺失'; return 1; }
     sbd_policy_begin "$stage" || return 1
     content=$(python3 -I "$SBD_APP/support/policy_records.py" defaults "$stage" "$defaults") || { _error '补齐默认路由规则失败'; return 1; }
     sbd_record_write "$stage/config.json" "$(jq -c '.config' <<< "$content")" || return 1
     sbd_record_write "$stage/registry.json" "$(jq -c '.registry' <<< "$content")" || return 1
+    tags=$(jq -r '.policy.connectors[]? | select(.expected.type=="cloudflared") | .id' "$stage/registry.json") || return 1
+    while IFS= read -r tag; do
+        [[ -z "$tag" ]] || sbd_peer_cloudflared_route "$stage" "$tag" add || return 1
+    done <<< "$tags"
     sbd_policy_finish "$stage"
 }
 

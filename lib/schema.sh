@@ -99,21 +99,37 @@ sbd_check_config_tidy_locked() {
     elif ! cp -- "$SBD_REGISTRY" "$stage/registry.json"; then
         _error '策略登记暂存失败'
         rc=1
-    elif ! sbd_policy_begin "$stage"; then
-        rc=1
     elif ! sbd_prepare_config "$stage"; then
         _error '配置整理校验失败'
         rc=1
-    elif cmp -s -- "$stage/config.json" "$SBD_CONFIG"; then
-        sbd_info '配置缩进已符合核心格式'
-    elif ! sbd_atomic_file "$stage/config.json" "$SBD_CONFIG"; then
+    elif ! python3 -I "$SBD_APP/support/policy_records.py" refs "$stage"; then
+        _error '当前配置的策略引用无效，未同步管理登记'
+        rc=1
+    elif ! sbd_policy_reconcile "$stage"; then
         rc=1
     else
-        sbd_info '配置缩进已整理；运行中的服务不会自动重载'
+        # 格式整理不改变语义；登记始终依据已通过核心校验的当前配置。
+        if ! cmp -s -- "$stage/config.json" "$SBD_CONFIG"; then
+            if sbd_atomic_file "$stage/config.json" "$SBD_CONFIG"; then
+                sbd_info '配置缩进已整理；运行中的服务不会自动重载'
+            else
+                rc=1
+            fi
+        else
+            sbd_info '配置缩进已符合核心格式'
+        fi
+        if [[ "$rc" = 0 ]] && ! cmp -s -- "$stage/registry.json" "$SBD_REGISTRY"; then
+            if sbd_atomic_file "$stage/registry.json" "$SBD_REGISTRY"; then
+                sbd_info '已发现并同步手动修改的配置登记'
+            else
+                rc=1
+            fi
+        fi
+        [[ "$rc" != 0 ]] || sbd_info '配置已检查并整理；运行中的服务不会自动重载'
     fi
     rm -rf -- "$stage" || { _error "整理临时目录清理失败: $stage"; return 1; }
     return "$rc"
 }
 
-# 菜单“检查配置”在校验通过后顺带整理缩进；事务前的内部检查仍保持只读。
+# 菜单检查通过后整理缩进、同步策略登记；不重载服务。
 sbd_check_config_tidy() { sbd_write_lock sbd_check_config_tidy_locked; }

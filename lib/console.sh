@@ -7,146 +7,12 @@ sbd_terminal() {
     return 1
 }
 
-# 按类别删除脚本托管的配置与登记；存活引用会让整次事务失败，不自动连带删除。
-sbd_reset() {
-    local stage="$1" category="$2" node content ids id directory
-    sbd_policy_begin "$stage" || return 1
-    case "$category" in
-        nodes)
-            ids=$(jq -r '.nodes[].id' "$stage/registry.json") || return 1
-            while IFS= read -r id; do
-                [[ -n "$id" ]] || continue
-                node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$stage/registry.json") || return 1
-                sbd_record_write "$stage/reset-node.json" "$node" || return 1
-                sbd_entry_align "$stage" "$stage/reset-node.json" delete || return 1
-            done <<< "$ids" ;;
-        rules_dns)
-            ids=$(jq -r '.policy.rule_sets[]?.directory // empty|select(length>0)' "$stage/registry.json") || return 1
-            while IFS= read -r directory; do [[ -z "$directory" ]] || sbd_material_note retired_materials "$directory" || return 1; done <<< "$ids" ;;
-        peers) ;;
-        tls)
-            ids=$(jq -r '.tls.providers[]?' "$stage/registry.json") || return 1
-            while IFS= read -r id; do [[ -z "$id" ]] || sbd_tls_remove "$stage" provider "$id" || return 1; done <<< "$ids"
-            ids=$(jq -r '.tls.certificates[]?.id' "$stage/registry.json") || return 1
-            while IFS= read -r id; do [[ -z "$id" ]] || sbd_tls_remove "$stage" certificate "$id" || return 1; done <<< "$ids"
-            return 0 ;;
-        *) _error '未知 reset 类别'; return 1 ;;
-    esac
-    content=$(python3 -I "$SBD_APP/support/policy_records.py" reset "$stage" "$category") || return 1
-    sbd_record_write "$stage/reset-bundle.json" "$content" || return 1
-    content=$(jq -c .config "$stage/reset-bundle.json") || return 1
-    sbd_record_write "$stage/config.json" "$content" || return 1
-    content=$(jq -c .registry "$stage/reset-bundle.json") || return 1
-    sbd_record_write "$stage/registry.json" "$content" || return 1
-    sbd_policy_finish "$stage" || return 1
-    if [[ "$category" = nodes ]]; then sbd_export_rebuild "$stage" || return 1; fi
-}
-
-sbd_adopt_menu() {
-    local choice area id position count tag facts node defaults name server port profile tls name_sni short trust host origin up down
-    sbd_ui_menu '接管或同步配置' '[1] 接管或同步规则、DNS 与隧道配置' '[2] 接管已有节点（单用户）' '[3] 同步已登记节点（采用当前 inbound）' '[0] 返回'
-    sbd_read_integer '请选择' 0 3 || return $?; choice="$SBD_REPLY"
-    [[ "$choice" != 0 ]] || return 2
-    [[ -f "$SBD_CONFIG" ]] || { _error '没有当前配置可接管'; return 1; }
-    if [[ "$choice" = 1 ]]; then
-        sbd_policy_pick '["route_rules","dns_rules","dns_servers","rule_sets","endpoints","connectors"]' '区域' || return $?; area="$SBD_REPLY"
-        if [[ "$area" = *_rules ]]; then
-            if [[ "$area" = route_rules ]]; then jq '.route.rules // []' "$SBD_CONFIG"; count=$(jq '.route.rules // []|length' "$SBD_CONFIG")
-            else jq '.dns.rules // []' "$SBD_CONFIG"; count=$(jq '.dns.rules // []|length' "$SBD_CONFIG"); fi || return 1
-            (( count > 0 )) || { _error '当前配置里没有可接管的规则；请先在 [8] 分流设置中添加'; return 1; }
-            sbd_entry_number_prompt '当前配置中的规则位置（1 起）' 1 "$count" || return $?; position=$((SBD_REPLY-1))
-            jq --arg area "$area" '.policy[$area] // [] | map({id,position:(.index+1)})' "$SBD_REGISTRY" || return 1
-            sbd_read_optional '协调时填已有管理 ID；新接管留空' || return $?; id="$SBD_REPLY"
-        else
-            sbd_read_required '当前配置中已有的原生 tag（不生成/改名）' || return $?; id="$SBD_REPLY"; position=-1
-        fi
-        sbd_info '只采用选定的当前配置，不用登记反向覆盖；其他已登记对象仍须通过对齐'
-        sbd_policy_confirm || return $?
-        sbd_apply sbd_policy_adopt "$area" "$id" "$position" || return 1
-    else
-        id=''; defaults='{}'
-        if [[ "$choice" = 3 ]]; then
-            sbd_entry_choose "$(jq -c .nodes "$SBD_REGISTRY")" '选择已登记节点' || return $?; id="$SBD_REPLY"
-            defaults=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || return 1
-            tag=$(jq -r .inbound_tag <<< "$defaults") || return 1
-        else sbd_read_required '当前 inbound tag' || return $?; tag="$SBD_REPLY"; fi
-        node=$(jq -ce --arg tag "$tag" '[.inbounds[]?|select(.tag==$tag)]|select(length==1)|.[0]' "$SBD_CONFIG") || { _error '实际 inbound 缺失或重复'; return 1; }
-        sbd_entry_default '显示名' "$(jq -r --arg tag "$tag" '.name // $tag' <<< "$defaults")" || return $?; name="$SBD_REPLY"
-        sbd_entry_host_prompt '客户端公网/优选地址' "$(jq -r '.client.server // empty' <<< "$defaults")" || return $?; server="$SBD_REPLY"
-        sbd_entry_number_prompt '客户端对外端口' 1 65535 "$(jq -r '.client.server_port // empty' <<< "$defaults")" || return $?; port="$SBD_REPLY"
-        facts=$(jq -n --arg name "$name" --arg server "$server" --argjson port "$port" '{name:$name,server:$server,server_port:$port}') || return 1
-        profile=$(jq -r .type <<< "$node") || return 1
-        if [[ "$(jq -r '.transport.type // empty' <<< "$node")" = ws ]]; then
-            while true; do sbd_entry_host_prompt 'CDN Host/SNI' || return $?; host="$SBD_REPLY"; [[ "$(sbd_tls_identity "$host")" = DNS:* ]] && break; _error '须填域名'; done
-            origin=$(jq -er '.listen_port' <<< "$node") || return 1
-            facts=$(jq --arg host "$host" --argjson origin "$origin" '.cdn={host:$host,origin_port:$origin}' <<< "$facts") || return 1
-        elif [[ "$(jq -r '.tls.reality.enabled // false' <<< "$node")" = true ]]; then
-            jq '.tls.reality.short_id' <<< "$node" || return 1
-            sbd_read_required '采用的 short_id' || return $?; short="$SBD_REPLY"
-            facts=$(jq --arg short "$short" '.short_id=$short' <<< "$facts") || return 1
-        elif [[ "$profile" != shadowsocks ]]; then
-            sbd_entry_host_prompt '客户端 SNI' "$(jq -r '.tls.server_name // empty' <<< "$node")" || return $?; name_sni="$SBD_REPLY"
-            sbd_policy_pick '["system","pin","certificate"]' '文件证书信任方式（provider 使用系统 CA）' || return $?; trust="$SBD_REPLY"
-            facts=$(jq --arg name "$name_sni" --arg trust "$trust" '.server_name=$name|.trust=$trust' <<< "$facts") || return 1
-            if [[ "$profile" = hysteria2 ]]; then
-                sbd_ui_options '[1] 客户端 BBR（默认）' '[2] 客户端 Hysteria CC'
-                sbd_entry_number_prompt '只补填客户端拥塞策略，不改变服务端' 1 2 1 || return $?
-                tls='{}'
-                if [[ "$SBD_REPLY" = 2 ]]; then
-                    sbd_entry_number_prompt '客户端上传 Mbps' 1 999999999 || return $?; up="$SBD_REPLY"
-                    sbd_entry_number_prompt '客户端下载 Mbps' 1 999999999 || return $?; down="$SBD_REPLY"
-                    tls=$(jq -n --argjson up "$up" --argjson down "$down" '{up_mbps:$up,down_mbps:$down}') || return 1
-                fi
-                facts=$(jq --argjson options "$tls" '.client_options=$options' <<< "$facts") || return 1
-                sbd_info '这里只采用向导的客户端带宽选项；服务端带宽/混淆采用当前 config，不修改服务端'
-            fi
-        fi
-        sbd_policy_confirm || return $?
-        sbd_apply sbd_entry_adopt "$tag" "$facts" "$id" || return 1
-    fi
-    sbd_success '已显式采用当前配置并提交管理事实/所需导出；未验证网络连通'
-    sbd_ui_pause
-}
-
-sbd_maintenance_menu() {
-    local choice category kind page
-    while true; do
-        sbd_ui_menu '脚本维护' '[1] 检查配置' '[2] 接管或同步现有配置' '[3] 清理脚本管理的配置' '[4] 恢复上次更改' '[5] 更新脚本' '[6] 卸载脚本' '[0] 返回'
-        page="$SBD_UI_PAGE"
-        sbd_read_integer '请选择' 0 6 || return 0; choice="$SBD_REPLY"
-        case "$choice" in
-            0) return 0 ;;
-            1) sbd_check_config_tidy || return 1; sbd_success 'Schema/check 通过，不代表联网验证' ;;
-            2) sbd_adopt_menu; case "$?" in 0|2) ;; *) return 1 ;; esac ;;
-            3)
-                sbd_policy_pick '["nodes","rules_dns","peers","tls"]' '选择 reset 类别' || return $?; category="$SBD_REPLY"
-                sbd_info '只删除所选类别的托管配置/登记；存活引用导致整次失败，不自动连带删，不清认证数据'
-                case "$category" in
-                    nodes) jq '.nodes|map({id,name,inbound_tag})' "$SBD_REGISTRY" ;;
-                    rules_dns) jq '.policy // {}|{route_rules,dns_rules,dns_servers,rule_sets}|map_values(. // [] | map({id,index}))' "$SBD_REGISTRY" ;;
-                    peers) jq '.policy // {}|{endpoints,connectors}|map_values(. // []|map({id}))' "$SBD_REGISTRY" ;;
-                    tls) sbd_tls_list ;;
-                esac || return 1
-                sbd_policy_confirm || return $?
-                sbd_apply sbd_reset "$category" || return 1
-                sbd_success '所选托管类别 reset 已提交，未清除外部/原生认证数据' ;;
-            4)
-                kind=$(jq -er .kind "$SBD_WORK/previous/journal.json") || { _error '没有可识别的最近恢复源'; return 1; }
-                sbd_info "将恢复最近 $kind 事务对应的完整资源组及快照记录的运行态；外部动作不会撤销"
-                sbd_policy_confirm || return $?
-                sbd_history_restore || return 1
-                sbd_success '最近资源组恢复已提交；管理器可能已更换，请重新运行 sd'
-                SBD_EXIT_MENU=true
-                return 0 ;;
-            5)
-                sbd_info '下载当前 main 的发布清单并成组更新管理器；不自动更新核心'
-                sbd_policy_confirm || return $?
-                bash "$SBD_APP/install.sh" --update --no-menu || return 1
-                sbd_success '管理器已更新，请重新运行 sd'; SBD_EXIT_MENU=true; return 0 ;;
-            6) sbd_uninstall_menu; return $? ;;
-        esac
-        sbd_ui_pause "$page"
-    done
+sbd_update_script() {
+    sbd_info '下载当前 main 的发布清单并成组更新管理器；不自动更新核心'
+    sbd_policy_confirm || return $?
+    bash "$SBD_APP/install.sh" --update --no-menu || return 1
+    sbd_success '管理器已更新，请重新运行 sd'
+    SBD_EXIT_MENU=true
 }
 
 sbd_status() {
@@ -227,10 +93,10 @@ sbd_dispatch() {
         4) sbd_entry_change_prompt delete ;;
         5) sbd_export_menu ;;
         6) sbd_outbound_add_prompt ;;
-        7) sbd_resolver_menu ;;
-        8) sbd_rules_menu ;;
+        7) sbd_policy_sync_current || sbd_info '自动同步未完成；仍可查看配置，保存更改时会重新校验'; sbd_resolver_menu ;;
+        8) sbd_policy_sync_current || sbd_info '自动同步未完成；仍可查看配置，保存更改时会重新校验'; sbd_rules_menu ;;
         9) sbd_tls_menu ;;
-        10) sbd_peers_menu ;;
+        10) sbd_policy_sync_current || sbd_info '自动同步未完成；仍可查看配置，保存更改时会重新校验'; sbd_peers_menu ;;
         11) sbd_engine_control restart ;;
         12) sbd_engine_control stop ;;
         13) sbd_status ;;
@@ -239,7 +105,7 @@ sbd_dispatch() {
         16) sbd_engine_control disable ;;
         17) sbd_check_config_tidy && sbd_success 'Schema 与核心检查通过；未验证网络连通' ;;
         18) sbd_observe_menu ;;
-        19) sbd_maintenance_menu ;;
+        19) sbd_update_script ;;
         20) sbd_engine_menu ;;
         21) sbd_uninstall_menu ;;
         *) _error '无效菜单编号'; return 1 ;;
@@ -254,14 +120,14 @@ sbd_console() {
         sbd_ui_options --compact --zero-separate '@节点管理' '[1] 添加节点' '[2] 查看节点' '[3] 修改节点' '[4] 删除节点' '[5] 节点链接' '[6] 添加出口' \
             '@网络设置' '[7] DNS 设置' '[8] 分流设置' '[9] 证书管理' '[10] 隧道管理' \
             '@服务控制' '[11] 重启服务' '[12] 停止服务' '[13] 查看状态' '[14] 查看日志' '[15] 启用自启' '[16] 关闭自启' \
-            '@配置与维护' '[17] 检查配置' '[18] 日志设置' '[19] 脚本维护' \
+            '@配置与维护' '[17] 检查配置' '[18] 日志设置' '[19] 更新脚本' \
             '@核心管理' '[20] sing-box 核心' '[21] 卸载脚本' '[0] 退出'
         page="$SBD_UI_PAGE"
         sbd_read_integer '请选择' 0 21 || return 0
         choice="$SBD_REPLY"
         [[ "$choice" != 0 ]] || return 0
         if sbd_dispatch "$choice"; then
-            # 卸载/更新/恢复会替换或删除当前入口，返回菜单已无意义。
+            # 卸载/更新会替换或删除当前入口，返回菜单已无意义。
             if [[ "${SBD_EXIT_MENU:-false}" = true ]]; then sbd_ui_pause "$page" '按回车退出…'
             else sbd_ui_pause "$page"; fi
         else

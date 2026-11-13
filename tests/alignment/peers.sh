@@ -39,10 +39,11 @@ drift_and_unmanaged() {
     t_policy_seed
     t_peer_add wireguard
     t_patch_config '.endpoints[0].mtu=1300'
+    t_run 0 sbd_check_config_tidy
+    t_assert '自动采用手工 endpoint 参数' jq -e '.policy.endpoints[0].expected.mtu==1300' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_peer_change endpoints delete wg-fixture
+    t_assert '手工改动同步后可正常删除' jq -e '(.endpoints // [])==[]' "$SBD_CONFIG"
     t_entry_save
-    t_run 1 sbd_apply sbd_peer_change endpoints delete wg-fixture
-    t_contains "$CASE_TMP/output" '漂移'
-    t_entry_unchanged
     t_run 1 sbd_apply sbd_peer_change connectors delete user-connector
     t_entry_unchanged
 }
@@ -74,7 +75,7 @@ warp_menu() {
 t_case 'endpoint 原生入口/出口关联和删除保护' endpoint_routes
 t_case 'selector 出站组引用 endpoint 不得悬空' group_reference
 t_case 'WireGuard JSON 修改和无效密钥失败保留旧事实' wireguard_update
-t_case 'endpoint 漂移拒绝覆盖，自定义对象不自动接管' drift_and_unmanaged
+t_case 'endpoint 手动修改自动同步，缺失对象拒绝操作' drift_and_unmanaged
 t_case 'endpoint 服务激活失败不假报成功' activation_failure
 t_case '首次配置自动获取 WARP、固定参数与秘密不回显' warp_menu
 t_finish

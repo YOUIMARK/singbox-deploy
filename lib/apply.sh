@@ -318,7 +318,7 @@ sbd_apply_locked() {
     revision=$(sbd_integer "$revision" 0 999999998) || { _error '旧修订号无效'; sbd_work_remove "$dir"; return 1; }
     # 提前登记恢复源，使候选使用的独立材料也能在中断后回收；活跃配置尚未改变。
     sbd_snapshot "$dir" "$runtime" || { _error '快照失败，未替换活跃事实；保留现场'; return 1; }
-    if ! ( "$callback" "$stage" "$@" ) || ! sbd_records_check "$stage" || ! sbd_prepare_config "$stage"; then
+    if ! ( sbd_policy_reconcile "$stage" && "$callback" "$stage" "$@" ) || ! sbd_records_check "$stage" || ! sbd_prepare_config "$stage"; then
         _error '候选生成或校验失败，活跃事实未变更'
         sbd_material_cleanup "$dir/journal.json" created_materials || return 1
         sbd_work_remove "$dir"
