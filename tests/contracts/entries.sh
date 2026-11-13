@@ -26,6 +26,10 @@ field_contract() {
     t_assert '同名节点按稳定 ID 选择' test "$SBD_REPLY" = node.second
     t_contains "$CASE_TMP/prompt" node.first
     t_contains "$CASE_TMP/prompt" node.second
+    ports_json=$(sbd_entry_hy2_ports '11，13、15-17；3050' | jq -c .) || exit 1
+    t_assert '端口范围兼容中文逗号/顿号/分号' test "$ports_json" = '["11:11","13:13","15:17","3050:3050"]'
+    t_run 1 sbd_entry_hy2_ports '20000-20100-30000'
+    t_run 1 sbd_entry_hy2_ports '0-65536'
 }
 anytls_contract() {
     t_seed
@@ -67,11 +71,13 @@ hy2_management() {
     local id tag
     id="$NODE_ID"
     tag=$(jq -r --arg id "$id" '.nodes[]|select(.id==$id)|.inbound_tag' "$SBD_REGISTRY")
-    t_run 2 sbd_entry_change_prompt edit <<< $'2\n5\n1\n20000\n20100\n30\ny\n0\n'
+    t_run 2 sbd_entry_change_prompt edit <<< $'2\n5\n1\nabc\n20000-20100\n30\ny\n0\n'
     t_absent "$CASE_TMP/output" '[5] Hysteria2 管理'
     t_contains "$CASE_TMP/output" 'Hysteria2 节点管理'
     t_contains "$CASE_TMP/output" '[5] 客户端端口跳跃'
     t_contains "$CASE_TMP/output" 'sing-box inbound 仍监听单端口'
+    t_contains "$CASE_TMP/output" '端口范围格式'
+    t_contains "$CASE_TMP/output" '端口范围须为 3050、20000-50000 或 11,13,15-17 这类组合'
     t_contains "$CASE_TMP/output" '[6] 客户端上/下行带宽'
     t_contains "$CASE_TMP/output" '[7] 服务端上/下行带宽'
     t_contains "$CASE_TMP/output" '[8] Salamander/Gecko 混淆'
@@ -91,6 +97,10 @@ hy2_management() {
     t_run 0 sbd_apply sbd_entry_change "$id" hy2_obfs null
     t_assert '服务端混淆已清除' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|has("obfs")|not' "$SBD_CONFIG"
     t_assert '客户端混淆已清除' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|has("obfs")|not' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":["20000:20100","3050:3050"],"hop_interval":"30s"}'
+    t_assert '多段混合跳跃范围按序保存' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|.server_ports==["20000:20100","3050:3050"]' "$SBD_REGISTRY"
+    t_run 0 t_entry_uri hysteria2
+    t_run 1 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":["20000:20100","bad"],"hop_interval":"30s"}'
     t_run 0 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":[],"hop_interval":""}'
     t_assert '关闭端口跳跃清除导出和 URI 参数' jq -e --arg id "$id" '(.nodes[]|select(.id==$id)|.client|has("server_ports") or has("hop_interval"))|not' "$SBD_REGISTRY"
     t_run 0 t_entry_uri hysteria2
