@@ -62,6 +62,11 @@ hy2_custom() {
 create_prompt_contract() {
     t_seed
     t_run 0 sbd_entry_create_prompt <<< $'2\n127.0.0.1\n019501\nexample.com\n菜单节点\nfixture-password\n3\nnode.example.com\n2\ny'
+    t_contains "$CASE_TMP/output" '[1] Hysteria2'
+    t_contains "$CASE_TMP/output" '[3] AnyReality'
+    t_absent "$CASE_TMP/output" '（UDP）'
+    t_absent "$CASE_TMP/output" '（TCP）'
+    t_absent "$CASE_TMP/output" '（AnyTLS + Reality'
     t_contains "$CASE_TMP/output" "[成功] 节点与客户端资料已提交: $SBD_EXPORTS"
     t_contains "$CASE_TMP/output" '分享链接: anytls://'
     t_contains "$CASE_TMP/output" "分享链接: $(cat "$SBD_EXPORTS/$SBD_NEW_ENTRY_ID.txt")"

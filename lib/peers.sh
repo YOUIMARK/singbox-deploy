@@ -167,10 +167,51 @@ sbd_peer_wireguard_prompt() {
     SBD_PEER_VALUE="$value"
 }
 
+sbd_peer_cloudflare_token_from_input() {
+    local input="$1" word previous='' seen_cloudflared=0 i candidate=''
+    local -a words=()
+    input=${input//$'\r'/ }
+    input=${input//\&\&/ }
+    input=${input//;/ }
+    read -r -a words <<< "$input" || true
+    for ((i=0; i<${#words[@]}; i++)); do
+        word="${words[i]}"
+        word=${word#\"}; word=${word%\"}; word=${word#\'}; word=${word%\'}
+        if [[ "$word" == *cloudflared* ]]; then seen_cloudflared=1; fi
+        if [[ "$word" = --token ]]; then
+            (( i + 1 < ${#words[@]} )) || return 1
+            candidate="${words[i+1]}"
+            candidate=${candidate#\"}; candidate=${candidate%\"}; candidate=${candidate#\'}; candidate=${candidate%\'}
+            break
+        elif [[ "$word" = --token=* ]]; then
+            candidate=${word#--token=}
+            candidate=${candidate#\"}; candidate=${candidate%\"}; candidate=${candidate#\'}; candidate=${candidate%\'}
+            break
+        elif [[ "$seen_cloudflared" = 1 && "$word" = install && "$previous" = service ]]; then
+            (( i + 1 < ${#words[@]} )) || return 1
+            candidate="${words[i+1]}"
+            candidate=${candidate#\"}; candidate=${candidate%\"}; candidate=${candidate#\'}; candidate=${candidate%\'}
+            break
+        fi
+        previous="$word"
+    done
+    if [[ -z "$candidate" && ${#words[@]} -eq 1 ]]; then
+        candidate="${words[0]}"
+        candidate=${candidate#\"}; candidate=${candidate%\"}; candidate=${candidate#\'}; candidate=${candidate%\'}
+    fi
+    [[ -n "$candidate" ]] || return 1
+    SBD_REPLY="$candidate"
+}
+
 sbd_peer_token_prompt() {
-    local value config
+    local value config input
     while true; do
-        sbd_read_secret 'Cloudflare Tunnel token（只填 token，不填安装命令）' || return $?; value="$SBD_REPLY"
+        sbd_read_secret 'Cloudflare Tunnel token 或 cloudflared 命令（不回显）' || return $?; input="$SBD_REPLY"
+        if ! sbd_peer_cloudflare_token_from_input "$input"; then
+            _error '未识别到 token；请粘贴裸 token，或包含 --token / service install token 的命令'
+            continue
+        fi
+        value="$SBD_REPLY"
         config=$(jq -n --rawfile token <(printf '%s' "$value") '{inbounds:[{type:"cloudflared",tag:"token-probe",token:$token,protocol:"quic"}],outbounds:[{type:"direct",tag:"direct"}],route:{final:"direct"}}') || return 1
         if "$SBD_BINARY" check -c /dev/stdin -D "$SBD_ROOT" <<< "$config" >/dev/null 2>&1; then SBD_REPLY="$value"; return 0; fi
         _error '核心拒绝此 token，请重新填写；未连接 Cloudflare 验证凭据'
