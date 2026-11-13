@@ -84,6 +84,18 @@ create_prompt_contract() {
     t_run 0 sbd_entries_list
     t_absent "$CASE_TMP/output" fixture-password
 }
+custom_certificate_prompt_contract() {
+    t_seed
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 -subj /CN=custom.example.com \
+        -addext subjectAltName=DNS:custom.example.com -keyout "$CASE_TMP/custom-key.pem" -out "$CASE_TMP/custom-cert.pem" >/dev/null 2>&1 || exit 1
+    t_run 0 sbd_entry_create_prompt <<< $'2\n127.0.0.1\n019502\ncustom.example.com\n自定义证书节点\nfixture-password\n4\ncustom.example.com\n'"$CASE_TMP/custom-cert.pem"$'\n'"$CASE_TMP/custom-key.pem"$'\n1\ny'
+    t_contains "$CASE_TMP/output" '[4] 自定义证书'
+    t_assert '向导导入自定义证书并登记来源' jq -e '.tls.certificates|length==1 and .[0].kind=="import" and .[0].server_name=="custom.example.com"' "$SBD_REGISTRY"
+    t_assert '导入证书与私钥位于受管副本' jq -e --arg root "$SBD_CERT_DIR" '.tls.certificates[0] as $cert | ($cert.certificate_path|startswith($root)) and ($cert.key_path|startswith($root))' "$SBD_REGISTRY"
+    t_assert '客户端选择系统 CA 信任且节点来源已关联' jq -e '.nodes[0]|.tls_source.kind=="certificate" and .tls_source.trust=="system" and .certificate_id==.tls_source.id' "$SBD_REGISTRY"
+    t_assert '手动申请的源文件保持不变' test -f "$CASE_TMP/custom-cert.pem" -a -f "$CASE_TMP/custom-key.pem"
+    t_absent "$CASE_TMP/output" 'BEGIN PRIVATE KEY'
+}
 empty_list_contract() {
     t_fresh
     t_run 0 sbd_dispatch 2
@@ -119,6 +131,7 @@ t_case 'AnyReality 真实密钥与原生客户端/服务端' reality_contract
 t_case 'Hysteria2 默认 BBR 和证书指纹 URI' hy2_default
 t_case 'Hysteria2 两侧带宽与 Gecko 自定义 URI 扩展' hy2_custom
 t_case '精简向导真实创建、自动分享、JSON 交付和 EOF 语义' create_prompt_contract
+t_case '添加节点时导入自定义 PEM 证书并选择客户端信任' custom_certificate_prompt_contract
 t_case '编辑自身时监听地址重叠不误判冲突，其他入口仍判冲突' listen_overlap_contract
 t_case '首页空列表明确提示、坏登记不冒充没有节点' empty_list_contract
 t_finish

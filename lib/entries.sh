@@ -166,7 +166,7 @@ raise SystemExit(0 if valid else 1)
 }
 
 sbd_entry_tls() {
-    local stage="$1" source="$2" kind id name trust cert sha private public short content provider pin
+    local stage="$1" source="$2" kind id name trust cert key sha private public short content provider pin
     sbd_record_write "$stage/tls-source.json" "$source" || return 1
     kind=$(sbd_entry_text "$stage/tls-source.json" .kind TLS来源) || return 1
     case "$kind" in
@@ -175,6 +175,15 @@ sbd_entry_tls() {
             sbd_tls_material_add "$stage" self_signed "$name" || return 1
             id=$(jq -er '.tls.certificates[-1].id' "$stage/registry.json") || return 1
             trust=$(jq -r '.trust // "pin"' "$stage/tls-source.json") || return 1
+            source=$(jq -n --arg id "$id" --arg trust "$trust" '{kind:"certificate",id:$id,trust:$trust}') || return 1
+            ;;
+        custom_certificate)
+            name=$(sbd_entry_text "$stage/tls-source.json" .server_name 证书名称) || return 1
+            cert=$(sbd_entry_text "$stage/tls-source.json" .certificate_path 证书路径) || return 1
+            key=$(sbd_entry_text "$stage/tls-source.json" .key_path 私钥路径) || return 1
+            sbd_tls_material_add "$stage" import "$name" "$cert" "$key" || return 1
+            id=$(jq -er '.tls.certificates[-1].id' "$stage/registry.json") || return 1
+            trust=$(jq -r '.trust // "system"' "$stage/tls-source.json") || return 1
             source=$(jq -n --arg id "$id" --arg trust "$trust" '{kind:"certificate",id:$id,trust:$trust}') || return 1
             ;;
         certificate|provider) ;;
@@ -743,14 +752,14 @@ sbd_entry_choose() {
 }
 
 sbd_entry_tls_prompt() {
-    local profile="$1" server="$2" choice id name trust values kind default
+    local profile="$1" server="$2" choice id name trust values kind default cert key
     if [[ "$profile" = anyreality || "$profile" = vless_reality ]]; then
         sbd_entry_host_prompt '伪装域名' www.amd.com || return $?; name="$SBD_REPLY"
         SBD_TLS_REQUEST=$(jq -n --arg name "$name" '{kind:"reality",server_name:$name,handshake:{server:$name,server_port:443}}') || return 1
         return 0
     fi
-    sbd_ui_options '[1] 已有共享 ACME provider' '[2] 已登记 PEM 证书' '[3] 新建 P-256 自签证书'
-    sbd_read_integer 'TLS 来源' 1 3 || return $?; choice="$SBD_REPLY"
+    sbd_ui_options '[1] 已有共享 ACME provider' '[2] 已登记 PEM 证书' '[3] 新建 P-256 自签证书' '[4] 自定义证书'
+    sbd_read_integer 'TLS 来源' 1 4 || return $?; choice="$SBD_REPLY"
     case "$choice" in
         1)
             [[ -f "$SBD_CONFIG" ]] || { _error '请先在 TLS 菜单创建 provider'; return 1; }
@@ -770,6 +779,11 @@ sbd_entry_tls_prompt() {
         3)
             sbd_entry_host_prompt '自签 SAN 名称或 IP' "$server" || return $?; name="$SBD_REPLY"
             kind=self_signed ;;
+        4)
+            sbd_entry_host_prompt '证书 SAN 名称或 IP' "$server" || return $?; name="$SBD_REPLY"
+            sbd_read_required '证书 PEM 绝对路径' || return $?; cert="$SBD_REPLY"
+            sbd_read_required '私钥 PEM 绝对路径' || return $?; key="$SBD_REPLY"
+            kind=custom_certificate ;;
     esac
     default=1; [[ "$kind" != self_signed ]] || default=2
     sbd_ui_options '[1] 系统 CA（自签不可用）' '[2] 公钥 pin' '[3] 携带证书信任'
@@ -781,6 +795,9 @@ sbd_entry_tls_prompt() {
     case "$SBD_REPLY" in 1) trust=system ;; 2) trust=pin ;; 3) trust=certificate ;; esac
     if [[ "$choice" = 3 ]]; then
         SBD_TLS_REQUEST=$(jq -n --arg name "$name" --arg trust "$trust" '{kind:"self_signed",server_name:$name,trust:$trust}') || return 1
+    elif [[ "$choice" = 4 ]]; then
+        SBD_TLS_REQUEST=$(jq -n --arg name "$name" --arg cert "$cert" --arg key "$key" --arg trust "$trust" \
+            '{kind:"custom_certificate",server_name:$name,certificate_path:$cert,key_path:$key,trust:$trust}') || return 1
     else
         SBD_TLS_REQUEST=$(jq -n --arg id "$id" --arg trust "$trust" '{kind:"certificate",id:$id,trust:$trust}') || return 1
     fi
