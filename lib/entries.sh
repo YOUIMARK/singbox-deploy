@@ -993,9 +993,11 @@ sbd_entry_hy2_ports() {
 import json, sys
 raw = sys.stdin.read().replace("，", ",").replace("、", ",").replace("；", ",")
 ports = []
-for token in ("".join(part.split()) for part in raw.split(",")):
+for token in (part.strip() for part in raw.split(",")):
     if not token:
         continue
+    if any(c.isspace() for c in token):
+        raise SystemExit(1)
     low, sep, high = token.partition("-")
     if not sep:
         high = low
@@ -1008,7 +1010,7 @@ for token in ("".join(part.split()) for part in raw.split(",")):
 if not ports:
     raise SystemExit(1)
 print(json.dumps(ports))
-' || { _error '端口范围须为 3050、20000-50000 或 11,13,15-17 这类组合'; return 1; }
+' || { _error '端口范围须为 3050、20000-50000 或 11,13,15-17 这类组合，且不含空格'; return 1; }
 }
 
 sbd_entry_hy2_manage_prompt() {

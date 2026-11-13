@@ -28,6 +28,9 @@ field_contract() {
     t_contains "$CASE_TMP/prompt" node.second
     ports_json=$(sbd_entry_hy2_ports '11，13、15-17；3050' | jq -c .) || exit 1
     t_assert '端口范围兼容中文逗号/顿号/分号' test "$ports_json" = '["11:11","13:13","15:17","3050:3050"]'
+    ports_json=$(sbd_entry_hy2_ports '3050, 3051' | jq -c .) || exit 1
+    t_assert '端口范围容忍逗号后空格' test "$ports_json" = '["3050:3050","3051:3051"]'
+    t_run 1 sbd_entry_hy2_ports '11 13'
     t_run 1 sbd_entry_hy2_ports '20000-20100-30000'
     t_run 1 sbd_entry_hy2_ports '0-65536'
 }
