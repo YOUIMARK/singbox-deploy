@@ -29,7 +29,6 @@ sbd_policy_edit() {
 
 sbd_policy_adopt() {
     local stage="$1" area="$2" id="$3" position="${4:--1}" request old=''
-    sbd_policy_begin "$stage" || return 1
     case "$area" in route_rules|dns_rules|dns_servers|rule_sets|endpoints|connectors) ;; *) _error '未知接管区域'; return 1 ;; esac
     if [[ "$area" = *_rules && -z "$id" ]]; then id=$(openssl rand -hex 8) || return 1; id="rule.$id"; fi
     sbd_tls_tag "$id" || return 1

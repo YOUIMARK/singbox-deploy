@@ -96,6 +96,11 @@ sbd_check_config_tidy_locked() {
     if ! cp -- "$SBD_CONFIG" "$stage/config.json"; then
         _error '配置暂存失败'
         rc=1
+    elif ! cp -- "$SBD_REGISTRY" "$stage/registry.json"; then
+        _error '策略登记暂存失败'
+        rc=1
+    elif ! sbd_policy_begin "$stage"; then
+        rc=1
     elif ! sbd_prepare_config "$stage"; then
         _error '配置整理校验失败'
         rc=1
