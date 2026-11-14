@@ -86,6 +86,7 @@ hy2_management() {
     t_contains "$CASE_TMP/output" '[6] 客户端上/下行带宽'
     t_contains "$CASE_TMP/output" '[7] 服务端上/下行带宽'
     t_contains "$CASE_TMP/output" '[8] Salamander/Gecko 混淆'
+    t_contains "$CASE_TMP/output" '[10] HTTP/3 伪装 masquerade'
     t_assert '编辑菜单配置客户端跳跃端口' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|(.server_ports==["20000:20100"] and (has("hop_interval")|not))' "$SBD_REGISTRY"
     t_assert 'sing-box 原生客户端导出仅携带跳跃范围' jq -e '.outbounds[0]|(.server_ports=="20000:20100" and (has("hop_interval")|not))' "$SBD_EXPORTS/$id.json"
     t_run 0 t_entry_uri hysteria2
@@ -114,6 +115,29 @@ hy2_management() {
     t_assert '关闭端口跳跃清除导出和 URI 参数' jq -e --arg id "$id" '(.nodes[]|select(.id==$id)|.client|has("server_ports") or has("hop_interval"))|not' "$SBD_REGISTRY"
     t_run 0 t_entry_uri hysteria2
     t_run 1 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":["20100:20000"]}'
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_masquerade '{"type":"proxy","url":"https://www.amd.com/","rewrite_host":true}'
+    t_assert '反向代理伪装写入 inbound' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.masquerade=={type:"proxy",url:"https://www.amd.com/",rewrite_host:true}' "$SBD_CONFIG"
+    node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || exit 1
+    SBD_HY2_VIEW=false
+    sbd_entry_hy2_manage_prompt "$node" 5 > "$CASE_TMP/masquerade-view" 2>&1 <<< $'1' || exit 1
+    t_contains "$CASE_TMP/masquerade-view" '当前伪装: proxy → https://www.amd.com/（重写 Host）'
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_masquerade '{"type":"string","status_code":200,"content":"welcome"}'
+    t_assert '字符串伪装写入 inbound' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.masquerade=={type:"string",status_code:200,content:"welcome"}' "$SBD_CONFIG"
+    node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || exit 1
+    SBD_HY2_VIEW=false
+    sbd_entry_hy2_manage_prompt "$node" 5 > "$CASE_TMP/masquerade-view" 2>&1 <<< $'1' || exit 1
+    t_contains "$CASE_TMP/masquerade-view" '当前伪装: string → HTTP 200：welcome'
+    t_run 1 sbd_apply sbd_entry_change "$id" hy2_masquerade '{"type":"proxy","url":"ftp://www.amd.com/"}'
+    t_run 1 sbd_apply sbd_entry_change "$id" hy2_masquerade '{"type":"string","content":""}'
+    t_run 1 sbd_apply sbd_entry_change "$id" hy2_masquerade '{"type":"bogus","content":"welcome"}'
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_masquerade null
+    t_assert '关闭伪装清除 inbound' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|has("masquerade")|not' "$SBD_CONFIG"
+    node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || exit 1
+    SBD_HY2_VIEW=false
+    sbd_entry_hy2_manage_prompt "$node" 5 > "$CASE_TMP/masquerade-view" 2>&1 <<< $'1' || exit 1
+    t_contains "$CASE_TMP/masquerade-view" '当前伪装: 未启用'
+    t_run 2 sbd_entry_change_prompt edit <<< $'2\n10\n1\n\n0\n'
+    t_contains "$CASE_TMP/output" '当前伪装: 未启用'
     t_run 0 sbd_check_config
 }
 hy2_paired_bandwidth() {
