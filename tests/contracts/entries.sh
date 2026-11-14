@@ -197,7 +197,8 @@ custom_certificate_prompt_contract() {
     t_run 0 sbd_entry_create_prompt <<< $'2\n127.0.0.1\n019502\ncustom.example.com\n自定义证书节点\nfixture-password\n4\ncustom.example.com\n'"$CASE_TMP/custom-cert.pem"$'\n'"$CASE_TMP/custom-key.pem"$'\n1\ny'
     t_contains "$CASE_TMP/output" '[4] 自定义证书'
     t_assert '向导导入自定义证书并登记来源' jq -e '.tls.certificates|length==1 and .[0].kind=="import" and .[0].server_name=="custom.example.com"' "$SBD_REGISTRY"
-    t_assert '导入证书与私钥位于受管副本' jq -e --arg root "$SBD_CERT_DIR" '.tls.certificates[0] as $cert | ($cert.certificate_path|startswith($root)) and ($cert.key_path|startswith($root))' "$SBD_REGISTRY"
+    t_assert '导入证书直接引用外部路径且不登记受管目录' jq -e --arg cert "$CASE_TMP/custom-cert.pem" --arg key "$CASE_TMP/custom-key.pem" '.tls.certificates[0] | .certificate_path==$cert and .key_path==$key and .directory==""' "$SBD_REGISTRY"
+    t_assert '导入证书不创建受管材料目录' test -z "$(find "$SBD_CERT_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)"
     t_assert '客户端选择系统 CA 信任且节点来源已关联' jq -e '.nodes[0]|.tls_source.kind=="certificate" and .tls_source.trust=="system" and .certificate_id==.tls_source.id' "$SBD_REGISTRY"
     t_assert '手动申请的源文件保持不变' test -f "$CASE_TMP/custom-cert.pem" -a -f "$CASE_TMP/custom-key.pem"
     t_absent "$CASE_TMP/output" 'BEGIN PRIVATE KEY'
