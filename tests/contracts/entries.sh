@@ -71,10 +71,12 @@ hy2_management() {
     t_seed
     t_entry_add vmess_ws
     t_entry_add hysteria2
-    local id tag
+    local id tag node
     id="$NODE_ID"
     tag=$(jq -r --arg id "$id" '.nodes[]|select(.id==$id)|.inbound_tag' "$SBD_REGISTRY")
-    t_run 2 sbd_entry_change_prompt edit <<< $'2\n5\n1\nabc\n20000-20100\n30\ny\n0\n'
+    t_run 2 sbd_entry_change_prompt edit <<< $'2\n5\n1\n\n0\n'
+    t_contains "$CASE_TMP/output" '当前端口范围: 未启用'
+    t_run 2 sbd_entry_change_prompt edit <<< $'2\n5\n2\nabc\n20000-20100\ny\n0\n'
     t_absent "$CASE_TMP/output" '[5] Hysteria2 管理'
     t_contains "$CASE_TMP/output" 'Hysteria2 节点管理'
     t_contains "$CASE_TMP/output" '[5] 客户端端口跳跃'
@@ -84,8 +86,8 @@ hy2_management() {
     t_contains "$CASE_TMP/output" '[6] 客户端上/下行带宽'
     t_contains "$CASE_TMP/output" '[7] 服务端上/下行带宽'
     t_contains "$CASE_TMP/output" '[8] Salamander/Gecko 混淆'
-    t_assert '编辑菜单配置客户端跳跃端口和间隔' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|.server_ports==["20000:20100"] and .hop_interval=="30s"' "$SBD_REGISTRY"
-    t_assert 'sing-box 原生客户端导出携带跳跃配置' jq -e '.outbounds[0]|.server_ports=="20000:20100" and .hop_interval=="30s"' "$SBD_EXPORTS/$id.json"
+    t_assert '编辑菜单配置客户端跳跃端口' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|(.server_ports==["20000:20100"] and (has("hop_interval")|not))' "$SBD_REGISTRY"
+    t_assert 'sing-box 原生客户端导出仅携带跳跃范围' jq -e '.outbounds[0]|(.server_ports=="20000:20100" and (has("hop_interval")|not))' "$SBD_EXPORTS/$id.json"
     t_run 0 t_entry_uri hysteria2
     t_run 0 t_classic_uri
     t_run 0 sbd_apply sbd_entry_change "$id" hy2_client_bandwidth '{"up_mbps":8,"down_mbps":40}'
@@ -100,14 +102,18 @@ hy2_management() {
     t_run 0 sbd_apply sbd_entry_change "$id" hy2_obfs null
     t_assert '服务端混淆已清除' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|has("obfs")|not' "$SBD_CONFIG"
     t_assert '客户端混淆已清除' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|has("obfs")|not' "$SBD_REGISTRY"
-    t_run 0 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":["20000:20100","3050:3050"],"hop_interval":"30s"}'
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":["20000:20100","3050:3050"]}'
     t_assert '多段混合跳跃范围按序保存' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|.server_ports==["20000:20100","3050:3050"]' "$SBD_REGISTRY"
+    node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || exit 1
+    SBD_HY2_VIEW=false
+    sbd_entry_hy2_manage_prompt "$node" 1 > "$CASE_TMP/hops-view" 2>&1 <<< $'1' || exit 1
+    t_contains "$CASE_TMP/hops-view" '当前端口范围: 20000-20100,3050'
     t_run 0 t_entry_uri hysteria2
-    t_run 1 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":["20000:20100","bad"],"hop_interval":"30s"}'
-    t_run 0 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":[],"hop_interval":""}'
+    t_run 1 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":["20000:20100","bad"]}'
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":[]}'
     t_assert '关闭端口跳跃清除导出和 URI 参数' jq -e --arg id "$id" '(.nodes[]|select(.id==$id)|.client|has("server_ports") or has("hop_interval"))|not' "$SBD_REGISTRY"
     t_run 0 t_entry_uri hysteria2
-    t_run 1 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":["20100:20000"],"hop_interval":"30s"}'
+    t_run 1 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":["20100:20000"]}'
     t_run 0 sbd_check_config
 }
 hy2_paired_bandwidth() {

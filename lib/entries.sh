@@ -572,13 +572,12 @@ sbd_entry_change() {
         hy2_hops)
             [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
             jq -e '.server_ports as $ports | ($ports|type=="array") and
-                (if ($ports|length)==0 then .hop_interval=="" else
+                (if ($ports|length)==0 then true else
                     ($ports|length)>=1 and (all($ports[]; test("^[0-9]{1,5}:[0-9]{1,5}$"))) and
-                    (all($ports[]; ((split(":")|map(tonumber)) as $range | $range[0]>=1 and $range[0]<=$range[1] and $range[1]<=65535))) and
-                    (.hop_interval|test("^[1-9][0-9]{0,3}s$")) and (.hop_interval|sub("s$";"")|tonumber)<=3600
+                    (all($ports[]; ((split(":")|map(tonumber)) as $range | $range[0]>=1 and $range[0]<=$range[1] and $range[1]<=65535)))
                 end)' <<< "$value" >/dev/null || { _error 'Hysteria2 端口跳跃参数无效'; return 1; }
             content=$(jq --argjson value "$value" '.client |= (del(.server_ports,.hop_interval) +
-                (if ($value.server_ports|length)>0 then {server_ports:$value.server_ports,hop_interval:$value.hop_interval} else {} end))' "$stage/entry-node.json") || return 1 ;;
+                (if ($value.server_ports|length)>0 then {server_ports:$value.server_ports} else {} end))' "$stage/entry-node.json") || return 1 ;;
         hy2_client_bandwidth)
             [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
             jq -e 'if length==0 then true else (.up_mbps|type=="number" and floor==. and .>=1 and .<=999999999) and (.down_mbps|type=="number" and floor==. and .>=1 and .<=999999999) end' <<< "$value" >/dev/null || { _error 'Hysteria2 客户端带宽无效'; return 1; }
@@ -1013,20 +1012,37 @@ print(json.dumps(ports))
 ' || { _error '端口范围须为 3050、20000-50000 或 11,13,15-17 这类组合，且不含空格'; return 1; }
 }
 
+sbd_entry_hy2_hops_text() {
+    jq -r '(.client.server_ports // []) | map(split(":") | (if .[0] == .[1] then .[0] else join("-") end)) | join(",")' <<< "$1"
+}
+
+sbd_entry_hy2_hops_show() {
+    local ports
+    ports=$(sbd_entry_hy2_hops_text "$1") || return 1
+    sbd_info "当前端口范围: ${ports:-未启用}"
+}
+
 sbd_entry_hy2_manage_prompt() {
-    local node="$1" choice="$2" up down password low high maximum current ports interval tag paired
+    local node="$1" choice="$2" up down password low high maximum current ports tag paired
     case "$choice" in
         1)
-            sbd_ui_options '[1] 设置端口范围' '[2] 关闭端口跳跃'
-            sbd_read_integer '端口跳跃操作' 1 2 || return $?; choice="$SBD_REPLY"
-            if [[ "$choice" = 2 ]]; then
+            sbd_ui_options '[1] 查看当前配置' '[2] 设置端口范围' '[3] 关闭端口跳跃'
+            sbd_read_integer '端口跳跃操作' 1 3 || return $?; choice="$SBD_REPLY"
+            if [[ "$choice" = 1 ]]; then
+                sbd_entry_hy2_hops_show "$node" || return $?
+                SBD_HY2_ACTION=''
+                SBD_HY2_REQUEST=''
+                SBD_HY2_VIEW=true
+                return 0
+            fi
+            if [[ "$choice" = 3 ]]; then
                 SBD_HY2_ACTION=hy2_hops
-                SBD_HY2_REQUEST='{"server_ports":[],"hop_interval":""}'
+                SBD_HY2_REQUEST='{"server_ports":[]}'
                 return 0
             fi
             sbd_info 'sing-box inbound 仍监听单端口；请确保服务器将此 UDP 范围转发到节点监听端口，否则端口跳跃无法连接'
             sbd_info '端口范围格式: 单个端口 3050；连续范围 20000-50000；混合(逗号分隔) 11,13,15-17'
-            current=$(jq -r '(.client.server_ports // []) | map(split(":") | (if .[0] == .[1] then .[0] else join("-") end)) | join(",")' <<< "$node") || return 1
+            current=$(sbd_entry_hy2_hops_text "$node") || return 1
             while true; do
                 if [[ -n "$current" ]]; then
                     sbd_entry_default '端口范围' "$current" || return $?
@@ -1036,9 +1052,8 @@ sbd_entry_hy2_manage_prompt() {
                 fi
                 if ports=$(sbd_entry_hy2_ports "$SBD_REPLY"); then break; fi
             done
-            sbd_entry_number_prompt '端口跳跃间隔（秒）' 1 3600 "$(jq -r '(.client.hop_interval // "30s") | sub("s$"; "")' <<< "$node")" || return $?; interval="$SBD_REPLY"
             SBD_HY2_ACTION=hy2_hops
-            SBD_HY2_REQUEST=$(jq -n --argjson ports "$ports" --arg interval "${interval}s" '{server_ports:$ports,hop_interval:$interval}') || return 1
+            SBD_HY2_REQUEST=$(jq -n --argjson ports "$ports" '{server_ports:$ports}') || return 1
             ;;
         2)
             tag=$(jq -r '.inbound_tag' <<< "$node") || return 1
@@ -1212,7 +1227,13 @@ sbd_entry_change_prompt() {
         5)
             [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
             if [[ "$mode" = edit ]]; then
-                sbd_entry_hy2_manage_prompt "$node" 1 || return $?; action="$SBD_HY2_ACTION"; value="$SBD_HY2_REQUEST"
+                SBD_HY2_VIEW=false
+                sbd_entry_hy2_manage_prompt "$node" 1 || return $?
+                if [[ "$SBD_HY2_VIEW" = true ]]; then
+                    sbd_ui_pause
+                    continue
+                fi
+                action="$SBD_HY2_ACTION"; value="$SBD_HY2_REQUEST"
             else
                 action=tls; sbd_entry_tls_prompt "$profile" "$(jq -r '.client.server' <<< "$node")" || return $?; value="$SBD_TLS_REQUEST"
             fi ;;
