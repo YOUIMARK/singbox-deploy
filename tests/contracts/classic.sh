@@ -34,6 +34,7 @@ ws_contract() {
         t_assert 'CDN 源站使用早期数据头且没有 TLS、max_early_data 和 Host 伪字段' jq -e '.inbounds[0]|(has("tls")|not) and .transport.type=="ws" and .transport.early_data_header_name=="Sec-WebSocket-Protocol" and (.transport|has("max_early_data")|not) and (.transport|has("headers")|not)' "$SBD_CONFIG"
         t_assert '不生成无用证书材料' test -z "$(find "$SBD_CERT_DIR" -mindepth 1 -maxdepth 1 -print -quit)"
         t_assert '优选地址、前端和回源事实独立' jq -e '.nodes[0]|.client.server=="2001:db8::10" and .client.server_port==443 and .ingress.origin_port!=443 and .ingress.host=="cdn.example.com"' "$SBD_REGISTRY"
+        t_assert 'WS 客户端显式启用 uTLS chrome' jq -e '.nodes[0].client.tls.utls | .enabled==true and .fingerprint=="chrome"' "$SBD_REGISTRY"
         t_assert 'VMess AEAD 或 VLESS 无 flow 均为原生字段' jq -e '.inbounds[0]|if .type=="vmess" then (.users[0].alterId // 0)==0 else (.users[0]|has("flow")|not) end' "$SBD_CONFIG"
         t_assert 'native JSON 不混入 URI encryption 字段' jq -e '.outbounds[0]|has("encryption")|not' "$SBD_EXPORTS/$NODE_ID.json"
         t_run 0 sbd_apply sbd_entry_change "$NODE_ID" delete ''

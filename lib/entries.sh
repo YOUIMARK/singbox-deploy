@@ -412,7 +412,7 @@ sbd_entry_create_classic() {
            (if $profile=="shadowsocks" then {method:$method,password:$credential} + (if $network!="both" then {network:$network} else {} end)
             else {uuid:$credential} +
              (if $profile=="vless_reality" then {flow:"xtls-rprx-vision",tls:$tls[0]}
-              else {tls:{enabled:true,server_name:$cdn.host},transport:{type:"ws",path:$cdn.path,headers:{Host:$cdn.host}}} +
+              else {tls:{enabled:true,server_name:$cdn.host,utls:{enabled:true,fingerprint:"chrome"}},transport:{type:"ws",path:$cdn.path,headers:{Host:$cdn.host}}} +
                 (if $profile=="vmess_ws" then {security:"auto",alter_id:0} else {} end) end) end))} +
         (if $profile=="vmess_ws" or $profile=="vless_ws" then {ingress:{type:"cdn",host:$cdn.host,origin_port:$cdn.origin_port}} else {} end)') || return 1
     sbd_record_write "$stage/entry-node.json" "$content" || return 1

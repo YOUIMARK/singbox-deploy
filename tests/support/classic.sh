@@ -36,6 +36,7 @@ else:
         assert q["host"] == [node["ingress"]["host"]]
         assert q["encryption"] == ["auto" if u.scheme == "vmess" else "none"]
         assert "flow" not in q and q["path"] == [c["transport"]["path"] + "?ed=2560"]
+        assert q["fp"] == [c["tls"]["utls"]["fingerprint"]]
     else:
         assert u.scheme == "vless" and q["security"] == ["reality"] and q["type"] == ["tcp"]
         assert q["flow"] == ["xtls-rprx-vision"] and q["fp"] == ["chrome"]
