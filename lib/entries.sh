@@ -611,6 +611,21 @@ sbd_entry_change() {
             fi
             sbd_record_write "$stage/config.json" "$content" || return 1
             content=$(jq --argjson value "$value" 'if $value==null then del(.client.obfs) else .client.obfs=$value end' "$stage/entry-node.json") || return 1 ;;
+        hy2_masquerade)
+            [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
+            if [[ "$value" != null ]]; then
+                jq -e 'type=="object" and
+                    (if .type=="proxy" then (.url|type=="string" and test("^https?://[^[:space:]]+$")) and
+                        ((has("rewrite_host")|not) or (.rewrite_host|type=="boolean"))
+                    elif .type=="string" then (.content|type=="string" and length>0) and
+                        ((.status_code // 200)|type=="number" and floor==. and .>=200 and .<600)
+                    else false end)' <<< "$value" >/dev/null || { _error 'Hysteria2 伪装参数无效'; return 1; }
+                content=$(jq --arg tag "$tag" --argjson value "$value" '(.inbounds[]|select(.tag==$tag)|.masquerade)=$value' "$stage/config.json") || return 1
+            else
+                content=$(jq --arg tag "$tag" '(.inbounds[]|select(.tag==$tag))|=del(.masquerade)' "$stage/config.json") || return 1
+            fi
+            sbd_record_write "$stage/config.json" "$content" || return 1
+            content=$(cat "$stage/entry-node.json") || return 1 ;;
         tls)
             case "$profile" in shadowsocks|vmess_ws|vless_ws) _error '此配置档不使用源站 TLS，不能添加证书或 Reality'; return 1 ;; esac
             if [[ "$profile" = anyreality || "$profile" = vless_reality ]]; then
@@ -1022,6 +1037,22 @@ sbd_entry_hy2_hops_show() {
     sbd_info "当前端口范围: ${ports:-未启用}"
 }
 
+sbd_entry_hy2_masquerade_show() {
+    local tag masquerade
+    tag=$(jq -r '.inbound_tag' <<< "$1") || return 1
+    masquerade=$(jq -c --arg tag "$tag" '[.inbounds[]|select(.tag==$tag)][0].masquerade // null' "$SBD_CONFIG") || return 1
+    if [[ "$masquerade" = null ]]; then
+        sbd_info '当前伪装: 未启用'
+        return 0
+    fi
+    local text
+    text=$(jq -r 'if .type=="proxy" then "proxy → " + .url + (if (.rewrite_host // false) then "（重写 Host）" else "" end)
+        elif .type=="string" then "string → HTTP \((.status_code // 200))：" + .content
+        elif .type=="file" then "file → " + .directory
+        else .type end' <<< "$masquerade") || return 1
+    sbd_info "当前伪装: $text"
+}
+
 sbd_entry_hy2_manage_prompt() {
     local node="$1" choice="$2" up down password low high maximum current ports tag paired
     case "$choice" in
@@ -1106,12 +1137,41 @@ sbd_entry_hy2_manage_prompt() {
             fi
             SBD_HY2_ACTION=hy2_obfs
             ;;
+        5)
+            sbd_ui_options '[1] 查看当前配置' '[2] 反向代理页面 (proxy)' '[3] 自定义响应内容 (string)' '[4] 关闭伪装'
+            sbd_read_integer '伪装方式' 1 4 || return $?; choice="$SBD_REPLY"
+            if [[ "$choice" = 1 ]]; then
+                sbd_entry_hy2_masquerade_show "$node" || return $?
+                SBD_HY2_ACTION=''
+                SBD_HY2_REQUEST=''
+                SBD_HY2_VIEW=true
+                return 0
+            fi
+            if [[ "$choice" = 4 ]]; then
+                SBD_HY2_ACTION=hy2_masquerade
+                SBD_HY2_REQUEST='null'
+                return 0
+            fi
+            sbd_info 'masquerade 是非 Hysteria 请求收到的 HTTP 页面，可降低主动探测风险；仅服务端生效'
+            if [[ "$choice" = 2 ]]; then
+                sbd_read_required '目标网站 URL' || return $?
+                [[ "$SBD_REPLY" =~ ^https?://[^[:space:]]+$ ]] || { _error 'URL 须以 http(s):// 开头且不含空白'; return 1; }
+                current="$SBD_REPLY"
+                SBD_HY2_REQUEST=$(jq -n --arg url "$current" '{type:"proxy",url:$url,rewrite_host:true}') || return 1
+            else
+                sbd_read_required '响应内容' || return $?
+                current="$SBD_REPLY"
+                SBD_HY2_REQUEST=$(jq -n --rawfile content <(printf '%s' "$current") '{type:"string",status_code:200,content:$content}') || return 1
+            fi
+            SBD_HY2_ACTION=hy2_masquerade
+            ;;
     esac
 }
 
 sbd_entry_hy2_actions() {
     sbd_ui_options '[1] 修改显示名' '[2] 更换认证密码' '[3] 修改客户端连接地址/映射端口' '[4] 修改本地监听'
-    sbd_ui_options '[5] 客户端端口跳跃' '[6] 客户端上/下行带宽' '[7] 服务端上/下行带宽' '[8] Salamander/Gecko 混淆' '[9] 切换 TLS 来源'
+    sbd_ui_options '[5] 客户端端口跳跃' '[6] 客户端上/下行带宽' '[7] 服务端上/下行带宽' '[8] Salamander/Gecko 混淆'
+    sbd_ui_options '[9] 切换 TLS 来源' '[10] HTTP/3 伪装 masquerade'
     sbd_ui_options '[0] 返回节点选择'
 }
 
@@ -1168,7 +1228,7 @@ sbd_entry_actions() {
 }
 
 sbd_entry_change_prompt() {
-    local mode="${1:-all}" title values id node name choice action value profile server network tag defaults port
+    local mode="${1:-all}" title values id node name choice action value profile server network tag defaults port maximum
     case "$mode" in
         all) title='修改或删除节点' ;;
         edit) title='修改节点' ;;
@@ -1192,8 +1252,10 @@ sbd_entry_change_prompt() {
             else
                 sbd_entry_actions "$profile" "$mode" || return 1
             fi
+            maximum=9
+            [[ "$mode" = edit && "$profile" = hysteria2 ]] && maximum=10
             while true; do
-                sbd_read_integer '选择操作' 0 9 || return $?; choice="$SBD_REPLY"
+                sbd_read_integer '选择操作' 0 "$maximum" || return $?; choice="$SBD_REPLY"
                 if [[ "$mode" = edit && "$profile" = hysteria2 ]]; then break; fi
                 [[ "$SBD_ENTRY_ACTIONS" = *" $choice "* ]] && break
                 _error '此操作不适用于当前配置档，请选择显示的编号'
@@ -1266,6 +1328,15 @@ sbd_entry_change_prompt() {
                 defaults=$(jq -c '.ingress + {server:.client.server,server_port:.client.server_port,path:.client.transport.path}' <<< "$node") || return 1
                 sbd_entry_cdn_prompt "$port" "$defaults" || return $?; value="$SBD_CDN_REQUEST"
             fi ;;
+        10)
+            [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
+            SBD_HY2_VIEW=false
+            sbd_entry_hy2_manage_prompt "$node" 5 || return $?
+            if [[ "$SBD_HY2_VIEW" = true ]]; then
+                sbd_ui_pause
+                continue
+            fi
+            action="$SBD_HY2_ACTION"; value="$SBD_HY2_REQUEST" ;;
     esac
     sbd_read_required '确认此操作并按需重启？输入 y 确认，其他输入取消' || return $?
     [[ "$SBD_REPLY" = y ]] || return 2
