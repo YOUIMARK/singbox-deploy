@@ -114,13 +114,7 @@ sbd_tls_material_add() {
             [[ "$cert" = /* && "$key" = /* ]] || { _error '导入证书和私钥必须使用绝对路径'; return 1; }
             [[ "$cert" != "$key" && -f "$cert" && -f "$key" ]] || { _error '证书和私钥必须是两个可读文件'; return 1; }
             id=$(openssl rand -hex 4) || { _error '生成证书标识失败'; return 1; }
-            id="cert.$id"; directory="$SBD_CERT_DIR/$id"
-            mkdir -p -- "$SBD_CERT_DIR" && chmod 700 -- "$SBD_CERT_DIR" || { _error '创建证书材料目录失败'; return 1; }
-            mkdir -m 700 -- "$directory" || { _error '创建导入证书目录失败'; return 1; }
-            sbd_material_note created_materials "$directory" || { rmdir -- "$directory" 2>/dev/null || true; return 1; }
-            cp -- "$cert" "$directory/cert.pem" && cp -- "$key" "$directory/key.pem" || { _error '复制导入证书失败'; return 1; }
-            chmod 644 -- "$directory/cert.pem" && chmod 600 -- "$directory/key.pem" || { _error '设置导入证书权限失败'; return 1; }
-            cert="$directory/cert.pem" key="$directory/key.pem"
+            id="cert.$id"; directory=''
             ;;
         *) _error '未知证书来源'; return 1 ;;
     esac
