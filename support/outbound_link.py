@@ -744,7 +744,7 @@ def parse_vless(link):
         tls = {"enabled": True, "server_name": sni}
         if bool_param(params, ("insecure", "allowinsecure"), "insecure", False):
             tls["insecure"] = True
-        utls = utls_value(params)
+        utls = utls_value(params, default="chrome" if kind == "ws" else None)
         if utls:
             tls["utls"] = utls
     if tls is not None:
@@ -805,7 +805,7 @@ def vmess_build(
         alpn = alpn_value(params)
         if alpn:
             tls["alpn"] = alpn
-        utls = utls_value(params)
+        utls = utls_value(params, default="chrome" if kind == "ws" else None)
         if utls:
             tls["utls"] = utls
         outbound["tls"] = tls
