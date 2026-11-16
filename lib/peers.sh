@@ -294,7 +294,7 @@ sbd_peer_list() {
     local wireguard cloudflared
     [[ -f "$SBD_CONFIG" ]] || { _error '配置尚未创建'; return 1; }
     wireguard=$(jq -r '.endpoints[]? | select(.type=="wireguard") |
-        "  \(.tag)\n    address: \(.address|join(","))\n    mtu: \(.mtu // 1408)\n    peers: \(.peers|length)\n    listen_port: \(.listen_port // 0)"' "$SBD_CONFIG") || { _error '读取连接对象失败'; return 1; }
+        "  \(.tag)\n    address: \(.address // "" | if type=="array" then join(",") else . end)\n    mtu: \(.mtu // 1408)\n    peers: \(.peers|length)\n    listen_port: \(.listen_port // 0)"' "$SBD_CONFIG") || { _error '读取连接对象失败'; return 1; }
     cloudflared=$(jq -r '.inbounds[]? | select(.type=="cloudflared") |
         "  \(.tag)\n    protocol: \(.protocol // "quic")\n    edge_ip_version: \(if (.edge_ip_version // 0)==0 then "auto" else (.edge_ip_version|tostring) end)\n    grace_period: \(.grace_period // "默认")\n    control_dialer.detour: \(.control_dialer.detour // "无")\n    tunnel_dialer.detour: \(.tunnel_dialer.detour // "无")\n    token: \(if (.token|length)>12 then (.token[0:6]+"…"+.token[-4:]) else "…" end)"' "$SBD_CONFIG") || { _error '读取连接对象失败'; return 1; }
     printf 'WireGuard / WARP endpoints:\n%s\n' "${wireguard:-  （无）}"

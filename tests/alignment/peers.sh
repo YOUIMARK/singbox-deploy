@@ -89,6 +89,14 @@ wireguard_menu() {
         and .mtu==1420 and .peers[0].persistent_keepalive_interval==25
         and .domain_resolver=="cloudflare"' "$SBD_CONFIG"
 }
+wireguard_single_address_list() {
+    t_policy_seed
+    local wg
+    wg=$(jq -c '.address="2001:db8::2/64"' "$ROOT/tests/fixtures/endpoint-wireguard.json") || exit 1
+    t_patch_config --argjson wg "$wg" '.endpoints=[$wg]'
+    t_run 0 sbd_peer_list
+    t_contains "$CASE_TMP/output" 'address: 2001:db8::2/64'
+}
 t_case 'endpoint 原生入口/出口关联和删除保护' endpoint_routes
 t_case 'selector 出站组引用 endpoint 不得悬空' group_reference
 t_case 'WireGuard JSON 修改和无效密钥失败保留旧事实' wireguard_update
@@ -96,4 +104,5 @@ t_case 'endpoint 手动修改自动同步，缺失对象拒绝操作' drift_and_
 t_case 'endpoint 服务激活失败不假报成功' activation_failure
 t_case '首次配置自动获取 WARP、固定参数与秘密不回显' warp_menu
 t_case '菜单添加手动 WireGuard、字段向导与秘密不回显' wireguard_menu
+t_case '单地址 WireGuard endpoint 查看兼容 format 压平' wireguard_single_address_list
 t_finish
