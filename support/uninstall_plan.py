@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """列出已知自有文件；未知文件保留，不递归抹掉部署根。"""
+import fcntl
 import json
 import os
 from pathlib import Path
 import shutil
 import sys
+import tempfile
 
 
 CONFIG_PART_NAMES = (
@@ -37,7 +39,7 @@ CONFIG_PART_NAMES = (
 )
 
 
-def build(root, mode):
+def build(root, mode, command_path="", lock_path=""):
     root = Path(root).resolve()
     files, trees = set(), set()
     app = root / "app"
@@ -128,36 +130,153 @@ def build(root, mode):
         raise ValueError("未知卸载模式")
     # 部署私有写锁不进清单：它由卸载收尾在所有清理动作完成后删除，
     # 过早删除锁名会让并行操作取得新锁，与未完成的卸载交错。
-    return {"format": 1, "mode": mode, "root": str(root), "files": sorted(files), "trees": sorted(trees)}
+    return {
+        "format": 1,
+        "mode": mode,
+        "root": str(root),
+        "command": str(Path(command_path)) if command_path else "",
+        "lock": str(Path(lock_path)) if lock_path else "",
+        "files": sorted(files),
+        "trees": sorted(trees),
+    }
+
+
+def remove_file(path):
+    """删除单个文件；不存在视为已删除，其余错误向上抛出以保留可重试清单。"""
+    path.unlink(missing_ok=True)
+
+
+def remove_command(path, target):
+    """只删除指向本部署入口的链接，同名文件或外部链接保留。"""
+    if path.is_symlink() and os.readlink(path) == str(target):
+        path.unlink()
+
+
+def mark_uninstalled(path):
+    """保留模式把 state 标记为已卸载；同目录原子替换，避免中断留下半写记录。"""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("state 记录不是对象")
+    data["installed"] = False
+    fd, temp = tempfile.mkstemp(prefix=".state.", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
+    except BaseException:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        raise
+
+
+def acquire_lock(path, root):
+    """独立重试时取得部署写锁；锁不存在返回 None，被占用则保留清单并报错。"""
+    if path.is_symlink():
+        return None
+    path = path.resolve()
+    if (root / "run").resolve() not in path.parents:
+        return None
+    try:
+        fd = os.open(path, os.O_RDWR)
+    except FileNotFoundError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as error:
+        os.close(fd)
+        raise ValueError("另一个操作正在修改部署，保留清单后重试") from error
+    return fd
+
+
+def finish(root, plan, plan_path, helper_path, lock_path):
+    """文件清理成功后的完整收尾；只在独立重试时执行，锁内路径由外层脚本收尾。"""
+    root = root.resolve()
+    if root == Path("/"):
+        raise ValueError("部署根不能是文件系统根")
+    mode = plan.get("mode")
+    if mode == "keep":
+        mark_uninstalled(root / "state" / "state.json")
+    elif mode == "purge":
+        for name in ("state.json", "registry.json"):
+            remove_file(root / "state" / name)
+    else:
+        raise ValueError("未知卸载模式")
+    command = plan.get("command")
+    if isinstance(command, str) and command:
+        remove_command(Path(command), root / "app" / "singbox-deploy.sh")
+    for path, parent, name in (
+        (helper_path, root / "work", "uninstall-helper.py"),
+        (plan_path, root / "state", "uninstall.json"),
+    ):
+        if path.parent.resolve() == parent.resolve() and path.name == name:
+            remove_file(path)
+    if lock_path is not None:
+        remove_file(lock_path)
+    for path in (root / "run", root / "work"):
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+    if mode == "purge":
+        try:
+            (root / "state").rmdir()
+        except OSError:
+            pass
+        try:
+            root.rmdir()
+        except OSError:
+            pass
 
 
 def main():
     try:
         if sys.argv[1] == "plan":
-            print(json.dumps(build(sys.argv[2], sys.argv[3]), ensure_ascii=False))
+            command = sys.argv[4] if len(sys.argv) > 4 else ""
+            lock = sys.argv[5] if len(sys.argv) > 5 else ""
+            print(json.dumps(build(sys.argv[2], sys.argv[3], command, lock), ensure_ascii=False))
         else:
             plan = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
             root = Path(plan["root"]).resolve()
+            targets = []
             for group in ("trees", "files"):
                 for name in plan[group]:
                     p = Path(name)
                     if not p.resolve().is_relative_to(root) or p.resolve() == root or p.is_symlink():
                         raise ValueError("删除目标越界或是未知链接，保留现场")
+                    targets.append((group, p))
+            defer_finish = "--defer-finish" in sys.argv[3:]
+            lock = None
+            lock_fd = None
+            if not defer_finish:
+                lock = Path(plan.get("lock") or root / "run" / "singbox-deploy.lock")
+                lock_fd = acquire_lock(lock, root)
+            try:
+                for group, p in targets:
                     if group == "trees":
                         if p.exists():
                             shutil.rmtree(p)
                     else:
                         p.unlink(missing_ok=True)
-            # 只移除空目录，未知文件所在目录保留。
-            for base, dirs, files in os.walk(root, topdown=False):
-                if Path(base) != root:
-                    try:
-                        Path(base).rmdir()
-                    except OSError:
-                        pass
+                # 只移除空目录，未知文件所在目录保留。
+                for base, dirs, files in os.walk(root, topdown=False):
+                    if Path(base) != root:
+                        try:
+                            Path(base).rmdir()
+                        except OSError:
+                            pass
+                if defer_finish:
+                    return 0
+                finish(root, plan, Path(sys.argv[2]), Path(__file__), lock if lock_fd is not None else None)
+            finally:
+                if lock_fd is not None:
+                    os.close(lock_fd)
         return 0
     except Exception as error:
-        print("[错误] 卸载清单处理未完成 (" + type(error).__name__ + ")", file=sys.stderr)
+        detail = str(error)
+        print("[错误] 卸载清单处理未完成 (" + type(error).__name__ + ")" + (": " + detail if detail else ""), file=sys.stderr)
         return 1
 
 

@@ -514,7 +514,7 @@ sbd_service_after_change() {
 }
 
 sbd_uninstall_plan() {
-    python3 -I "$SBD_APP/support/uninstall_plan.py" plan "$SBD_ROOT" "$1" || { _error '不能生成已知自有资源清单'; return 1; }
+    python3 -I "$SBD_APP/support/uninstall_plan.py" plan "$SBD_ROOT" "$1" "$SBD_COMMAND" "$SBD_LOCK" || { _error '不能生成已知自有资源清单'; return 1; }
 }
 
 sbd_uninstall_locked() {
@@ -535,7 +535,7 @@ sbd_uninstall_locked() {
     if [[ -e "$rotate" ]] && ! rm -- "$rotate"; then _error '轮换文件删除失败，卸载未完成'; return 1; fi
     sbd_service_reload || return 1
     # helper 与清单保留在部署树内，部分失败时可按准确路径重试，不假报完整卸载。
-    python3 -I "$helper" apply "$SBD_STATE_DIR/uninstall.json" || { _error "文件卸载未完成；清单: $SBD_STATE_DIR/uninstall.json；重试: python3 -I $helper apply $SBD_STATE_DIR/uninstall.json"; return 1; }
+    python3 -I "$helper" apply "$SBD_STATE_DIR/uninstall.json" --defer-finish || { _error "文件卸载未完成；清单: $SBD_STATE_DIR/uninstall.json；重试: python3 -I $helper apply $SBD_STATE_DIR/uninstall.json"; return 1; }
     if [[ "$mode" = keep ]]; then
         content=$(jq '. + {installed:false}' "$SBD_STATE") || return 1
         sbd_record_write "$SBD_STATE" "$content" || return 1
