@@ -234,18 +234,18 @@ sbd_tls_provider_prompt() {
     sbd_read_integer 'DNS-01 provider' 1 3 || return $?; choice="$SBD_REPLY"
     case "$choice" in
         1)
-            sbd_read_secret 'Cloudflare API token' || return $?; token="$SBD_REPLY"
-            sbd_read_optional 'Cloudflare zone_token（需要独立 Zone token 时填写，不回显）' true || return $?; optional="$SBD_REPLY"
+            sbd_read_required 'Cloudflare API token' || return $?; token="$SBD_REPLY"
+            sbd_read_optional 'Cloudflare zone_token（需要独立 Zone token 时填写）' || return $?; optional="$SBD_REPLY"
             challenge=$(jq -n --rawfile token <(printf '%s' "$token") --rawfile optional <(printf '%s' "$optional") '{provider:"cloudflare",api_token:$token} + (if $optional!="" then {zone_token:$optional} else {} end)') || return 1 ;;
         2)
             sbd_read_required 'AliDNS access_key_id' || return $?; token="$SBD_REPLY"
-            sbd_read_secret 'AliDNS access_key_secret' || return $?; key="$SBD_REPLY"
+            sbd_read_required 'AliDNS access_key_secret' || return $?; key="$SBD_REPLY"
             sbd_read_optional 'AliDNS region_id（可留空）' || return $?; region="$SBD_REPLY"
-            sbd_read_optional 'AliDNS security_token（使用 STS 时填写，不回显）' true || return $?; optional="$SBD_REPLY"
+            sbd_read_optional 'AliDNS security_token（使用 STS 时填写）' || return $?; optional="$SBD_REPLY"
             challenge=$(jq -n --rawfile id <(printf '%s' "$token") --rawfile key <(printf '%s' "$key") --rawfile region <(printf '%s' "$region") --rawfile optional <(printf '%s' "$optional") '{provider:"alidns",access_key_id:$id,access_key_secret:$key} + (if $region!="" then {region_id:$region} else {} end) + (if $optional!="" then {security_token:$optional} else {} end)') || return 1 ;;
         3)
             sbd_read_required 'ACME-DNS username' || return $?; username="$SBD_REPLY"
-            sbd_read_secret 'ACME-DNS password' || return $?; password="$SBD_REPLY"
+            sbd_read_required 'ACME-DNS password' || return $?; password="$SBD_REPLY"
             sbd_read_required 'ACME-DNS subdomain' || return $?; subdomain="$SBD_REPLY"
             while true; do
                 sbd_read_required 'ACME-DNS server_url' || return $?; url="$SBD_REPLY"
