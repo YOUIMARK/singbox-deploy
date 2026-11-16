@@ -79,6 +79,50 @@ uninstall_failure() {
     t_assert '未确认停止不删除服务定义' test -f "$CASE_TMP/etc/service"
     t_assert '保留可重试清单' test -f "$SBD_STATE_DIR/uninstall.json"
 }
+uninstall_retry_finishes() {
+    u_seed
+    rm -f "$SBD_EXPORTS/node.txt" || exit 1
+    local plan
+    plan=$(sbd_uninstall_plan purge) || exit 1
+    # 让文件清理在删掉部分 app 文件后失败，保留准确清单与 helper。
+    rm -f "$SBD_BINARY" || exit 1
+    mkdir "$SBD_BINARY" || exit 1
+    printf 'block\n' > "$SBD_BINARY/keep" || exit 1
+    t_run 1 sbd_write_lock sbd_uninstall_locked purge "$plan"
+    t_contains "$CASE_TMP/output" "重试: python3 -I $SBD_WORK/uninstall-helper.py apply $SBD_STATE_DIR/uninstall.json"
+    t_assert '文件清理失败保留清单' test -f "$SBD_STATE_DIR/uninstall.json"
+    t_assert '文件清理失败保留 helper' test -f "$SBD_WORK/uninstall-helper.py"
+    t_assert '文件清理失败保留入口' test -L "$SBD_COMMAND"
+    t_assert '文件清理失败保留写锁' test -f "$SBD_LOCK"
+    rm -f "$SBD_BINARY/keep" || exit 1
+    rmdir "$SBD_BINARY" || exit 1
+    t_run 0 python3 -I "$SBD_WORK/uninstall-helper.py" apply "$SBD_STATE_DIR/uninstall.json"
+    t_assert '重试后清除入口' test ! -L "$SBD_COMMAND"
+    t_assert '重试后清除清单' test ! -e "$SBD_STATE_DIR/uninstall.json"
+    t_assert '重试后清除 helper' test ! -e "$SBD_WORK/uninstall-helper.py"
+    t_assert '重试后清除写锁' test ! -e "$SBD_LOCK"
+    t_assert '重试后清除状态' test ! -e "$SBD_STATE"
+    t_assert '重试后清除登记' test ! -e "$SBD_REGISTRY"
+    t_assert '重试后删除空部署根' test ! -e "$SBD_ROOT"
+}
+uninstall_retry_keep_state() {
+    u_seed
+    printf 'unknown user file\n' > "$SBD_APP/user-notes.txt" || exit 1
+    local plan
+    plan=$(sbd_uninstall_plan keep) || exit 1
+    rm -f "$SBD_BINARY" || exit 1
+    mkdir "$SBD_BINARY" || exit 1
+    printf 'block\n' > "$SBD_BINARY/keep" || exit 1
+    t_run 1 sbd_write_lock sbd_uninstall_locked keep "$plan"
+    rm -f "$SBD_BINARY/keep" || exit 1
+    rmdir "$SBD_BINARY" || exit 1
+    t_run 0 python3 -I "$SBD_WORK/uninstall-helper.py" apply "$SBD_STATE_DIR/uninstall.json"
+    t_assert '保留模式重试后 state 记录卸载事实' jq -e '.installed==false' "$SBD_STATE"
+    t_assert '保留模式重试后保留配置' test -s "$SBD_CONFIG"
+    t_contains "$SBD_APP/user-notes.txt" 'unknown user'
+    t_assert '保留模式重试后移除入口' test ! -L "$SBD_COMMAND"
+    t_assert '保留模式重试后保留部署根' test -d "$SBD_ROOT"
+}
 history_engine() {
     u_seed
     mkdir -p "$CASE_TMP/candidate/engine" || exit 1
@@ -106,5 +150,7 @@ t_case 'purge 无未知文件时删除部署根' purge_root_removed
 t_case '保留模式卸载运行文件，原路径数据与未知文件保留' uninstall_keep
 t_case '明确 purge 只清已知自有数据，外部/未知文件保留' uninstall_purge
 t_case '卸载停止失败保留入口和可重试记录' uninstall_failure
+t_case '文件清理部分失败后独立重试完成收尾' uninstall_retry_finishes
+t_case '保留模式独立重试补齐状态收尾' uninstall_retry_keep_state
 t_case '恢复最近核心事务的包/配置/服务/状态完整资源组' history_engine
 t_finish

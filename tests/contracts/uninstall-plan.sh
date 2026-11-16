@@ -84,9 +84,18 @@ purge_plan_write_lock() {
     t_assert '部署私有写锁不进入卸载清单' jq -e --arg f "$SBD_ROOT/run/singbox-deploy.lock" '.files|index($f)==null' <<< "$plan"
 }
 
+purge_plan_finish_targets() {
+    t_fresh
+    local plan
+    plan=$(sbd_uninstall_plan purge) || exit 1
+    t_assert '清单记录命令入口' jq -e --arg value "$SBD_COMMAND" '.command==$value' <<< "$plan"
+    t_assert '清单记录部署写锁' jq -e --arg value "$SBD_LOCK" '.lock==$value' <<< "$plan"
+}
+
 t_case '第一代布局 purge 清单回退读取旧数据' purge_plan_gen1
 t_case '第一代托管目录进入 purge 清单' purge_plan_gen1_material_dirs
 t_case '旧布局迁移备份进入 purge 清单' purge_plan_legacy_backup
 t_case 'purge 清单优先当前布局 registry' purge_plan_prefers_current
 t_case 'purge 清单不包含部署私有写锁' purge_plan_write_lock
+t_case 'purge 清单记录重试收尾所需的命令与写锁' purge_plan_finish_targets
 t_finish
