@@ -2,6 +2,7 @@
 # shellcheck disable=SC2016
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/harness.sh"
 . "$(dirname -- "${BASH_SOURCE[0]}")/../support/policy.sh"
+. "$(dirname -- "${BASH_SOURCE[0]}")/../support/peers.sh"
 
 url_validation() {
     t_run 0 sbd_rule_url 'https://example.com/geosite-cn.srs'
@@ -187,6 +188,19 @@ menu_add_route_warp_and_custom() {
     t_assert 'WARP 存在时仍可选 outbounds 中的自定义出口' jq -e '
         .route.rules[-1] == {domain_suffix:"example.net",outbound:"socks-out"}' "$SBD_CONFIG"
 }
+menu_custom_outbound_endpoints() {
+    t_policy_seed
+    t_patch_config '.outbounds += [{type:"socks",tag:"socks-out",server:"127.0.0.1",server_port:1080}]'
+    t_peer_add wireguard
+    t_peer_add cloudflared
+    t_run 0 sbd_rules_menu <<< $'2\n2\nexample.io\n3\n2\ny\n0'
+    t_contains "$CASE_TMP/output" '自定义出站（outbounds/endpoints，排除 direct、WARP、cloudflared）'
+    t_contains "$CASE_TMP/output" '[1] socks-out'
+    t_contains "$CASE_TMP/output" '[2] wg-fixture'
+    t_absent "$CASE_TMP/output" 'cf-fixture'
+    t_assert '自定义出口包含 WireGuard endpoint 且排除 cloudflared' jq -e '
+        .route.rules[-1] == {domain_suffix:"example.io",outbound:"wg-fixture"}' "$SBD_CONFIG"
+}
 menu_delete_route_rule() {
     t_policy_seed
     t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"a.example","action":"route","outbound":"direct"}'
@@ -244,6 +258,7 @@ t_case '菜单用脚本与手工规则集添加路由规则' menu_add_route_rule
 t_case '菜单添加域名+CIDR 逻辑 OR 与 reject drop 规则' menu_add_route_custom
 t_case '菜单按 inbound 匹配方式添加路由规则' menu_add_route_inbound
 t_case '菜单添加 WARP 与自定义 outbound 出口规则' menu_add_route_warp_and_custom
+t_case '菜单自定义出口包含 endpoint 且排除 cloudflared' menu_custom_outbound_endpoints
 t_case '菜单删除托管路由规则并保留手工规则' menu_delete_route_rule
 t_case '补齐默认路由规则并保留自定义规则' defaults_restore
 t_finish
