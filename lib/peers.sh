@@ -304,37 +304,37 @@ sbd_peer_list() {
 sbd_peers_menu() {
     local choice area base tag value rc page values
     while true; do
-        sbd_ui_menu '隧道管理' '[1] 查看隧道' '[2] 添加 WARP' '[3] 添加 Cloudflare Tunnel' \
-            '[4] 修改 Cloudflare Tunnel（切换 token）' '[5] 删除隧道' '[0] 返回'
+        sbd_ui_menu '隧道管理' '[1] 查看隧道' '[2] 添加 WARP' '[3] 添加 WireGuard' \
+            '[4] 添加 Cloudflare Tunnel' '[5] 修改 Cloudflare Tunnel（切换 token）' '[6] 删除隧道' '[0] 返回'
         sbd_config_hint
         page="$SBD_UI_PAGE"
-        sbd_read_integer '请选择' 0 5 || return 0; choice="$SBD_REPLY"
+        sbd_read_integer '请选择' 0 6 || return 0; choice="$SBD_REPLY"
         case "$choice" in
             0) return 0 ;;
             1) sbd_peer_list || return 1; sbd_ui_pause "$page"; continue ;;
-            2|3)
+            2|3|4)
                 sbd_version >/dev/null || return 1
                 area=endpoints
-                if [[ "$choice" = 2 ]]; then
-                    sbd_peer_warp_prompt
-                else
-                    base=cloudflared; area=connectors; sbd_peer_cloudflare_prompt
-                fi
+                case "$choice" in
+                    2) sbd_peer_warp_prompt ;;
+                    3) base=wireguard; sbd_peer_wireguard_prompt ;;
+                    4) base=cloudflared; area=connectors; sbd_peer_cloudflare_prompt ;;
+                esac
                 rc=$?; [[ "$rc" = 0 ]] || return "$rc"; value="$SBD_PEER_VALUE"
                 if [[ "$choice" = 2 ]]; then
                     tag=$(sbd_peer_tag_free warp) || return 1
                 else
-                    # Cloudflare Tunnel 连接参数填完后再定 tag。
+                    # 连接参数填完后再定 tag。
                     sbd_peer_tag_prompt "$(sbd_peer_tag_free "$base")" || return $?
                     tag="$SBD_REPLY"
                 fi
                 value=$(jq --arg tag "$tag" '. + {tag:$tag}' <<< "$value") || return 1 ;;
-            4)
+            5)
                 values=$(jq -c '[.policy.connectors[]?|select(.expected.type=="cloudflared")|{id,area:"connectors"}]' "$SBD_REGISTRY") || return 1
                 sbd_policy_pick "$values" '选择 Cloudflare Tunnel' || return $?; tag="$SBD_REPLY"
                 sbd_peer_cloudflare_edit "$tag" || return 1
                 sbd_ui_pause "$page"; continue ;;
-            5)
+            6)
                 values=$(jq -c '[.policy.endpoints[]?|select(.expected.type=="wireguard")|{id,area:"endpoints"}] + [.policy.connectors[]?|select(.expected.type=="cloudflared")|{id,area:"connectors"}]' "$SBD_REGISTRY") || return 1
                 sbd_policy_pick "$values" '选择隧道' || return $?; tag="$SBD_REPLY"
                 area=$(jq -er --arg tag "$tag" '.[]|select(.id==$tag)|.area' <<< "$values") || return 1
