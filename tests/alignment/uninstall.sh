@@ -123,6 +123,26 @@ uninstall_retry_keep_state() {
     t_assert '保留模式重试后移除入口' test ! -L "$SBD_COMMAND"
     t_assert '保留模式重试后保留部署根' test -d "$SBD_ROOT"
 }
+uninstall_retry_lock_first() {
+    u_seed
+    rm -f "$SBD_EXPORTS/node.txt" || exit 1
+    local plan held
+    plan=$(sbd_uninstall_plan purge) || exit 1
+    cp "$SBD_APP/support/uninstall_plan.py" "$SBD_WORK/uninstall-helper.py" || exit 1
+    printf '%s\n' "$plan" > "$SBD_STATE_DIR/uninstall.json" || exit 1
+    mkdir -p -m 700 -- "$SBD_ROOT/run" || exit 1
+    exec {held}>"$SBD_LOCK" || exit 1
+    flock -n "$held" || exit 1
+    t_run 1 python3 -I "$SBD_WORK/uninstall-helper.py" apply "$SBD_STATE_DIR/uninstall.json"
+    exec {held}>&- || exit 1
+    t_contains "$CASE_TMP/output" '另一个操作正在修改部署'
+    t_assert '锁冲突不清理配置' test -s "$SBD_CONFIG"
+    t_assert '锁冲突不清理部署文件' test -f "$SBD_APP/singbox-deploy.sh"
+    t_assert '锁冲突不清理重试清单' test -f "$SBD_STATE_DIR/uninstall.json"
+    t_assert '锁冲突不清理 helper' test -f "$SBD_WORK/uninstall-helper.py"
+    t_run 0 python3 -I "$SBD_WORK/uninstall-helper.py" apply "$SBD_STATE_DIR/uninstall.json"
+    t_assert '释放锁后重试完成' test ! -e "$SBD_ROOT"
+}
 history_engine() {
     u_seed
     mkdir -p "$CASE_TMP/candidate/engine" || exit 1
@@ -152,5 +172,6 @@ t_case '明确 purge 只清已知自有数据，外部/未知文件保留' unins
 t_case '卸载停止失败保留入口和可重试记录' uninstall_failure
 t_case '文件清理部分失败后独立重试完成收尾' uninstall_retry_finishes
 t_case '保留模式独立重试补齐状态收尾' uninstall_retry_keep_state
+t_case '独立重试先取得写锁再清理文件' uninstall_retry_lock_first
 t_case '恢复最近核心事务的包/配置/服务/状态完整资源组' history_engine
 t_finish

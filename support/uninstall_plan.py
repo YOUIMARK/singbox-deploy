@@ -240,35 +240,43 @@ def main():
         else:
             plan = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
             root = Path(plan["root"]).resolve()
+            targets = []
             for group in ("trees", "files"):
                 for name in plan[group]:
                     p = Path(name)
                     if not p.resolve().is_relative_to(root) or p.resolve() == root or p.is_symlink():
                         raise ValueError("删除目标越界或是未知链接，保留现场")
+                    targets.append((group, p))
+            defer_finish = "--defer-finish" in sys.argv[3:]
+            lock = None
+            lock_fd = None
+            if not defer_finish:
+                lock = Path(plan.get("lock") or root / "run" / "singbox-deploy.lock")
+                lock_fd = acquire_lock(lock, root)
+            try:
+                for group, p in targets:
                     if group == "trees":
                         if p.exists():
                             shutil.rmtree(p)
                     else:
                         p.unlink(missing_ok=True)
-            # 只移除空目录，未知文件所在目录保留。
-            for base, dirs, files in os.walk(root, topdown=False):
-                if Path(base) != root:
-                    try:
-                        Path(base).rmdir()
-                    except OSError:
-                        pass
-            if "--defer-finish" in sys.argv[3:]:
-                return 0
-            lock = Path(plan.get("lock") or root / "run" / "singbox-deploy.lock")
-            lock_fd = acquire_lock(lock, root)
-            try:
+                # 只移除空目录，未知文件所在目录保留。
+                for base, dirs, files in os.walk(root, topdown=False):
+                    if Path(base) != root:
+                        try:
+                            Path(base).rmdir()
+                        except OSError:
+                            pass
+                if defer_finish:
+                    return 0
                 finish(root, plan, Path(sys.argv[2]), Path(__file__), lock if lock_fd is not None else None)
             finally:
                 if lock_fd is not None:
                     os.close(lock_fd)
         return 0
     except Exception as error:
-        print("[错误] 卸载清单处理未完成 (" + type(error).__name__ + ")", file=sys.stderr)
+        detail = str(error)
+        print("[错误] 卸载清单处理未完成 (" + type(error).__name__ + ")" + (": " + detail if detail else ""), file=sys.stderr)
         return 1
 
 
