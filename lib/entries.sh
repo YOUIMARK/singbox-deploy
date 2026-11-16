@@ -699,8 +699,8 @@ sbd_entry_change() {
 }
 
 sbd_entry_default() {
-    local label="$1" default="$2" secret="${3:-false}"
-    sbd_read_optional "$label（默认 $default）" "$secret" || return $?
+    local label="$1" default="$2"
+    sbd_read_optional "$label（默认 $default）" || return $?
     SBD_REPLY="${SBD_REPLY:-$default}"
 }
 
@@ -775,7 +775,7 @@ sbd_entry_port_prompt() {
 sbd_entry_password_prompt() {
     local label="$1" generated
     # 不把随机密码印在默认值提示中；只有明确留空时才生成。
-    sbd_read_optional "$label（留空随机，不回显）" true || return $?
+    sbd_read_optional "$label（留空随机）" || return $?
     if [[ -z "$SBD_REPLY" ]]; then
         generated=$("$SBD_BINARY" generate rand --hex 16) || { _error '随机密码生成失败'; return 1; }
         [[ -n "$generated" ]] || { _error '随机密码为空'; return 1; }
@@ -885,7 +885,7 @@ sbd_entry_ss_prompt() {
 sbd_entry_ss_password_prompt() {
     local method="$1" value
     while true; do
-        sbd_read_optional 'Shadowsocks 密码/密钥（留空随机，不回显）' true || return $?
+        sbd_read_optional 'Shadowsocks 密码/密钥（留空随机）' || return $?
         value="$SBD_REPLY"
         if [[ -z "$value" ]]; then
             if [[ "$method" = aes-256-gcm ]]; then value=$("$SBD_BINARY" generate rand --hex 16)

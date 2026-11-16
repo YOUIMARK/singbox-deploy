@@ -88,8 +88,8 @@ except (ValueError, binascii.Error):
 sbd_peer_key_prompt() {
     local label="$1" optional="${2:-false}" value
     while true; do
-        if [[ "$optional" = true ]]; then sbd_read_optional "$label（可不设置）" true || return $?
-        else sbd_read_secret "$label" false || return $?; fi
+        if [[ "$optional" = true ]]; then sbd_read_optional "$label（可不设置）" || return $?
+        else sbd_read_required "$label" || return $?; fi
         value="$SBD_REPLY"
         if [[ "$optional" = true && -z "$value" ]]; then return 0; fi
         sbd_peer_key <<< "$value" && return 0
@@ -253,7 +253,7 @@ sbd_peer_cloudflare_token_from_input() {
 sbd_peer_token_prompt() {
     local value config input
     while true; do
-        sbd_read_secret 'Cloudflare Tunnel token 或 cloudflared 命令' || return $?; input="$SBD_REPLY"
+        sbd_read_required 'Cloudflare Tunnel token 或 cloudflared 命令' || return $?; input="$SBD_REPLY"
         if ! sbd_peer_cloudflare_token_from_input "$input"; then
             _error '未识别到 token；请粘贴裸 token，或包含 --token / service install token 的命令'
             continue

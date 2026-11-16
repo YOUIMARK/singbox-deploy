@@ -82,7 +82,7 @@ external_contract() {
 }
 # 本套件只调用真实菜单、OpenSSL、Schema 和核心；不向 CA 发起签发。
 t_case 'TLS 名称和标识输入契约' identity_contract
-t_case '三种 DNS-01 原生 provider 真实校验且凭据不回显' provider_contract
+t_case '三种 DNS-01 原生 provider 真实校验' provider_contract
 t_case 'P-256 IPv6 SAN 与证书/公钥信任' self_signed_contract
 t_case '导入 PEM 校验并保留外部所有权' external_contract
 t_finish

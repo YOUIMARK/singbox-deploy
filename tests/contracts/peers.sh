@@ -162,7 +162,7 @@ tagless_target_contract() {
 t_case 'WARP 注册 API sing-box 字段映射与缺省归一' warp_contract
 t_case 'WARP 下载/JSON/密钥/reserved 失败均不写入' warp_failures
 t_case 'WireGuard 原生 endpoints 与 peer reserved 真实检查' wireguard_contract
-t_case 'Cloudflared QUIC/HTTP2 原生入站和秘密不回显' cloudflare_contract
+t_case 'Cloudflared QUIC/HTTP2 原生入站' cloudflare_contract
 t_case '已有 Tunnel 恢复默认规则与删除清理' cloudflare_defaults_contract
 t_case 'Cloudflared 用户路由例外复用与额外条件识别' cloudflare_manual_route_contract
 t_case '密钥/token/CIDR 字段重问与核心 token 解析' field_contract

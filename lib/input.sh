@@ -263,39 +263,12 @@ sbd_read_required() {
     done
 }
 
-sbd_read_secret() {
-    local label="$1" hint="${2:-true}"
-    [[ "${SBD_UI_EOF:-false}" != true ]] || return 2
-    SBD_REPLY=''
-    while true; do
-        if [[ "$hint" = true ]]; then sbd_ui_prompt "$label（不回显）"
-        else sbd_ui_prompt "$label"; fi
-        printf '%s' "${SBD_UI_PROMPT:-}" >&2
-        if ! IFS= read -rs SBD_REPLY; then
-            printf '\n' >&2
-            sbd_info '输入结束，已取消'
-            return 2
-        fi
-        printf '\n' >&2
-        [[ -n "$SBD_REPLY" ]] && return 0
-        _error '此字段不能为空，请重新输入'
-    done
-}
-
 sbd_read_optional() {
-    local secret="${2:-false}" rc=0
     [[ "${SBD_UI_EOF:-false}" != true ]] || return 2
     # 是否可留空由调用方的提示语说明（默认值、留空随机等），这里不再追加通用后缀。
     sbd_ui_prompt "$1"
     SBD_REPLY=''
-    if [[ "$secret" = true ]]; then
-        printf '%s' "${SBD_UI_PROMPT:-}" >&2
-        IFS= read -rs SBD_REPLY || rc=$?
-        printf '\n' >&2
-    else
-        sbd_ui_read_line || rc=$?
-    fi
-    [[ "$rc" = 0 ]] || { sbd_info '输入结束，已取消'; return 2; }
+    sbd_ui_read_line || { sbd_info '输入结束，已取消'; return 2; }
 }
 
 sbd_read_integer() {
