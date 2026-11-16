@@ -36,7 +36,10 @@ assert u.port == node["client"]["server_port"]
 assert unquote(u.username) == node["client"]["password"]
 assert unquote(u.fragment) == node["name"]
 assert q["sni"] == [node["client"]["tls"]["server_name"]]
-assert "1" not in q.get("insecure", [])
+if sys.argv[3] == "hysteria2":
+    assert q.get("insecure") == ["1"]
+else:
+    assert "1" not in q.get("insecure", [])
 profile = sys.argv[3]
 if profile == "anyreality":
     assert u.scheme == "anytls" and q["security"] == ["reality"] and q["fp"] == ["chrome"]
