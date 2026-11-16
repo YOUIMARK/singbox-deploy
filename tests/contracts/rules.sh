@@ -195,6 +195,8 @@ menu_delete_route_rule() {
     t_run 0 sbd_apply sbd_policy_rule route_rules add '' '{"domain":"b.example","action":"route","outbound":"direct"}'
     t_patch_config '.route.rules += [{domain:"manual.example",action:"route",outbound:"direct"}]'
     t_run 0 sbd_rules_menu <<< $'3\n1\ny\n0'
+    t_contains "$CASE_TMP/output" '[1] {"domain":"a.example"'
+    t_absent "$CASE_TMP/output" '位置'
     t_contains "$CASE_TMP/output" '路由规则已删除'
     t_absent "$CASE_TMP/output" 'manual.example'
     t_assert '只删除托管规则并保留手工规则' jq -e '

@@ -673,7 +673,7 @@ sbd_route_rule_add_flow() {
 }
 
 sbd_route_rule_remove() {
-    local values count i index rule choice id
+    local values count i rule choice id
     values=$(jq -c '[.policy.route_rules[]? as $rec | {id:$rec.id, index:$rec.index, rule:$rec.expected}]
         | sort_by(.index)' "$SBD_REGISTRY") || return 1
     count=$(jq 'length' <<< "$values") || return 1
@@ -683,9 +683,8 @@ sbd_route_rule_remove() {
     fi
     sbd_info '选择当前配置中的路由规则'
     for ((i=0; i<count; i++)); do
-        index=$(jq -r --argjson i "$i" '.[$i].index' <<< "$values") || return 1
         rule=$(jq -c --argjson i "$i" '.[$i].rule' <<< "$values") || return 1
-        sbd_ui_rows "[$((i+1))] 位置 $index" "$rule" || return 1
+        sbd_ui_rows "[$((i+1))] $rule" || return 1
     done
     sbd_read_integer '选择要删除的路由规则' 1 "$count" || return $?
     choice="$SBD_REPLY"

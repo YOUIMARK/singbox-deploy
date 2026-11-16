@@ -80,7 +80,7 @@ sbd_share_tls_query() {
         sha=$(sbd_entry_text "$node" .share.certificate_sha256 完整证书指纹) || return 1
         [[ "$sha" =~ ^[0-9A-Fa-f]{64}$ ]] || { _error '完整证书 SHA-256 无效，不能用 SPKI 公钥 pin 代替'; return 1; }
         if [[ "$protocol" = hysteria2 ]]; then
-            query=$(jq --arg sha "$sha" '. + {pinSHA256:$sha}' <<< "$query") || return 1
+            query=$(jq --arg sha "$sha" '. + {insecure:"1",pinSHA256:$sha}' <<< "$query") || return 1
         else
             query=$(jq --arg sha "$sha" '. + {pcs:$sha}' <<< "$query") || return 1
         fi
