@@ -89,7 +89,7 @@ sbd_peer_key_prompt() {
     local label="$1" optional="${2:-false}" value
     while true; do
         if [[ "$optional" = true ]]; then sbd_read_optional "$label（可不设置）" true || return $?
-        else sbd_read_secret "$label" || return $?; fi
+        else sbd_read_secret "$label" false || return $?; fi
         value="$SBD_REPLY"
         if [[ "$optional" = true && -z "$value" ]]; then return 0; fi
         sbd_peer_key <<< "$value" && return 0
@@ -188,18 +188,19 @@ sbd_peer_warp_prompt() {
 }
 
 sbd_peer_wireguard_prompt() {
-    local address private mtu=1408 listen=0 peers='[]' count=1 i host port public psk allowed reserved keepalive peer value resolver
+    local address private mtu listen=0 peers='[]' count=1 i host port public psk allowed reserved keepalive peer value resolver
     sbd_peer_prefix_prompt address || return $?; address="$SBD_REPLY"
     sbd_peer_key_prompt '已有 WireGuard 私钥' || return $?; private="$SBD_REPLY"
+    sbd_entry_number_prompt 'mtu' 1280 1500 1408 || return $?; mtu="$SBD_REPLY"
     resolver=''
     for ((i=0; i<count; i++)); do
-        printf 'peer %s/%s\n' "$((i+1))" "$count"
-        sbd_entry_host_prompt 'peer address（域名/IP，不带端口）' || return $?; host="$SBD_REPLY"
+        sbd_entry_host_prompt 'peer endpoint（域名/IP，不带端口）' || return $?; host="$SBD_REPLY"
         sbd_entry_number_prompt 'peer port' 1 65535 || return $?; port="$SBD_REPLY"
         sbd_peer_key_prompt 'peer public_key' || return $?; public="$SBD_REPLY"
         sbd_peer_key_prompt 'peer pre_shared_key' true || return $?; psk="$SBD_REPLY"
         sbd_peer_prefix_prompt allowed_ips || return $?; allowed="$SBD_REPLY"
-        reserved='[0,0,0]'; keepalive=0
+        sbd_entry_number_prompt 'peer PersistentKeepalive（秒，0 关闭）' 0 65535 0 || return $?; keepalive="$SBD_REPLY"
+        reserved='[0,0,0]'
         if [[ "$(sbd_tls_identity "$host")" = DNS:* && -z "$resolver" ]]; then
             sbd_policy_target dns default || return $?
             resolver="$SBD_REPLY"
@@ -252,7 +253,7 @@ sbd_peer_cloudflare_token_from_input() {
 sbd_peer_token_prompt() {
     local value config input
     while true; do
-        sbd_read_secret 'Cloudflare Tunnel token 或 cloudflared 命令（不回显）' || return $?; input="$SBD_REPLY"
+        sbd_read_secret 'Cloudflare Tunnel token 或 cloudflared 命令' || return $?; input="$SBD_REPLY"
         if ! sbd_peer_cloudflare_token_from_input "$input"; then
             _error '未识别到 token；请粘贴裸 token，或包含 --token / service install token 的命令'
             continue

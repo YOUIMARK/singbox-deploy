@@ -456,9 +456,13 @@ sbd_route_warp_tags() {
 
 sbd_route_custom_outbounds() {
     local config="$1" warp="$2"
-    jq -c --argjson warp "$warp" '[.outbounds[]? | .tag
-        | select(type=="string" and length>0 and .!="direct")
-        | select(. as $tag | ($warp | index($tag)) == null)] | unique' "$config"
+    jq -c --argjson warp "$warp" '
+        [(.outbounds[]?),(.endpoints[]?)]
+        | map(select(.type != "cloudflared"))
+        | map(.tag)
+        | map(select(type=="string" and length>0 and .!="direct"))
+        | map(select(. as $tag | ($warp | index($tag)) == null))
+        | unique' "$config"
 }
 
 # 解析混输的域名与 IP/CIDR：域名转小写和 Punycode，裸 IP 补全前缀。
@@ -595,7 +599,7 @@ sbd_route_inbound_prompt() {
 sbd_route_custom_outbound_prompt() {
     local values="$1" count tag
     count=$(jq 'length' <<< "$values") || return 1
-    (( count > 0 )) || { _error 'outbounds 中没有除 direct/WARP 外的自定义出口；请先添加出站，或直接编辑配置文件'; return 1; }
+    (( count > 0 )) || { _error '没有除 direct、WARP、cloudflared 外的自定义出口；请先添加出站，或直接编辑配置文件'; return 1; }
     if (( count == 1 )); then
         tag=$(jq -r '.[0]' <<< "$values") || return 1
         sbd_info "使用唯一自定义出口: $tag"
@@ -618,8 +622,7 @@ sbd_route_outbound_prompt() {
         sbd_ui_rows "[$index] WARP（$tag）" || return 1
         index=$((index+1))
     done
-    label='自定义出站（outbounds，排除 direct）'
-    (( count == 0 )) || label='自定义出站（outbounds，排除 direct 与 WARP）'
+    label='自定义出站（outbounds/endpoints，排除 direct、WARP、cloudflared）'
     sbd_ui_rows "[$index] $label" || return 1
     sbd_read_integer '选择出口' 1 "$index" || return $?
     pick="$SBD_REPLY"

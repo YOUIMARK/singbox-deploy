@@ -264,11 +264,12 @@ sbd_read_required() {
 }
 
 sbd_read_secret() {
-    local label="$1"
+    local label="$1" hint="${2:-true}"
     [[ "${SBD_UI_EOF:-false}" != true ]] || return 2
     SBD_REPLY=''
     while true; do
-        sbd_ui_prompt "$label（不回显）"
+        if [[ "$hint" = true ]]; then sbd_ui_prompt "$label（不回显）"
+        else sbd_ui_prompt "$label"; fi
         printf '%s' "${SBD_UI_PROMPT:-}" >&2
         if ! IFS= read -rs SBD_REPLY; then
             printf '\n' >&2

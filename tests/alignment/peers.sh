@@ -77,12 +77,16 @@ wireguard_menu() {
     t_stopped
     local key input
     key=$(jq -r .private_key "$ROOT/tests/fixtures/endpoint-wireguard.json") || exit 1
-    input=$(printf '3\n10.0.0.2/24\n%s\npeer.example.com\n51820\n%s\n\n0.0.0.0/0,::/0\nmenu-wg\ny\n0\n' "$key" "$key") || exit 1
+    input=$(printf '3\n10.0.0.2/24\n%s\n1420\npeer.example.com\n51820\n%s\n\n0.0.0.0/0,::/0\n25\nmenu-wg\ny\n0\n' "$key" "$key") || exit 1
     t_run 0 sbd_peers_menu <<< "$input"
     t_absent "$CASE_TMP/output" "$key"
+    t_absent "$CASE_TMP/output" '（不回显）'
+    t_absent "$CASE_TMP/output" 'peer 1/1'
     t_contains "$CASE_TMP/output" '[3] 添加 WireGuard'
-    t_assert 'WireGuard 菜单填写字段、自动选择原生默认 DNS' jq -e '
+    t_contains "$CASE_TMP/output" 'peer endpoint'
+    t_assert 'WireGuard 菜单填写 MTU/Keepalive、字段与原生默认 DNS' jq -e '
         .endpoints[0]|.tag=="menu-wg" and .address=="10.0.0.2/24"
+        and .mtu==1420 and .peers[0].persistent_keepalive_interval==25
         and .domain_resolver=="cloudflare"' "$SBD_CONFIG"
 }
 t_case 'endpoint 原生入口/出口关联和删除保护' endpoint_routes
