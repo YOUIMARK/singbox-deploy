@@ -69,9 +69,15 @@ warp_sources_contract() {
         and .peers[0].reserved==[1,2,3]' <<< "$value"
     t_run 0 python3 "$ROOT/support/warp.py" normalize "$ROOT/tests/fixtures/warp-reg-v6.json"
     value=$(cat "$CASE_TMP/output")
-    t_assert '仅 IPv6 注册端点保留 IPv6' jq -e '
+    t_assert '仅 IPv6 注册端点使用域名' jq -e '
         .address==["2606:4700:110:8a36::9/128"]
-        and .peers[0].address=="2606:4700:110:8a36::9"
+        and .peers[0].address=="engage.cloudflareclient.com"
+        and .peers[0].port==2408' <<< "$value"
+    t_run 0 python3 "$ROOT/support/warp.py" normalize "$ROOT/tests/fixtures/warp-reg-v4.json"
+    value=$(cat "$CASE_TMP/output")
+    t_assert '仅 IPv4 注册端点使用域名' jq -e '
+        .address==["172.16.0.7/32"]
+        and .peers[0].address=="engage.cloudflareclient.com"
         and .peers[0].port==2408' <<< "$value"
     t_run 0 python3 "$ROOT/support/warp.py" normalize "$ROOT/tests/fixtures/warp-wgcf-xray.json"
     value=$(cat "$CASE_TMP/output")
