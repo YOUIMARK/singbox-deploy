@@ -6,6 +6,8 @@
 warp_contract() {
     t_fresh
     local value
+    t_assert 'WARP warp-reg 使用固定脚本地址' test "$SBD_PEER_WARP_REG_URL" = \
+        'https://raw.githubusercontent.com/chise0713/warp-reg.sh/master/warp-reg.sh'
     t_assert 'WARP 注册接口请求 sing-box 原生格式' test "$SBD_PEER_WARP_API" = 'https://warp.cloudflare.now.cc/?run=register&format=sing-box'
     sbd_peer_warp_fetch_reg() { return 1; }
     sbd_peer_warp_fetch_wgcf() { return 1; }
@@ -81,7 +83,14 @@ warp_sources_contract() {
 }
 warp_auto_sources() {
     t_fresh
-    warp-reg() { return 1; }
+    export PATH="$CASE_TMP/bin:/usr/bin:/bin"
+    cat > "$CASE_TMP/bin/warp-reg" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    chmod +x "$CASE_TMP/bin/warp-reg" || exit 1
+    t_assert 'wgcf-cli 使用固定版本 tar.zstd 地址' test "$SBD_PEER_WARP_WGCF_URL" = \
+        'https://github.com/ArchiveNetwork/wgcf-cli/releases/download/v0.3.6'
     sbd_peer_warp_http_get() {
         case "$1" in
             "$SBD_PEER_WARP_REG_URL")
@@ -90,13 +99,14 @@ warp_auto_sources() {
 cat '$ROOT/tests/fixtures/warp-reg.json'
 EOF
                 ;;
-            "$SBD_PEER_WARP_WGCF_URL")
-                cat > "$2" <<EOF
+            "$SBD_PEER_WARP_WGCF_URL"/wgcf-cli-linux-*.tar.zstd)
+                mkdir -p "$CASE_TMP/wgcf-package" || return 1
+                cat > "$CASE_TMP/wgcf-package/wgcf-cli" <<EOF
 #!/usr/bin/env bash
-mkdir -p "\$PREFIX/bin"
-printf '#!/usr/bin/env bash\ncat "$ROOT/tests/fixtures/warp-wgcf.json"\n' > "\$PREFIX/bin/wgcf-cli"
-chmod +x "\$PREFIX/bin/wgcf-cli"
+cat '$ROOT/tests/fixtures/warp-wgcf.json'
 EOF
+                chmod +x "$CASE_TMP/wgcf-package/wgcf-cli" || return 1
+                tar --zstd -cf "$2" -C "$CASE_TMP/wgcf-package" wgcf-cli || return 1
                 ;;
             *) return 1 ;;
         esac
@@ -109,6 +119,17 @@ EOF
     t_assert 'wgcf-cli 缺失时临时下载后仍返回注册结果' jq -e '
         .private_key=="QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8="
         and .endpoint.v4=="162.159.192.2"' "$CASE_TMP/wgcf"
+    sbd_peer_warp_http_get() { return 1; }
+    t_run 1 sbd_peer_warp_fetch_wgcf "$CASE_TMP/wgcf-fail"
+    t_assert 'wgcf-cli 下载失败原因回传父 shell' test "$SBD_PEER_WARP_ERROR" = '下载 wgcf-cli 失败'
+}
+warp_resolver_fallback_contract() {
+    t_fresh
+    jq -n '{dns:{final:"cloudflare",servers:[{type:"udp",tag:"cloudflare",server:"1.1.1.1"}]},route:{}}' > "$SBD_CONFIG" || exit 1
+    sbd_peer_warp_fetch_reg() { cp "$ROOT/tests/fixtures/warp-reg.json" "$1"; }
+    t_run 0 sbd_peer_warp_prompt
+    t_assert '缺少全局域名解析器时 WARP endpoint 写回默认 DNS' jq -e \
+        '.domain_resolver=="cloudflare"' <<< "$SBD_PEER_VALUE"
 }
 warp_fallback_contract() {
     t_fresh
@@ -258,6 +279,7 @@ t_case 'WARP 注册 API sing-box 字段映射与缺省归一' warp_contract
 t_case 'WARP 下载/JSON/密钥/reserved 失败均不写入' warp_failures
 t_case 'WARP warp-reg/wgcf 注册形态归一' warp_sources_contract
 t_case 'WARP 本地来源失败时自动下载临时工具' warp_auto_sources
+t_case 'WARP 域名端点缺少全局 resolver 时写回 endpoint' warp_resolver_fallback_contract
 t_case 'WARP 三种来源按序回退' warp_fallback_contract
 t_case 'WARP 三种来源全部失败不写入' warp_all_fail_contract
 t_case 'WARP API 错误体显示 HTTP 状态与原因' warp_api_error_contract

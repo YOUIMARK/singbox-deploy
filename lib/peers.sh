@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 # WARP 注册来源按 warp-reg.sh → wgcf-cli → 第三方 API 回退；失败时不修改配置。
-SBD_PEER_WARP_REG_URL='https://warp-reg.vercel.app'
-SBD_PEER_WARP_WGCF_URL='https://wgcf-cli.vercel.app'
+SBD_PEER_WARP_REG_URL='https://raw.githubusercontent.com/chise0713/warp-reg.sh/master/warp-reg.sh'
+SBD_PEER_WARP_WGCF_URL='https://github.com/ArchiveNetwork/wgcf-cli/releases/download/v0.3.6'
 SBD_PEER_WARP_API='https://warp.cloudflare.now.cc/?run=register&format=sing-box'
 
 sbd_peer_cloudflared_route() {
@@ -233,30 +233,40 @@ sbd_peer_warp_fetch_reg() {
 }
 
 sbd_peer_warp_wgcf_install() {
-    local dir="$1" installer="$1/install.sh" candidate
-    [[ -n "$dir" ]] || return 1
-    if ! sbd_peer_warp_http_get "$SBD_PEER_WARP_WGCF_URL" "$installer"; then
-        SBD_PEER_WARP_ERROR='下载 wgcf-cli 安装脚本失败'
+    local dir="$1" machine archive candidate url
+    SBD_PEER_WARP_ERROR=''
+    SBD_PEER_WARP_TOOL=''
+    [[ -n "$dir" && -d "$dir" ]] || { SBD_PEER_WARP_ERROR='wgcf-cli 临时目录不可用'; return 1; }
+    case "$(uname -m)" in
+        x86_64|amd64) machine='64' ;;
+        i386|i686) machine='32' ;;
+        aarch64|arm64) machine='arm64-v8a' ;;
+        armv7l|armv7) machine='arm32-v7a' ;;
+        *) SBD_PEER_WARP_ERROR='当前架构没有可用的 wgcf-cli'; return 1 ;;
+    esac
+    archive="$dir/wgcf-cli.tar.zstd"
+    url="$SBD_PEER_WARP_WGCF_URL/wgcf-cli-linux-$machine.tar.zstd"
+    if ! sbd_peer_warp_http_get "$url" "$archive"; then
+        SBD_PEER_WARP_ERROR='下载 wgcf-cli 失败'
         return 1
     fi
-    if ! sbd_peer_warp_run env PREFIX="$dir" bash "$installer" >/dev/null 2>&1; then
-        SBD_PEER_WARP_ERROR='wgcf-cli 临时安装失败'
+    if ! tar --zstd -xf "$archive" -C "$dir" >/dev/null 2>&1; then
+        SBD_PEER_WARP_ERROR='解压 wgcf-cli 失败'
         return 1
     fi
-    for candidate in "$dir/bin/wgcf-cli" "$dir/wgcf-cli"; do
-        if [[ -x "$candidate" ]]; then
-            printf '%s\n' "$candidate"
-            return 0
-        fi
-    done
-    SBD_PEER_WARP_ERROR='wgcf-cli 安装后未找到可执行文件'
-    return 1
+    candidate="$dir/wgcf-cli"
+    if [[ ! -f "$candidate" ]] || ! chmod +x -- "$candidate"; then
+        SBD_PEER_WARP_ERROR='wgcf-cli 安装后未找到可执行文件'
+        return 1
+    fi
+    SBD_PEER_WARP_TOOL="$candidate"
 }
 
 sbd_peer_warp_fetch_wgcf() {
     local target="$1" dir='' tool='' rc=0 candidate=''
     [[ -n "$target" ]] || return 1
     SBD_PEER_WARP_ERROR=''
+    SBD_PEER_WARP_TOOL=''
     tool=$(command -v wgcf-cli 2>/dev/null) || tool=''
     dir=$(mktemp -d "${TMPDIR:-/tmp}/sbd-wgcf.XXXXXX") || {
         SBD_PEER_WARP_ERROR='无法创建临时目录'
@@ -264,10 +274,11 @@ sbd_peer_warp_fetch_wgcf() {
     }
     if [[ -z "$tool" ]]; then
         sbd_info 'wgcf-cli 未安装，正在下载临时副本'
-        tool=$(sbd_peer_warp_wgcf_install "$dir") || {
+        sbd_peer_warp_wgcf_install "$dir" || {
             rm -rf -- "$dir"
             return 1
         }
+        tool="$SBD_PEER_WARP_TOOL"
     fi
     : > "$target" || { rm -rf -- "$dir"; return 1; }
     (
@@ -334,13 +345,24 @@ sbd_peer_warp_obtain() {
 }
 
 sbd_peer_warp_prompt() {
-    local host value
+    local host value resolver='' config="$SBD_CONFIG"
     sbd_info '正在向 Cloudflare WARP 自动注册（warp-reg → wgcf-cli → API）'
     sbd_peer_warp_obtain || return $?
     value="$SBD_PEER_VALUE"
     host=$(jq -er '.peers[0].address' <<< "$value") || { _error 'WARP peer 地址缺失'; return 1; }
     if [[ "$(sbd_tls_identity "$host")" = DNS:* ]]; then
         sbd_policy_target dns default || { _error 'WARP peer 使用域名，但当前没有可用的默认 DNS'; return 1; }
+        resolver="$SBD_REPLY"
+        [[ -f "$config" ]] || config="$SBD_APP/presets/base.json"
+        if ! jq -e '
+            (.route.default_domain_resolver // null) as $resolver
+            | if ($resolver|type)=="object" then ($resolver.server // null) else $resolver end
+            | type=="string" and length>0' "$config" >/dev/null; then
+            value=$(jq --arg resolver "$resolver" '.domain_resolver=$resolver' <<< "$value") || {
+                _error '写入 WARP 域名解析器失败'
+                return 1
+            }
+        fi
     fi
     SBD_PEER_VALUE="$value"
 }
