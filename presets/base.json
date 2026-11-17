@@ -187,5 +187,11 @@
         "method": "drop"
       }
     ]
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "assets/cache.db"
+    }
   }
 }

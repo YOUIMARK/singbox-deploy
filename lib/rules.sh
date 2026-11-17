@@ -715,6 +715,11 @@ sbd_route_defaults() {
             | .route.rule_set = (reduce $sets[] as $set ($old;
                 if any(.[]; .tag == $set.tag) then . else . + [$set] end))
         ' "$stage/config.json") || { _error '补齐默认规则集失败'; return 1; }
+        if jq -e 'any(.route.rule_set[]?; .type == "remote")' <<< "$content" >/dev/null \
+            && jq -e '.experimental.cache_file == null' <<< "$content" >/dev/null; then
+            content=$(jq --arg path "$SBD_ASSET_DIR/cache.db" \
+                '.experimental.cache_file={enabled:true,path:$path}' <<< "$content") || { _error '启用规则集缓存失败'; return 1; }
+        fi
         sbd_record_write "$stage/config.json" "$content" || return 1
         sbd_policy_reconcile "$stage" || return 1
     fi

@@ -233,6 +233,9 @@ defaults_restore() {
         ([.route.rule_set[].tag]|sort)==["geoip-cn","geoip-private","geosite-ads","geosite-private"]' "$SBD_CONFIG"
     t_assert '默认规则集写入策略登记' jq -e '
         ([.policy.rule_sets[].id]|sort)==["geoip-cn","geoip-private","geosite-ads","geosite-private"]' "$SBD_REGISTRY"
+    t_assert '恢复默认时为远端规则集启用缓存' jq -e '
+        .experimental.cache_file.enabled==true
+        and (.experimental.cache_file.path|endswith("/assets/cache.db"))' "$SBD_CONFIG"
     t_assert '补齐默认规则后保留托管登记并重算位置' jq -e --arg id "$id" '
         (.policy.route_rules|length)==1
         and .policy.route_rules[0].id==$id

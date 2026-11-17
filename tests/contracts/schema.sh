@@ -3,6 +3,9 @@
 
 prepare_valid() {
     t_fresh
+    t_assert '默认模板启用相对路径规则集缓存' jq -e '
+        .experimental.cache_file.enabled==true
+        and .experimental.cache_file.path=="assets/cache.db"' "$ROOT/presets/base.json"
     mkdir "$CASE_TMP/stage" || exit 1
     cp "$ROOT/presets/base.json" "$CASE_TMP/stage/config.json" || exit 1
     t_run 0 sbd_prepare_config "$CASE_TMP/stage"
