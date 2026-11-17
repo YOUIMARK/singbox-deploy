@@ -56,7 +56,13 @@ else:
     assert q["pinSHA256" if profile == "hysteria2" else "pcs"] == [sha]
     assert sha != cert["public_key_sha256"]
 if profile == "hysteria2":
-    assert not any(k in q for k in ("up", "down", "up_mbps", "down_mbps", "congestion", "bbr_profile"))
+    up = node["client"].get("up_mbps")
+    down = node["client"].get("down_mbps")
+    if up is not None and down is not None:
+        assert q["upmbps"] == [str(up)] and q["downmbps"] == [str(down)]
+    else:
+        assert not any(k in q for k in ("up", "upmbps", "down", "downmbps"))
+    assert not any(k in q for k in ("congestion", "bbr_profile"))
     ports = node["client"].get("server_ports", [])
     if ports:
         assert q["mport"] == [",".join(p.replace(":", "-") for p in ports)]

@@ -436,6 +436,7 @@ sbd_entry_align() {
         .type==$node[0].client.type and (.users|length==1) and .users[0].password==$node[0].client.password and
         (if $scope=="delete" then true else .tls.enabled==true and $node[0].client.tls.enabled==true and
         (if .type=="hysteria2" then (.obfs // null)==($node[0].client.obfs // null) and
+            (.bbr_profile // "standard")==($node[0].client.bbr_profile // "standard") and
             (if .ignore_client_bandwidth==true then
                 (((.up_mbps // 0)>0 or (.down_mbps // 0)>0)==(($node[0].client.up_mbps // 0)>0 and ($node[0].client.down_mbps // 0)>0))
              else true end) else true end) end)
@@ -820,6 +821,20 @@ sbd_entry_change() {
             content=$(jq --arg tag "$tag" --argjson value "$value" '(.inbounds[]|select(.tag==$tag)) |= (del(.up_mbps,.down_mbps) + $value.server_options)' "$stage/config.json") || return 1
             sbd_record_write "$stage/config.json" "$content" || return 1
             content=$(jq --argjson value "$value" '.client |= (del(.up_mbps,.down_mbps) + $value.client_options)' "$stage/entry-node.json") || return 1 ;;
+        hy2_bandwidth_sync)
+            [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
+            jq -e 'if length==0 then true else (.up_mbps|type=="number" and floor==. and .>=1 and .<=999999999) and (.down_mbps|type=="number" and floor==. and .>=1 and .<=999999999) end' <<< "$value" >/dev/null || { _error 'Hysteria2 带宽无效'; return 1; }
+            content=$(jq --arg tag "$tag" --argjson value "$value" '
+                (.inbounds[]|select(.tag==$tag)) |= (
+                    (del(.up_mbps,.down_mbps) + $value) |
+                    if ($value|length)==0 then del(.ignore_client_bandwidth) else . end
+                )' "$stage/config.json") || return 1
+            sbd_record_write "$stage/config.json" "$content" || return 1
+            content=$(jq --argjson value "$value" '
+                .client |= (
+                    del(.up_mbps,.down_mbps) +
+                    (if ($value|length)==0 then {} else {up_mbps:$value.down_mbps,down_mbps:$value.up_mbps} end)
+                )' "$stage/entry-node.json") || return 1 ;;
         hy2_obfs)
             [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
             if [[ "$value" != null ]]; then
@@ -847,6 +862,15 @@ sbd_entry_change() {
             fi
             sbd_record_write "$stage/config.json" "$content" || return 1
             content=$(cat "$stage/entry-node.json") || return 1 ;;
+        hy2_bbr_profile)
+            [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
+            case "$value" in
+                standard|conservative|aggressive) ;;
+                *) _error 'Hysteria2 BBR 档位无效'; return 1 ;;
+            esac
+            content=$(jq --arg tag "$tag" --arg value "$value" '(.inbounds[]|select(.tag==$tag)|.bbr_profile)=$value' "$stage/config.json") || return 1
+            sbd_record_write "$stage/config.json" "$content" || return 1
+            content=$(jq --arg value "$value" '.client.bbr_profile=$value' "$stage/entry-node.json") || return 1 ;;
         tls)
             case "$profile" in shadowsocks|vmess_ws|vless_ws) _error '此配置档不使用源站 TLS，不能添加证书或 Reality'; return 1 ;; esac
             if [[ "$profile" = anyreality || "$profile" = vless_reality ]]; then
@@ -1198,20 +1222,26 @@ sbd_entry_create_classic_prompt() {
 }
 
 sbd_entry_hy2_prompt() {
-    local choice up down obfs='null' server='{}' client='{}' password low high maximum
-    sbd_ui_options '[1] 客户端 BBR（默认）' '[2] 客户端 Brutal，分别填写上/下行 Mbps'
-    sbd_entry_number_prompt '客户端拥塞策略' 1 2 1 || return $?; choice="$SBD_REPLY"
+    local choice up down obfs='null' server='{}' client='{}' password low high maximum profile=''
+    sbd_ui_options '[1] BBR（默认，不设带宽）' '[2] Brutal（按服务器带宽，双端自动同步）'
+    sbd_entry_number_prompt '带宽策略' 1 2 1 || return $?; choice="$SBD_REPLY"
     if [[ "$choice" = 2 ]]; then
-        sbd_entry_number_prompt '客户端上传 Mbps（客户端→服务器）' 1 999999999 || return $?; up="$SBD_REPLY"
-        sbd_entry_number_prompt '客户端下载 Mbps（服务器→客户端）' 1 999999999 || return $?; down="$SBD_REPLY"
-        client=$(jq -n --argjson up "$up" --argjson down "$down" '{up_mbps:$up,down_mbps:$down}') || return 1
-    fi
-    sbd_ui_options '[1] 不设置服务端带宽上限（默认）' '[2] 分别填写服务端上/下行上限'
-    sbd_entry_number_prompt '服务端带宽设置' 1 2 1 || return $?; choice="$SBD_REPLY"
-    if [[ "$choice" = 2 ]]; then
-        sbd_entry_number_prompt '服务端上传 Mbps（服务器→客户端）' 1 999999999 || return $?; up="$SBD_REPLY"
-        sbd_entry_number_prompt '服务端下载 Mbps（客户端→服务器）' 1 999999999 || return $?; down="$SBD_REPLY"
+        sbd_entry_number_prompt '服务器上行 Mbps（服务器→客户端）' 1 999999999 || return $?; up="$SBD_REPLY"
+        sbd_entry_number_prompt '服务器下行 Mbps（客户端→服务器）' 1 999999999 || return $?; down="$SBD_REPLY"
         server=$(jq -n --argjson up "$up" --argjson down "$down" '{up_mbps:$up,down_mbps:$down}') || return 1
+        # Brutal 需要双端都上报带宽才能生效；客户端方向与服务器相反，这里一次填写并镜像。
+        client=$(jq -n --argjson up "$down" --argjson down "$up" '{up_mbps:$up,down_mbps:$down}') || return 1
+    else
+        sbd_ui_options '[1] standard（默认）' '[2] conservative（更保守）' '[3] aggressive（更激进）'
+        sbd_entry_number_prompt 'BBR 调优档' 1 3 1 || return $?; choice="$SBD_REPLY"
+        case "$choice" in
+            2) profile=conservative ;;
+            3) profile=aggressive ;;
+        esac
+        if [[ -n "$profile" ]]; then
+            server=$(jq -n --arg profile "$profile" '{bbr_profile:$profile}') || return 1
+            client=$(jq -n --arg profile "$profile" '{bbr_profile:$profile}') || return 1
+        fi
     fi
     sbd_ui_options '[1] 不启用混淆（默认）' '[2] Salamander' '[3] Gecko（自定义尺寸采用 URI 扩展）'
     sbd_entry_number_prompt '混淆方式' 1 3 1 || return $?; choice="$SBD_REPLY"
@@ -1226,24 +1256,6 @@ sbd_entry_hy2_prompt() {
         fi
     fi
     SBD_HY2_REQUEST=$(jq -n --argjson server "$server" --argjson client "$client" --slurpfile obfs <(printf '%s' "$obfs") '{server_options:$server,client_options:$client,obfs:$obfs[0]}') || return 1
-}
-
-sbd_entry_hy2_bandwidth_prompt() {
-    local choice up down client server
-    sbd_ui_options '[1] BBR + 不设置服务端上限' '[2] Brutal + 设置服务端上限（两侧数值分别填写）'
-    sbd_read_integer '客户端/服务端带宽策略' 1 2 || return $?; choice="$SBD_REPLY"
-    if [[ "$choice" = 1 ]]; then
-        SBD_HY2_REQUEST='{"client_options":{},"server_options":{}}'
-    else
-        sbd_entry_number_prompt '客户端上传 Mbps（客户端→服务器）' 1 999999999 || return $?; up="$SBD_REPLY"
-        sbd_entry_number_prompt '客户端下载 Mbps（服务器→客户端）' 1 999999999 || return $?; down="$SBD_REPLY"
-        client=$(jq -n --argjson up "$up" --argjson down "$down" '{up_mbps:$up,down_mbps:$down}') || return 1
-        sbd_entry_number_prompt '服务端上传 Mbps（服务器→客户端）' 1 999999999 || return $?; up="$SBD_REPLY"
-        sbd_entry_number_prompt '服务端下载 Mbps（客户端→服务器）' 1 999999999 || return $?; down="$SBD_REPLY"
-        server=$(jq -n --argjson up "$up" --argjson down "$down" '{up_mbps:$up,down_mbps:$down}') || return 1
-        SBD_HY2_REQUEST=$(jq -n --argjson client "$client" --argjson server "$server" '{client_options:$client,server_options:$server}') || return 1
-    fi
-    SBD_HY2_ACTION=hy2_bandwidth
 }
 
 # 解析 3050 / 20000-50000 / 11,13,15-17 为原生 server_ports 的 ["a:b"] 数组。
@@ -1299,7 +1311,7 @@ sbd_entry_hy2_masquerade_show() {
 }
 
 sbd_entry_hy2_manage_prompt() {
-    local node="$1" choice="$2" up down password low high maximum current ports tag paired
+    local node="$1" choice="$2" up down password low high maximum current ports tag
     case "$choice" in
         1)
             sbd_ui_options '[1] 查看当前配置' '[2] 设置端口范围' '[3] 关闭端口跳跃'
@@ -1332,40 +1344,17 @@ sbd_entry_hy2_manage_prompt() {
             SBD_HY2_REQUEST=$(jq -n --argjson ports "$ports" '{server_ports:$ports}') || return 1
             ;;
         2)
-            tag=$(jq -r '.inbound_tag' <<< "$node") || return 1
-            paired=$(jq -r --arg tag "$tag" '[.inbounds[]|select(.tag==$tag)][0].ignore_client_bandwidth // false' "$SBD_CONFIG") || return 1
-            if [[ "$paired" = true ]]; then
-                sbd_entry_hy2_bandwidth_prompt
-                return $?
-            fi
-            sbd_ui_options '[1] BBR（不设定固定带宽）' '[2] Brutal（设置上/下行 Mbps）'
-            sbd_read_integer '客户端拥塞策略' 1 2 || return $?; choice="$SBD_REPLY"
+            sbd_ui_options '[1] BBR（双端清除带宽）' '[2] Brutal（填写服务器上/下行，双端同步）'
+            sbd_read_integer '带宽策略' 1 2 || return $?; choice="$SBD_REPLY"
             if [[ "$choice" = 1 ]]; then SBD_HY2_REQUEST='{}'
             else
-                sbd_entry_number_prompt '客户端上传 Mbps（客户端→服务器）' 1 999999999 || return $?; up="$SBD_REPLY"
-                sbd_entry_number_prompt '客户端下载 Mbps（服务器→客户端）' 1 999999999 || return $?; down="$SBD_REPLY"
+                sbd_entry_number_prompt '服务器上行 Mbps（服务器→客户端）' 1 999999999 || return $?; up="$SBD_REPLY"
+                sbd_entry_number_prompt '服务器下行 Mbps（客户端→服务器）' 1 999999999 || return $?; down="$SBD_REPLY"
                 SBD_HY2_REQUEST=$(jq -n --argjson up "$up" --argjson down "$down" '{up_mbps:$up,down_mbps:$down}') || return 1
             fi
-            SBD_HY2_ACTION=hy2_client_bandwidth
+            SBD_HY2_ACTION=hy2_bandwidth_sync
             ;;
         3)
-            tag=$(jq -r '.inbound_tag' <<< "$node") || return 1
-            paired=$(jq -r --arg tag "$tag" '[.inbounds[]|select(.tag==$tag)][0].ignore_client_bandwidth // false' "$SBD_CONFIG") || return 1
-            if [[ "$paired" = true ]]; then
-                sbd_entry_hy2_bandwidth_prompt
-                return $?
-            fi
-            sbd_ui_options '[1] 不设定服务端上限' '[2] 设置服务端上/下行 Mbps'
-            sbd_read_integer '服务端带宽设置' 1 2 || return $?; choice="$SBD_REPLY"
-            if [[ "$choice" = 1 ]]; then SBD_HY2_REQUEST='{}'
-            else
-                sbd_entry_number_prompt '服务端上传 Mbps（服务器→客户端）' 1 999999999 || return $?; up="$SBD_REPLY"
-                sbd_entry_number_prompt '服务端下载 Mbps（客户端→服务器）' 1 999999999 || return $?; down="$SBD_REPLY"
-                SBD_HY2_REQUEST=$(jq -n --argjson up "$up" --argjson down "$down" '{up_mbps:$up,down_mbps:$down}') || return 1
-            fi
-            SBD_HY2_ACTION=hy2_server_bandwidth
-            ;;
-        4)
             sbd_ui_options '[1] 关闭混淆' '[2] Salamander' '[3] Gecko（可设置尺寸）'
             sbd_read_integer '混淆方式' 1 3 || return $?; choice="$SBD_REPLY"
             if [[ "$choice" = 1 ]]; then SBD_HY2_REQUEST='null'
@@ -1382,7 +1371,7 @@ sbd_entry_hy2_manage_prompt() {
             fi
             SBD_HY2_ACTION=hy2_obfs
             ;;
-        5)
+        4)
             sbd_ui_options '[1] 查看当前配置' '[2] 反向代理页面 (proxy)' '[3] 自定义响应内容 (string)' '[4] 关闭伪装'
             sbd_read_integer '伪装方式' 1 4 || return $?; choice="$SBD_REPLY"
             if [[ "$choice" = 1 ]]; then
@@ -1410,13 +1399,26 @@ sbd_entry_hy2_manage_prompt() {
             fi
             SBD_HY2_ACTION=hy2_masquerade
             ;;
+        5)
+            tag=$(jq -r '.inbound_tag' <<< "$node") || return 1
+            current=$(jq -r --arg tag "$tag" '[.inbounds[]|select(.tag==$tag)][0].bbr_profile // "standard"' "$SBD_CONFIG") || return 1
+            sbd_info "当前 BBR 档位: $current（只在该端使用 BBR 时生效；Brutal 下忽略）"
+            sbd_ui_options '[1] standard（默认）' '[2] conservative（更保守）' '[3] aggressive（更激进）'
+            sbd_read_integer 'BBR 调优档' 1 3 || return $?
+            case "$SBD_REPLY" in
+                1) SBD_HY2_REQUEST=standard ;;
+                2) SBD_HY2_REQUEST=conservative ;;
+                3) SBD_HY2_REQUEST=aggressive ;;
+            esac
+            SBD_HY2_ACTION=hy2_bbr_profile
+            ;;
     esac
 }
 
 sbd_entry_hy2_actions() {
     sbd_ui_options '[1] 修改显示名' '[2] 更换认证密码' '[3] 修改客户端连接地址/映射端口' '[4] 修改本地监听'
-    sbd_ui_options '[5] 客户端端口跳跃' '[6] 客户端上/下行带宽' '[7] 服务端上/下行带宽' '[8] Salamander/Gecko 混淆'
-    sbd_ui_options '[9] 切换 TLS 来源' '[10] HTTP/3 伪装 masquerade'
+    sbd_ui_options '[5] 客户端端口跳跃' '[6] 上/下行带宽' '[7] Salamander/Gecko 混淆'
+    sbd_ui_options '[8] 切换 TLS 来源' '[9] HTTP/3 伪装 masquerade' '[10] BBR 调优档'
     sbd_ui_options '[0] 返回节点选择'
 }
 
@@ -1557,14 +1559,20 @@ sbd_entry_change_prompt() {
             else action=delete; value=''; fi ;;
         8)
             if [[ "$mode" = edit && "$profile" = hysteria2 ]]; then
-                sbd_entry_hy2_manage_prompt "$node" 4 || return $?; action="$SBD_HY2_ACTION"; value="$SBD_HY2_REQUEST"
+                action=tls; sbd_entry_tls_prompt "$profile" "$(jq -r '.client.server' <<< "$node")" || return $?; value="$SBD_TLS_REQUEST"
             else
                 [[ "$profile" = shadowsocks ]] || { _error '此节点不是 Shadowsocks'; return 1; }
                 action=ss; sbd_entry_ss_prompt || return $?; value="$SBD_SS_REQUEST"
             fi ;;
         9)
             if [[ "$mode" = edit && "$profile" = hysteria2 ]]; then
-                action=tls; sbd_entry_tls_prompt "$profile" "$(jq -r '.client.server' <<< "$node")" || return $?; value="$SBD_TLS_REQUEST"
+                SBD_HY2_VIEW=false
+                sbd_entry_hy2_manage_prompt "$node" 4 || return $?
+                if [[ "$SBD_HY2_VIEW" = true ]]; then
+                    sbd_ui_pause
+                    continue
+                fi
+                action="$SBD_HY2_ACTION"; value="$SBD_HY2_REQUEST"
             else
                 [[ "$profile" = *_ws ]] || { _error '此节点不是 WS CDN 配置档'; return 1; }
                 action=cdn
@@ -1575,13 +1583,7 @@ sbd_entry_change_prompt() {
             fi ;;
         10)
             [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
-            SBD_HY2_VIEW=false
-            sbd_entry_hy2_manage_prompt "$node" 5 || return $?
-            if [[ "$SBD_HY2_VIEW" = true ]]; then
-                sbd_ui_pause
-                continue
-            fi
-            action="$SBD_HY2_ACTION"; value="$SBD_HY2_REQUEST" ;;
+            sbd_entry_hy2_manage_prompt "$node" 5 || return $?; action="$SBD_HY2_ACTION"; value="$SBD_HY2_REQUEST" ;;
     esac
     sbd_read_required '确认此操作并按需重启？输入 y 确认，其他输入取消' || return $?
     [[ "$SBD_REPLY" = y ]] || return 2
@@ -1668,7 +1670,7 @@ sbd_entry_adopt() {
             fi
             if [[ "$profile" = hysteria2 ]]; then
                 content=$(jq -c '.client_options // {}' "$stage/adopt-facts.json") || return 1
-                client=$(jq --argjson options "$content" --slurpfile inbound "$stage/adopt-inbound.json" '. + $options + (if $inbound[0].obfs!=null then {obfs:$inbound[0].obfs} else {} end)' <<< "$client") || return 1
+                client=$(jq --argjson options "$content" --slurpfile inbound "$stage/adopt-inbound.json" '. + $options + (if $inbound[0].obfs!=null then {obfs:$inbound[0].obfs} else {} end) + (if $inbound[0].bbr_profile!=null then {bbr_profile:$inbound[0].bbr_profile} else {} end)' <<< "$client") || return 1
             fi
         fi
     fi
