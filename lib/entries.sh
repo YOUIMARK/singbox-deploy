@@ -533,7 +533,7 @@ sbd_entry_cdn() {
     host=$(jq -er '.host | select(type=="string" and length>0)' <<< "$value") || { _error '缺少 CDN 域名'; return 1; }
     [[ "$(sbd_tls_identity "$host" 2>/dev/null)" = DNS:* ]] || { _error 'CDN Host 必须是域名'; return 1; }
     if ! port=$(jq -er '.origin_port' <<< "$value") || ! port=$(sbd_integer "$port" 1 65535); then
-        _error '缺少有效的回源映射端口'; return 1
+        _error '缺少有效的回源端口'; return 1
     fi
     path=$(jq -er '.path | select(type=="string" and length>0)' <<< "$value") || { _error '缺少 WS path'; return 1; }
     sbd_entry_ws_path "$path"
@@ -762,9 +762,9 @@ sbd_entry_change() {
             sbd_record_write "$stage/config.json" "$content" || return 1
             content=$(jq --rawfile value <(printf '%s' "$value") --arg key "$tls" '.client[$key]=$value' "$stage/entry-node.json") || return 1 ;;
         external)
+            # 对外地址是分享元数据；对外端口不单独记录，非 CDN 节点跟随本地监听端口。
             sbd_entry_host "$(jq -r '.server' <<< "$value")" || return 1
-            source=$(sbd_integer "$(jq -r '.server_port' <<< "$value")" 1 65535) || { _error '映射端口无效'; return 1; }
-            content=$(jq --argjson value "$value" --argjson port "$source" '.client.server=$value.server | .client.server_port=$port' "$stage/entry-node.json") || return 1 ;;
+            content=$(jq --arg server "$(jq -r '.server' <<< "$value")" '.client.server=$server' "$stage/entry-node.json") || return 1 ;;
         listen)
             source=$(sbd_integer "$(jq -r '.listen_port' <<< "$value")" 1 65535) || { _error '监听端口无效'; return 1; }
             tls=tcp; [[ "$(jq -r '.profile' "$stage/entry-node.json")" != hysteria2 ]] || tls=udp
@@ -789,7 +789,7 @@ sbd_entry_change() {
             sbd_record_write "$stage/config.json" "$content" || return 1
             content=$(jq --arg new_tag "$new_tag" --argjson port "$source" '
                 .inbound_tag=$new_tag |
-                (if .ingress?.type=="cdn" then .ingress.origin_port=$port else . end)
+                (if .ingress?.type=="cdn" then .ingress.origin_port=$port else .client.server_port=$port end)
             ' "$stage/entry-node.json") || return 1 ;;
         hy2_hops)
             [[ "$profile" = hysteria2 ]] || { _error '此节点不是 Hysteria2'; return 1; }
@@ -1416,7 +1416,7 @@ sbd_entry_hy2_manage_prompt() {
 }
 
 sbd_entry_hy2_actions() {
-    sbd_ui_options '[1] 修改显示名' '[2] 更换认证密码' '[3] 修改客户端连接地址/映射端口' '[4] 修改本地监听'
+    sbd_ui_options '[1] 修改显示名' '[2] 更换认证密码' '[3] 修改客户端连接地址' '[4] 修改本地监听'
     sbd_ui_options '[5] 客户端端口跳跃' '[6] 上/下行带宽' '[7] Salamander/Gecko 混淆'
     sbd_ui_options '[8] 切换 TLS 来源' '[9] HTTP/3 伪装 masquerade' '[10] BBR 调优档'
     sbd_ui_options '[0] 返回节点选择'
@@ -1454,7 +1454,7 @@ sbd_entry_create_prompt() {
 
 sbd_entry_actions() {
     local profile="$1" mode="${2:-all}"
-    sbd_ui_options '[1] 修改显示名' '[2] 更换认证密码/UUID' '[3] 修改客户端连接地址/映射端口' '[4] 修改本地监听'
+    sbd_ui_options '[1] 修改显示名' '[2] 更换认证密码/UUID' '[3] 修改客户端连接地址' '[4] 修改本地监听'
     SBD_ENTRY_ACTIONS=' 0 1 2 3 4 '
     case "$profile" in
         hysteria2) sbd_ui_options '[5] 切换 TLS 来源'; SBD_ENTRY_ACTIONS+='5 ' ;;
@@ -1523,8 +1523,7 @@ sbd_entry_change_prompt() {
         3)
             action=external
             sbd_entry_server_prompt "$(jq -r '.client.server' <<< "$node")" || return $?; server="$SBD_REPLY"
-            sbd_entry_number_prompt '客户端映射端口' 1 65535 "$(jq -r '.client.server_port' <<< "$node")" || return $?
-            value=$(jq -n --arg server "$server" --argjson port "$SBD_REPLY" '{server:$server,server_port:$port}') || return 1 ;;
+            value=$(jq -n --arg server "$server" '{server:$server}') || return 1 ;;
         4)
             action=listen
             sbd_entry_listen_prompt || return $?; server="$SBD_REPLY"

@@ -34,6 +34,15 @@ field_contract() {
     t_run 1 sbd_entry_hy2_ports '20000-20100-30000'
     t_run 1 sbd_entry_hy2_ports '0-65536'
 }
+edit_menu_contract() {
+    t_fresh
+    sbd_entry_actions anytls edit > "$CASE_TMP/output" 2>&1 || exit 1
+    t_contains "$CASE_TMP/output" '[3] 修改客户端连接地址'
+    t_absent "$CASE_TMP/output" '映射端口'
+    sbd_entry_hy2_actions > "$CASE_TMP/output" 2>&1 || exit 1
+    t_contains "$CASE_TMP/output" '[4] 修改本地监听'
+    t_absent "$CASE_TMP/output" '映射端口'
+}
 anytls_contract() {
     t_seed
     t_entry_add anytls
@@ -419,6 +428,7 @@ reality_tunnel_two_nodes_contract() {
     ' "$SBD_REGISTRY"
 }
 t_case '节点字段重问、十进制与秘密随机输入' field_contract
+t_case '节点编辑菜单不再询问映射端口' edit_menu_contract
 t_case 'AnyTLS 真实配置与 URI 编码' anytls_contract
 t_case 'AnyReality 真实密钥与原生客户端/服务端' reality_contract
 t_case 'Hysteria2 默认 BBR 和证书指纹 URI' hy2_default

@@ -13,7 +13,7 @@ ss_edit() {
     t_run 0 t_classic_uri
     t_run 0 sbd_apply sbd_entry_change "$NODE_ID" password 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
     t_run 0 sbd_apply sbd_entry_change "$NODE_ID" listen '{"listen":"127.0.0.1","listen_port":19604}'
-    t_assert '监听变更不误改客户端映射' jq -e '.nodes[0].client.server_port==29504' "$SBD_REGISTRY"
+    t_assert '监听变更同步分享端口' jq -e '.nodes[0].client.server_port==19604' "$SBD_REGISTRY"
     t_run 0 t_classic_uri
     t_entry_save
     t_run 1 sbd_apply sbd_entry_change "$NODE_ID" password bad
@@ -58,6 +58,14 @@ listen_tag_collision() {
     t_run 0 sbd_apply sbd_entry_change "$NODE_ID" listen '{"listen":"127.0.0.1","listen_port":19604}'
     t_assert '新 tag 冲突时追加序号' jq -e '.nodes[0].inbound_tag=="vless-reality-19604-2"' "$SBD_REGISTRY"
     t_assert '冲突序号写入原生 tag' jq -e 'any(.inbounds[];.tag=="vless-reality-19604-2")' "$SBD_CONFIG"
+}
+cdn_listen_keeps_frontend_port() {
+    t_seed
+    t_entry_add vmess_ws
+    t_run 0 sbd_apply sbd_entry_change "$NODE_ID" listen '{"listen":"127.0.0.1","listen_port":19607}'
+    t_assert 'CDN 改回源端口不动前端端口' jq -e '.nodes[0].client.server_port==443 and .nodes[0].ingress.origin_port==19607' "$SBD_REGISTRY"
+    t_assert 'CDN 回源端口写入原生入站' jq -e '.inbounds[0].listen_port==19607' "$SBD_CONFIG"
+    t_run 0 t_classic_uri
 }
 uuid_edits() {
     t_seed
@@ -105,6 +113,7 @@ preserve_ws() {
 t_case 'SS 算法/网络/密钥/监听事务和错误保留' ss_edit
 t_case '监听端口变更同步 inbound tag 与存活引用' listen_tag_follows
 t_case '监听端口新 tag 冲突追加序号' listen_tag_collision
+t_case 'CDN 节点改回源端口保留前端分享端口' cdn_listen_keeps_frontend_port
 t_case '三种 UUID 配置档真实认证更新' uuid_edits
 t_case 'VLESS Reality 重新生成密钥并保留 Vision' vision_rotate
 t_case 'VMess UUID/路径/AEAD/early data 漂移拒绝' drift_contract

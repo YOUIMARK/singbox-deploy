@@ -10,9 +10,12 @@ edit_identity() {
     local id="$NODE_ID"
     t_run 0 sbd_apply sbd_entry_change "$id" name '新名字 /#'
     t_run 0 sbd_apply sbd_entry_change "$id" password 'new@:/?# &+密码'
-    t_run 0 sbd_apply sbd_entry_change "$id" external '{"server":"198.51.100.10","server_port":30443}'
-    t_assert '改名/密码/外网映射不改变稳定 ID' test "$(jq -r '.nodes[0].id' "$SBD_REGISTRY")" = "$id"
-    t_assert '密码同步原生用户' jq -e '.inbounds[0].users[0].password=="new@:/?# &+密码" and .inbounds[0].listen_port==19501' "$SBD_CONFIG"
+    t_run 0 sbd_apply sbd_entry_change "$id" external '{"server":"198.51.100.10"}'
+    t_assert '改名/密码/对外地址不改变稳定 ID' test "$(jq -r '.nodes[0].id' "$SBD_REGISTRY")" = "$id"
+    t_assert '对外地址与分享端口分开维护' jq -e '.nodes[0].client.server=="198.51.100.10" and .nodes[0].client.server_port==29501' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_entry_change "$id" listen '{"listen":"127.0.0.1","listen_port":19607}'
+    t_assert '改本地监听同步分享端口' jq -e '.nodes[0].client.server_port==19607' "$SBD_REGISTRY"
+    t_assert '密码同步原生用户' jq -e '.inbounds[0].users[0].password=="new@:/?# &+密码" and .inbounds[0].listen_port==19607' "$SBD_CONFIG"
     t_run 0 t_entry_uri anytls
 }
 drift_password() {
@@ -54,7 +57,7 @@ state_failure() {
     t_unchanged
     t_assert '失败回收新证书' test -z "$(find "$SBD_CERT_DIR" -mindepth 1 -maxdepth 1 -type d)"
 }
-t_case '改名/认证/映射统一重建且稳定 ID 不变' edit_identity
+t_case '改名/认证/对外地址统一重建且稳定 ID 不变' edit_identity
 t_case '外部认证漂移拒绝覆盖且保留旧导出' drift_password
 t_case '定点节点编辑保留合法自定义配置' preserve_custom
 t_case '引用中的 inbound 不能删除' delete_referenced

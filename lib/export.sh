@@ -92,7 +92,7 @@ sbd_share_emit() {
     local node="$1" scheme="$2" query="$3" password auth server port name
     password=$(sbd_entry_text "$node" .client.password 密码) && server=$(sbd_entry_text "$node" .client.server 对外地址) &&
         name=$(sbd_entry_text "$node" .name 名称) || return 1
-    port=$(jq -er '.client.server_port' "$node") || { _error '分享缺少映射端口'; return 1; }
+    port=$(jq -er '.client.server_port' "$node") || { _error '分享缺少客户端端口'; return 1; }
     auth=$(sbd_uri_escape "$password") || { _error '密码编码失败'; return 1; }
     sbd_uri_build "$scheme" "$auth" "$server" "$port" "$query" "$name"
 }
