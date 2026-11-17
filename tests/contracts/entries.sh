@@ -273,6 +273,7 @@ t_reality_tunnel_seed() {
     t_seed
     t_patch_config --slurpfile base "$ROOT/presets/base.json" '
         .route.rules=$base[0].route.rules |
+        .route.rule_set=$base[0].route.rule_set |
         .route.default_domain_resolver="system" |
         .dns={"servers":[{"type":"local","tag":"system"}],"final":"system"}
     '

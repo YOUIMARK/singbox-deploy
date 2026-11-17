@@ -119,6 +119,48 @@
   "route": {
     "final": "direct",
     "default_domain_resolver": "cloudflare",
+    "rule_set": [
+      {
+        "type": "remote",
+        "tag": "geoip-cn",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs",
+        "update_interval": "1d",
+        "http_client": {
+          "version": 2
+        }
+      },
+      {
+        "type": "remote",
+        "tag": "geoip-private",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/private.srs",
+        "update_interval": "1d",
+        "http_client": {
+          "version": 2
+        }
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-ads",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ads-all.srs",
+        "update_interval": "1d",
+        "http_client": {
+          "version": 2
+        }
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-private",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/private.srs",
+        "update_interval": "1d",
+        "http_client": {
+          "version": 2
+        }
+      }
+    ],
     "rules": [
       {
         "action": "sniff"
@@ -133,7 +175,23 @@
       {
         "ip_is_private": true,
         "action": "reject"
+      },
+      {
+        "rule_set": [
+          "geoip-cn",
+          "geoip-private",
+          "geosite-ads",
+          "geosite-private"
+        ],
+        "action": "reject",
+        "method": "drop"
       }
     ]
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "assets/cache.db"
+    }
   }
 }
