@@ -228,19 +228,23 @@ defaults_restore() {
     id=$(t_policy_id route_rules) || exit 1
     t_run 0 sbd_rules_menu <<< $'8\ny\n0'
     t_contains "$CASE_TMP/output" '默认路由规则已补齐'
-    t_assert '补齐默认规则且保留自定义规则' jq -e '.route.rules[0]=={action:"sniff"} and .route.rules[1]=={protocol:"dns",action:"hijack-dns"} and .route.rules[2]=={action:"resolve"} and .route.rules[3]=={ip_is_private:true,action:"reject"} and .route.rules[4].domain=="custom.example" and (.route.rules|length==5)' "$SBD_CONFIG"
+    t_assert '补齐默认规则且保留自定义规则' jq -e '.route.rules[0]=={action:"sniff"} and .route.rules[1]=={protocol:"dns",action:"hijack-dns"} and .route.rules[2]=={action:"resolve"} and .route.rules[3].action=="reject" and .route.rules[4]=={ip_is_private:true,action:"reject"} and .route.rules[5].domain=="custom.example" and (.route.rules|length==6)' "$SBD_CONFIG"
+    t_assert '补齐默认规则集' jq -e '
+        ([.route.rule_set[].tag]|sort)==["geoip-cn","geoip-private","geosite-ads","geosite-private"]' "$SBD_CONFIG"
+    t_assert '默认规则集写入策略登记' jq -e '
+        ([.policy.rule_sets[].id]|sort)==["geoip-cn","geoip-private","geosite-ads","geosite-private"]' "$SBD_REGISTRY"
     t_assert '补齐默认规则后保留托管登记并重算位置' jq -e --arg id "$id" '
         (.policy.route_rules|length)==1
         and .policy.route_rules[0].id==$id
-        and .policy.route_rules[0].index==4
+        and .policy.route_rules[0].index==5
         and .policy.route_rules[0].expected.domain=="custom.example"' "$SBD_REGISTRY"
     t_run 0 sbd_rules_menu <<< $'8\ny\n0'
-    t_assert '反复补齐不复制规则' jq -e '(.route.rules|length)==5' "$SBD_CONFIG"
+    t_assert '反复补齐不复制规则' jq -e '(.route.rules|length)==6 and (.route.rule_set|length)==4' "$SBD_CONFIG"
     t_assert '反复补齐保留托管登记' jq -e --arg id "$id" '
-        any(.policy.route_rules[]; .id==$id and .index==4 and .expected.domain=="custom.example")' "$SBD_REGISTRY"
+        any(.policy.route_rules[]; .id==$id and .index==5 and .expected.domain=="custom.example")' "$SBD_REGISTRY"
     t_run 0 sbd_apply sbd_policy_rule route_rules delete "$id"
     t_assert '补齐后仍可按登记删除自定义规则' jq -e '
-        (.route.rules|length)==4 and ((.policy.route_rules // [])|length)==0' "$SBD_CONFIG"
+        (.route.rules|length)==5 and ((.policy.route_rules // [])|length)==0' "$SBD_CONFIG"
 }
 t_case '规则集 URL 校验不依赖 assert' url_validation
 t_case '本地源版本 1 经核心编译和原生配置校验' local_contract

@@ -703,10 +703,21 @@ sbd_route_rule_remove() {
 }
 
 sbd_route_defaults() {
-    local stage="$1" defaults content tags tag
+    local stage="$1" defaults sets content tags tag
     defaults=$(jq -c '.route.rules // []' "$SBD_APP/presets/base.json") || { _error '读取默认路由规则失败'; return 1; }
+    sets=$(jq -c '.route.rule_set // []' "$SBD_APP/presets/base.json") || { _error '读取默认规则集失败'; return 1; }
     jq -e 'type=="array" and length>0' <<< "$defaults" >/dev/null || { _error '默认路由规则缺失'; return 1; }
+    jq -e 'type=="array"' <<< "$sets" >/dev/null || { _error '默认规则集无效'; return 1; }
     sbd_policy_begin "$stage" || return 1
+    if [[ "$(jq 'length' <<< "$sets")" != 0 ]]; then
+        content=$(jq --argjson sets "$sets" '
+            (.route.rule_set // []) as $old
+            | .route.rule_set = (reduce $sets[] as $set ($old;
+                if any(.[]; .tag == $set.tag) then . else . + [$set] end))
+        ' "$stage/config.json") || { _error '补齐默认规则集失败'; return 1; }
+        sbd_record_write "$stage/config.json" "$content" || return 1
+        sbd_policy_reconcile "$stage" || return 1
+    fi
     content=$(python3 -I "$SBD_APP/support/policy_records.py" defaults "$stage" "$defaults") || { _error '补齐默认路由规则失败'; return 1; }
     sbd_record_write "$stage/config.json" "$(jq -c '.config' <<< "$content")" || return 1
     sbd_record_write "$stage/registry.json" "$(jq -c '.registry' <<< "$content")" || return 1
@@ -719,7 +730,7 @@ sbd_route_defaults() {
 
 sbd_rule_defaults_prompt() {
     local rc
-    sbd_info '默认规则：sniff 嗅探、DNS 流量交给内置 DNS、resolve 域名解析、拒绝私网地址'
+    sbd_info '默认规则：sniff 嗅探、DNS 流量交给内置 DNS、resolve 域名解析、按规则集 reject drop、拒绝私网地址'
     sbd_info '只补齐缺失的默认规则；已有自定义路由规则保留'
     rc=0; sbd_policy_confirm || rc=$?
     [[ "$rc" != 2 ]] || return 2
