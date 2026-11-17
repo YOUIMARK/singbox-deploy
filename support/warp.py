@@ -41,6 +41,84 @@ def _wireguard_endpoint(data):
     return None
 
 
+def _wireguard_settings(data):
+    if not isinstance(data, dict):
+        return None
+
+    def from_settings(container):
+        settings = container.get("settings")
+        if isinstance(settings, dict) and isinstance(settings.get("secretKey"), str):
+            return settings
+        return None
+
+    def from_outbounds(container):
+        outbounds = container.get("outbounds")
+        if not isinstance(outbounds, list):
+            return None
+        for outbound in outbounds:
+            if not isinstance(outbound, dict):
+                continue
+            settings = outbound.get("settings")
+            if isinstance(settings, dict) and isinstance(settings.get("secretKey"), str):
+                return settings
+        return None
+
+    settings = from_settings(data)
+    if settings is not None:
+        return settings
+    for key in ("config", "data"):
+        child = data.get(key)
+        if not isinstance(child, dict):
+            continue
+        settings = from_settings(child) or from_outbounds(child)
+        if settings is not None:
+            return settings
+    settings = from_outbounds(data)
+    if settings is not None:
+        return settings
+    if isinstance(data.get("secretKey"), str):
+        return data
+    return None
+
+
+def _registration_endpoint(data):
+    if not isinstance(data, dict):
+        return None
+    private_key = data.get("private_key")
+    public_key = data.get("public_key")
+    if not isinstance(private_key, str) or not isinstance(public_key, str):
+        return None
+
+    addresses = []
+    for value in (data.get("v4"), data.get("v6")):
+        if isinstance(value, str) and value:
+            addresses.append(value)
+    nested = data.get("addresses")
+    if isinstance(nested, dict):
+        for value in (nested.get("v4"), nested.get("v6")):
+            if isinstance(value, str) and value:
+                addresses.append(value)
+
+    endpoint = data.get("endpoint")
+    if isinstance(endpoint, dict):
+        endpoint = endpoint.get("v4") or endpoint.get("v6")
+    if not isinstance(endpoint, str) or not endpoint:
+        endpoint = None
+
+    return {
+        "private_key": private_key,
+        "public_key": public_key,
+        "address": list(dict.fromkeys(addresses)),
+        "endpoint": endpoint,
+        "reserved": (
+            data.get("reserved_dec")
+            if data.get("reserved_dec") is not None
+            else data.get("reserved")
+        ),
+        "mtu": data.get("mtu"),
+    }
+
+
 def _key(value, field):
     if not isinstance(value, str) or not value:
         raise InvalidResponse(field + " is missing")
@@ -92,6 +170,14 @@ def _allowed_ips(value):
 def _reserved(value):
     if value is None:
         return [0, 0, 0]
+    if isinstance(value, str):
+        try:
+            decoded = base64.b64decode(value, validate=True)
+        except (ValueError, binascii.Error):
+            raise InvalidResponse("reserved is not valid Base64")
+        if len(decoded) != 3:
+            raise InvalidResponse("reserved must decode to three bytes")
+        return list(decoded)
     if not isinstance(value, list) or len(value) != 3:
         raise InvalidResponse("reserved must contain three bytes")
     if any(type(item) is not int or item < 0 or item > 255 for item in value):
@@ -158,35 +244,76 @@ def _endpoint(value, explicit_port=None):
     return host, _port(explicit_port if explicit_port is not None else port)
 
 
-def normalize(data):
-    endpoint = _wireguard_endpoint(data)
-    if endpoint is None:
-        raise InvalidResponse("WireGuard endpoint is missing")
-
-    peers = endpoint.get("peers")
-    if not isinstance(peers, list) or not peers or not isinstance(peers[0], dict):
-        raise InvalidResponse("WireGuard peer is missing")
-    peer = peers[0]
-    host, port = _endpoint(peer.get("address"), peer.get("port"))
-
+def _make_endpoint(address, private_key, mtu, peer_address, peer_public_key,
+                   allowed_ips, reserved, explicit_port=None):
+    host, port = _endpoint(peer_address, explicit_port)
     return {
         "type": "wireguard",
         "tag": "warp",
         "system": False,
-        "address": _addresses(endpoint.get("address")),
-        "private_key": _key(endpoint.get("private_key"), "private_key"),
-        "mtu": _mtu(endpoint.get("mtu")),
+        "address": _addresses(address),
+        "private_key": _key(private_key, "private_key"),
+        "mtu": _mtu(mtu),
         "listen_port": 0,
         "peers": [
             {
                 "address": host,
                 "port": port,
-                "public_key": _key(peer.get("public_key"), "public_key"),
-                "allowed_ips": _allowed_ips(peer.get("allowed_ips")),
-                "reserved": _reserved(peer.get("reserved")),
+                "public_key": _key(peer_public_key, "public_key"),
+                "allowed_ips": _allowed_ips(allowed_ips),
+                "reserved": _reserved(reserved),
             }
         ],
     }
+
+
+def normalize(data):
+    endpoint = _wireguard_endpoint(data)
+    if endpoint is not None:
+        peers = endpoint.get("peers")
+        if not isinstance(peers, list) or not peers or not isinstance(peers[0], dict):
+            raise InvalidResponse("WireGuard peer is missing")
+        peer = peers[0]
+        return _make_endpoint(
+            endpoint.get("address"),
+            endpoint.get("private_key"),
+            endpoint.get("mtu"),
+            peer.get("address"),
+            peer.get("public_key"),
+            peer.get("allowed_ips"),
+            peer.get("reserved"),
+            peer.get("port"),
+        )
+
+    settings = _wireguard_settings(data)
+    if settings is not None:
+        peers = settings.get("peers")
+        if not isinstance(peers, list) or not peers or not isinstance(peers[0], dict):
+            raise InvalidResponse("WireGuard peer is missing")
+        peer = peers[0]
+        return _make_endpoint(
+            settings.get("address"),
+            settings.get("secretKey"),
+            settings.get("mtu"),
+            peer.get("endpoint"),
+            peer.get("publicKey"),
+            peer.get("allowedIPs"),
+            settings.get("reserved"),
+        )
+
+    registration = _registration_endpoint(data)
+    if registration is not None:
+        return _make_endpoint(
+            registration["address"],
+            registration["private_key"],
+            registration["mtu"],
+            registration["endpoint"],
+            registration["public_key"],
+            None,
+            registration["reserved"],
+        )
+
+    raise InvalidResponse("WireGuard endpoint is missing")
 
 
 def main():

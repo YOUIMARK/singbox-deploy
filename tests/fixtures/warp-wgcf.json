@@ -1,0 +1,13 @@
+{
+  "private_key": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8=",
+  "public_key": "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8=",
+  "endpoint": {
+    "v4": "162.159.192.2",
+    "v6": "[2606:4700:110:8a36::2]:2408"
+  },
+  "reserved_dec": [1, 2, 3],
+  "addresses": {
+    "v4": "172.16.0.3",
+    "v6": "2606:4700:110:8a36::3"
+  }
+}

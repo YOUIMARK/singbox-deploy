@@ -1,0 +1,21 @@
+{
+  "outbounds": [
+    {
+      "tag": "warp",
+      "protocol": "wireguard",
+      "settings": {
+        "secretKey": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "address": ["172.16.0.5"],
+        "reserved": [7, 8, 9],
+        "mtu": 1280,
+        "peers": [
+          {
+            "publicKey": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+            "endpoint": "162.159.192.5:2408",
+            "allowedIPs": ["0.0.0.0/0", "::/0"]
+          }
+        ]
+      }
+    }
+  ]
+}

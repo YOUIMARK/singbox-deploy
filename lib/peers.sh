@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-# 第三方 WARP 注册接口；返回 sing-box endpoint，失败时不修改配置。
+# WARP 注册来源按 warp-reg.sh → wgcf-cli → 第三方 API 回退；失败时不修改配置。
+SBD_PEER_WARP_REG_URL='https://warp-reg.vercel.app'
 SBD_PEER_WARP_API='https://warp.cloudflare.now.cc/?run=register&format=sing-box'
 
 sbd_peer_cloudflared_route() {
@@ -143,40 +144,171 @@ sbd_peer_tag_prompt() {
     done
 }
 
-sbd_peer_warp_download() {
-    local target="$1"
-    [[ -n "$target" ]] || return 1
+sbd_peer_warp_http_get() {
+    local url="$1" target="$2" code
+    [[ -n "$url" && -n "$target" ]] || return 1
+    SBD_PEER_WARP_HTTP_CODE=''
     if command -v curl >/dev/null 2>&1; then
-        curl -fLsS --connect-timeout 8 --max-time 25 -H 'Accept: application/json' \
-            "$SBD_PEER_WARP_API" -o "$target" 2>/dev/null || return 1
+        code=$(curl -sSL --proto '=https' --proto-redir '=https' --max-redirs 5 \
+            --connect-timeout 8 --max-time 25 -o "$target" -w '%{http_code}' "$url" 2>/dev/null) || return 1
+        SBD_PEER_WARP_HTTP_CODE="$code"
+        [[ "$code" = 2* ]] || return 1
     elif command -v wget >/dev/null 2>&1; then
-        wget -q -T 25 -O "$target" "$SBD_PEER_WARP_API" 2>/dev/null || return 1
+        wget -q -T 25 -O "$target" "$url" 2>/dev/null || return 1
+        SBD_PEER_WARP_HTTP_CODE='000'
     else
         return 1
     fi
     [[ -s "$target" ]]
 }
 
+sbd_peer_warp_error_from_body() {
+    local target="$1" message=''
+    [[ -s "$target" ]] || return 1
+    message=$(jq -r '.error // empty' "$target" 2>/dev/null) || message=''
+    if [[ -z "$message" ]]; then
+        message=$(head -c 200 "$target" 2>/dev/null | tr '\n' ' ')
+    fi
+    [[ -n "$message" ]] || return 1
+    if [[ -n "${SBD_PEER_WARP_HTTP_CODE:-}" && "$SBD_PEER_WARP_HTTP_CODE" != 000 ]]; then
+        SBD_PEER_WARP_ERROR="HTTP $SBD_PEER_WARP_HTTP_CODE: $message"
+    else
+        SBD_PEER_WARP_ERROR="$message"
+    fi
+}
+
+sbd_peer_warp_download() {
+    local target="$1"
+    [[ -n "$target" ]] || return 1
+    SBD_PEER_WARP_ERROR=''
+    if ! sbd_peer_warp_http_get "$SBD_PEER_WARP_API" "$target"; then
+        sbd_peer_warp_error_from_body "$target" || SBD_PEER_WARP_ERROR='未取得注册 API 响应'
+        return 1
+    fi
+    [[ -s "$target" ]]
+}
+
+sbd_peer_warp_run() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 30 "$@"
+    else
+        "$@"
+    fi
+}
+
+sbd_peer_warp_fetch_reg() {
+    local target="$1" script='' rc=0
+    [[ -n "$target" ]] || return 1
+    SBD_PEER_WARP_ERROR=''
+    : > "$target" || return 1
+    if command -v warp-reg >/dev/null 2>&1; then
+        sbd_peer_warp_run warp-reg >"$target" 2>/dev/null || rc=$?
+    elif command -v warp-reg.sh >/dev/null 2>&1; then
+        sbd_peer_warp_run warp-reg.sh >"$target" 2>/dev/null || rc=$?
+    else
+        script=$(mktemp "${TMPDIR:-/tmp}/sbd-warp-reg.XXXXXX") || {
+            SBD_PEER_WARP_ERROR='无法创建临时文件'
+            return 1
+        }
+        if ! sbd_peer_warp_http_get "$SBD_PEER_WARP_REG_URL" "$script"; then
+            rm -f -- "$script"
+            SBD_PEER_WARP_ERROR='下载 warp-reg 脚本失败'
+            return 1
+        fi
+        sbd_peer_warp_run bash "$script" >"$target" 2>/dev/null || rc=$?
+        rm -f -- "$script"
+    fi
+    if [[ "$rc" != 0 ]]; then
+        SBD_PEER_WARP_ERROR='warp-reg 执行失败'
+        return 1
+    fi
+    if [[ ! -s "$target" ]]; then
+        SBD_PEER_WARP_ERROR='warp-reg 未返回注册结果'
+        return 1
+    fi
+}
+
+sbd_peer_warp_fetch_wgcf() {
+    local target="$1" dir='' tool='' rc=0 candidate=''
+    [[ -n "$target" ]] || return 1
+    if command -v wgcf-cli >/dev/null 2>&1; then
+        tool=wgcf-cli
+    else
+        SBD_PEER_WARP_ERROR='未安装 wgcf-cli'
+        return 1
+    fi
+    SBD_PEER_WARP_ERROR=''
+    dir=$(mktemp -d "${TMPDIR:-/tmp}/sbd-wgcf.XXXXXX") || {
+        SBD_PEER_WARP_ERROR='无法创建临时目录'
+        return 1
+    }
+    : > "$target" || { rm -rf -- "$dir"; return 1; }
+    (
+        cd "$dir" || exit 1
+        sbd_peer_warp_run "$tool" register >"$dir/reg.json" 2>/dev/null || exit 1
+    ) || rc=$?
+    if [[ "$rc" = 0 ]]; then
+        for candidate in "$dir/reg.json" "$dir/wgcf.json"; do
+            if [[ -s "$candidate" ]]; then cp -- "$candidate" "$target" || rc=1; break; fi
+        done
+    fi
+    if [[ "$rc" != 0 || ! -s "$target" ]]; then
+        rc=0
+        (
+            cd "$dir" || exit 1
+            sbd_peer_warp_run "$tool" generate --xray >"$dir/generate.log" 2>/dev/null || exit 1
+        ) || rc=$?
+        if [[ "$rc" = 0 ]]; then
+            for candidate in "$dir/wgcf.xray.json" "$dir/wgcf.json" "$dir/generate.log"; do
+                if [[ -s "$candidate" ]]; then cp -- "$candidate" "$target" || rc=1; break; fi
+            done
+        fi
+    fi
+    rm -rf -- "$dir"
+    if [[ "$rc" != 0 || ! -s "$target" ]]; then
+        SBD_PEER_WARP_ERROR='wgcf-cli 未返回注册结果'
+        return 1
+    fi
+}
+
 sbd_peer_warp_obtain() {
-    local raw value
+    local raw value source label reason
     raw=$(mktemp "${TMPDIR:-/tmp}/sbd-warp.XXXXXX") || { _error '无法创建 WARP 临时文件'; return 1; }
-    if ! sbd_peer_warp_download "$raw"; then
+    for source in reg wgcf api; do
+        case "$source" in
+            reg) label='warp-reg' ;;
+            wgcf) label='wgcf-cli' ;;
+            api) label='注册 API' ;;
+        esac
+        : > "$raw" || { rm -f -- "$raw"; _error '无法写入 WARP 临时文件'; return 1; }
+        SBD_PEER_WARP_ERROR=''
+        reason=''
+        case "$source" in
+            reg) sbd_peer_warp_fetch_reg "$raw" || reason="${SBD_PEER_WARP_ERROR:-未取得响应}" ;;
+            wgcf) sbd_peer_warp_fetch_wgcf "$raw" || reason="${SBD_PEER_WARP_ERROR:-未取得响应}" ;;
+            api) sbd_peer_warp_download "$raw" || reason="${SBD_PEER_WARP_ERROR:-未取得响应}" ;;
+        esac
+        if [[ -n "$reason" ]]; then
+            sbd_info "WARP $label 不可用：$reason"
+            continue
+        fi
+        if ! value=$(python3 -I "$SBD_APP/support/warp.py" normalize "$raw" 2>/dev/null); then
+            sbd_info "WARP $label 不可用：响应格式无效"
+            continue
+        fi
         rm -f -- "$raw"
-        _error 'WARP 自动注册失败：未取得注册 API 响应，配置未修改'
-        return 1
-    fi
-    if ! value=$(python3 -I "$SBD_APP/support/warp.py" normalize "$raw" 2>/dev/null); then
-        rm -f -- "$raw"
-        _error 'WARP 自动注册响应无效，配置未修改'
-        return 1
-    fi
+        SBD_PEER_VALUE="$value"
+        sbd_info "WARP 注册成功：$label"
+        return 0
+    done
     rm -f -- "$raw"
-    SBD_PEER_VALUE="$value"
+    _error '三种 WARP 注册方式均失败，配置未修改'
+    return 1
 }
 
 sbd_peer_warp_prompt() {
     local host value
-    sbd_info '正在向 Cloudflare WARP 自动注册'
+    sbd_info '正在向 Cloudflare WARP 自动注册（warp-reg → wgcf-cli → API）'
     sbd_peer_warp_obtain || return $?
     value="$SBD_PEER_VALUE"
     host=$(jq -er '.peers[0].address' <<< "$value") || { _error 'WARP peer 地址缺失'; return 1; }
