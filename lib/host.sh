@@ -106,7 +106,7 @@ sbd_go_memlimit_mb() {
 sbd_dependencies() {
     local tool
     (( BASH_VERSINFO[0] >= 5 )) || { _error '需要 Bash 5 或更新版本'; return 1; }
-    for tool in curl jq python3 flock tar cmp mktemp readlink openssl sha256sum; do
+    for tool in curl jq python3 flock tar zstd cmp mktemp readlink openssl sha256sum; do
         command -v "$tool" >/dev/null 2>&1 || { _error "缺少依赖: $tool"; return 1; }
     done
     if ! python3 -I -c 'from jsonschema import Draft202012Validator' >/dev/null 2>&1; then
@@ -122,10 +122,10 @@ sbd_packages() {
         debian)
             apt-get update || { _error 'apt 索引更新失败'; return 1; }
             DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-                bash curl jq python3 python3-jsonschema util-linux tar openssl || { _error '依赖安装失败'; return 1; }
+                bash curl jq python3 python3-jsonschema util-linux tar zstd openssl || { _error '依赖安装失败'; return 1; }
             ;;
         alpine)
-            apk add --no-cache bash curl jq python3 py3-jsonschema util-linux tar openssl || { _error '依赖安装失败'; return 1; }
+            apk add --no-cache bash curl jq python3 py3-jsonschema util-linux tar zstd openssl || { _error '依赖安装失败'; return 1; }
             ;;
     esac
     sbd_dependencies
