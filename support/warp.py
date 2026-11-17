@@ -12,6 +12,7 @@ import sys
 DEFAULT_PORT = 2408
 DEFAULT_MTU = 1280
 DEFAULT_ALLOWED_IPS = ["0.0.0.0/0", "::/0"]
+DEFAULT_HOST = "engage.cloudflareclient.com"
 
 
 class InvalidResponse(ValueError):
@@ -101,7 +102,12 @@ def _registration_endpoint(data):
 
     endpoint = data.get("endpoint")
     if isinstance(endpoint, dict):
-        endpoint = endpoint.get("v4") or endpoint.get("v6")
+        v4 = endpoint.get("v4")
+        v6 = endpoint.get("v6")
+        if isinstance(v4, str) and v4 and isinstance(v6, str) and v6:
+            endpoint = DEFAULT_HOST
+        else:
+            endpoint = v4 or v6
     if not isinstance(endpoint, str) or not endpoint:
         endpoint = None
 

@@ -56,15 +56,21 @@ warp_sources_contract() {
         .type=="wireguard" and .tag=="warp" and .system==false and .listen_port==0
         and .address==["172.16.0.2/32","2606:4700:110:8a36::2/128"]
         and .private_key=="AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
-        and .mtu==1280 and .peers[0].address=="162.159.192.1"
+        and .mtu==1280 and .peers[0].address=="engage.cloudflareclient.com"
         and .peers[0].port==2408 and .peers[0].reserved==[12,34,56]
         and .peers[0].allowed_ips==["0.0.0.0/0","::/0"]' <<< "$value"
     t_run 0 python3 "$ROOT/support/warp.py" normalize "$ROOT/tests/fixtures/warp-wgcf.json"
     value=$(cat "$CASE_TMP/output")
     t_assert 'wgcf 注册形态归一' jq -e '
         .address==["172.16.0.3/32","2606:4700:110:8a36::3/128"]
-        and .peers[0].address=="162.159.192.2" and .peers[0].port==2408
+        and .peers[0].address=="engage.cloudflareclient.com" and .peers[0].port==2408
         and .peers[0].reserved==[1,2,3]' <<< "$value"
+    t_run 0 python3 "$ROOT/support/warp.py" normalize "$ROOT/tests/fixtures/warp-reg-v6.json"
+    value=$(cat "$CASE_TMP/output")
+    t_assert '仅 IPv6 注册端点保留 IPv6' jq -e '
+        .address==["2606:4700:110:8a36::9/128"]
+        and .peers[0].address=="2606:4700:110:8a36::9"
+        and .peers[0].port==2408' <<< "$value"
     t_run 0 python3 "$ROOT/support/warp.py" normalize "$ROOT/tests/fixtures/warp-wgcf-xray.json"
     value=$(cat "$CASE_TMP/output")
     t_assert 'wgcf Xray 形态归一' jq -e '
@@ -80,7 +86,7 @@ warp_fallback_contract() {
     sbd_peer_warp_download() { return 1; }
     t_run 0 sbd_peer_warp_obtain
     t_assert 'warp-reg 失败后回退 wgcf-cli' jq -e '
-        .peers[0].address=="162.159.192.2" and .peers[0].port==2408' <<< "$SBD_PEER_VALUE"
+        .peers[0].address=="engage.cloudflareclient.com" and .peers[0].port==2408' <<< "$SBD_PEER_VALUE"
     t_contains "$CASE_TMP/output" 'warp-reg 不可用'
 }
 warp_all_fail_contract() {
