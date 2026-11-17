@@ -197,8 +197,33 @@ def edit(config, registry, request):
 
 def reset(config, registry, category):
     align(config, registry)
+    nodes = registry["nodes"]
+    tunnel_tags = {
+        f"reality-tunnel-{node['id']}"
+        for node in nodes
+        if node.get("reality_mode") == "tunnel"
+    }
+    tunnel_groups = {
+        f"reality-tunnel.{node['id']}"
+        for node in nodes
+        if node.get("reality_mode") == "tunnel"
+    }
+
+    def tunnel_rule(rec):
+        if rec.get("group") in tunnel_groups:
+            return True
+        expected = rec.get("expected")
+        return isinstance(expected, dict) and any(tag in tunnel_tags for tag in tags(expected.get("inbound")))
+
     if category == "nodes":
-        owned = {n["inbound_tag"] for n in registry["nodes"]}
+        owned = {n["inbound_tag"] for n in nodes} | tunnel_tags
+        rule_records = records(registry, "route_rules")
+        for rec in sorted(
+            (r for r in rule_records if tunnel_rule(r)),
+            key=lambda r: r["index"],
+            reverse=True,
+        ):
+            delete_at(array(config, "route_rules"), rule_records, rec)
         config["inbounds"] = [v for v in config.get("inbounds", []) if v.get("tag") not in owned]
         registry["nodes"] = []
         return
@@ -207,6 +232,8 @@ def reset(config, registry, category):
         values, owned = array(config, area), records(registry, area)
         if area in POSITIONAL:
             for rec in sorted(list(owned), key=lambda r: r["index"], reverse=True):
+                if category == "rules_dns" and area == "route_rules" and tunnel_rule(rec):
+                    continue
                 delete_at(values, owned, rec)
         else:
             ids = {r["id"] for r in owned}
@@ -227,13 +254,50 @@ def prepend_defaults(config, registry, defaults):
     """补齐默认规则并重算托管规则位置；与默认规则完全相同的旧登记不再保留。"""
     align(config, registry)
     values, owned = array(config, "route_rules"), records(registry, "route_rules")
-    kept, indexes = [], {}
+    tunnel_groups = {
+        f"reality-tunnel.{node['id']}"
+        for node in registry.get("nodes", [])
+        if node.get("reality_mode") == "tunnel"
+    }
+    tunnel_tags = {
+        f"reality-tunnel-{node['id']}"
+        for node in registry.get("nodes", [])
+        if node.get("reality_mode") == "tunnel"
+    }
+    by_index = {rec["index"]: rec for rec in owned}
+    tunnel, kept = [], []
     for index, rule in enumerate(values):
         if rule in defaults:
             continue
-        indexes[index] = len(defaults) + len(kept)
-        kept.append(rule)
-    config.setdefault("route", {})["rules"] = list(defaults) + kept
+        rec = by_index.get(index)
+        expected = rec.get("expected") if rec else None
+        if rec and (
+            rec.get("group") in tunnel_groups
+            or isinstance(expected, dict) and any(tag in tunnel_tags for tag in tags(expected.get("inbound")))
+        ):
+            tunnel.append((index, rule))
+        else:
+            kept.append((index, rule))
+    position = 0
+    for index, rule in enumerate(defaults):
+        if isinstance(rule, dict) and rule.get("action") == "sniff" and set(rule) <= {"action", "sniffer", "timeout"}:
+            position = index + 1
+            break
+    config.setdefault("route", {})["rules"] = (
+        list(defaults[:position])
+        + [rule for _, rule in tunnel]
+        + list(defaults[position:])
+        + [rule for _, rule in kept]
+    )
+    indexes = {}
+    cursor = position
+    for old_index, _ in tunnel:
+        indexes[old_index] = cursor
+        cursor += 1
+    cursor += len(defaults) - position
+    for old_index, _ in kept:
+        indexes[old_index] = cursor
+        cursor += 1
     updated = []
     for rec in owned:
         index = rec.get("index")

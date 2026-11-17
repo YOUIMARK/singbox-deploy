@@ -56,6 +56,11 @@ sbd_entry_submit() {
 
 sbd_entry_host() { sbd_tls_identity "$1" >/dev/null 2>&1 || { _error '地址须为 DNS 名称或不带方括号的 IP'; return 1; }; }
 
+sbd_entry_domain() {
+    [[ "$(sbd_tls_identity "$1" 2>/dev/null)" = DNS:* ]] ||
+        { _error 'Tunnel 模式的伪装域名必须是 DNS 名称'; return 1; }
+}
+
 sbd_entry_deliver() {
     sbd_success "节点与客户端资料已提交: $SBD_EXPORTS"
     sbd_export_node "$SBD_NEW_ENTRY_ID" link inline || { _error '节点已提交，但资料查看失败；未回滚已提交节点'; return 1; }
@@ -120,6 +125,180 @@ PY
     if [[ "$skip" != same ]] && ! sbd_entry_socket_available "$listen" "$port" "$network"; then
         _error "无法绑定 $network $listen:$port，请检查进程占用或本机地址"; return 1
     fi
+}
+
+sbd_entry_tunnel_tag() {
+    printf 'reality-tunnel-%s\n' "$1"
+}
+
+sbd_entry_tunnel_group() {
+    printf 'reality-tunnel.%s\n' "$1"
+}
+
+sbd_entry_tunnel_port() {
+    local stage="$1" exclude="${2:-}" attempt hex port
+    for attempt in {1..40}; do
+        hex=$(openssl rand -hex 2) || return 1
+        port=$(( 20000 + 16#$hex % 40000 ))
+        [[ "$port" != "$exclude" ]] || continue
+        if sbd_entry_port "$stage" 127.0.0.1 "$port" tcp "" >/dev/null 2>&1; then
+            printf '%s\n' "$port"
+            return 0
+        fi
+    done
+    _error '无法分配 Reality Tunnel 回环端口'
+    return 1
+}
+
+sbd_entry_tunnel_allow() {
+    jq -cn --arg tag "$1" --arg sni "$2" '{inbound:[$tag],domain:[$sni],action:"route",outbound:"direct"}'
+}
+
+sbd_entry_tunnel_reject() {
+    jq -cn --arg tag "$1" '{inbound:[$tag],action:"reject"}'
+}
+
+# Tunnel 规则要落在默认 sniff 之后、resolve/私网拒绝之前：既用嗅探到的客户端 SNI 防偷跑，
+# 又避免回环转发被解析或私网规则提前截断。
+sbd_entry_tunnel_position() {
+    local stage="$1"
+    python3 -I - "$stage/config.json" "$SBD_APP/presets/base.json" <<'PY'
+import json, sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        config = json.load(handle)
+    with open(sys.argv[2], encoding="utf-8") as handle:
+        defaults = json.load(handle).get("route", {}).get("rules", [])
+except (OSError, ValueError, TypeError):
+    raise SystemExit(1)
+
+rules = config.get("route", {}).get("rules", [])
+if not isinstance(rules, list) or not isinstance(defaults, list):
+    raise SystemExit(1)
+limit = 0
+for rule in rules:
+    if rule in defaults:
+        limit += 1
+    else:
+        break
+position = None
+for index, rule in enumerate(rules[:limit]):
+    if not isinstance(rule, dict):
+        continue
+    if rule.get("action") == "sniff" and set(rule) <= {"action", "sniffer", "timeout"}:
+        position = index + 1
+        break
+if position is None:
+    raise SystemExit(1)
+print(position)
+PY
+}
+
+sbd_entry_tunnel_attach() {
+    local stage="$1" id="$2" sni="$3" port="$4" tag group allow_id reject_id position inbound allow reject content
+    tag=$(sbd_entry_tunnel_tag "$id") || return 1
+    group=$(sbd_entry_tunnel_group "$id") || return 1
+    allow_id="$group.allow"
+    reject_id="$group.reject"
+    jq -e --arg tag "$tag" 'all(.inbounds[]?; .tag!=$tag)' "$stage/config.json" >/dev/null ||
+        { _error "Tunnel 辅助入站 tag 已存在: $tag"; return 1; }
+    jq -e --arg allow "$allow_id" --arg reject "$reject_id" \
+        'all(.policy.route_rules[]?; .id!=$allow and .id!=$reject)' "$stage/registry.json" >/dev/null ||
+        { _error 'Tunnel 路由规则登记已存在'; return 1; }
+    position=$(sbd_entry_tunnel_position "$stage") ||
+        { _error 'Reality Tunnel 需要默认 sniff 路由规则；请先在分流设置执行 [8] 恢复默认路由规则'; return 1; }
+    inbound=$(jq -cn --arg tag "$tag" --argjson port "$port" --arg sni "$sni" \
+        '{type:"direct",tag:$tag,listen:"127.0.0.1",listen_port:$port,network:"tcp",override_address:$sni,override_port:443}') || return 1
+    allow=$(sbd_entry_tunnel_allow "$tag" "$sni") || return 1
+    reject=$(sbd_entry_tunnel_reject "$tag") || return 1
+    content=$(jq --argjson inbound "$inbound" '.inbounds=((.inbounds // [])+[$inbound])' "$stage/config.json") || return 1
+    sbd_record_write "$stage/config.json" "$content" || return 1
+    sbd_policy_bundle "$stage" edit "$(jq -cn --arg id "$allow_id" --argjson value "$allow" --argjson position "$position" --arg group "$group" \
+        '{area:"route_rules",action:"add",id:$id,value:$value,position:$position,group:$group}')" || return 1
+    sbd_policy_bundle "$stage" edit "$(jq -cn --arg id "$reject_id" --argjson value "$reject" --argjson position "$((position+1))" --arg group "$group" \
+        '{area:"route_rules",action:"add",id:$id,value:$value,position:$position,group:$group}')" || return 1
+    sbd_policy_finish "$stage"
+}
+
+sbd_entry_tunnel_update() {
+    local stage="$1" id="$2" sni="$3" tag group allow_id allow content
+    tag=$(sbd_entry_tunnel_tag "$id") || return 1
+    group=$(sbd_entry_tunnel_group "$id") || return 1
+    allow_id="$group.allow"
+    jq -e --arg tag "$tag" 'any(.inbounds[]?; .tag==$tag)' "$stage/config.json" >/dev/null ||
+        { _error 'Tunnel 辅助入站缺失，请删除后重建节点'; return 1; }
+    jq -e --arg id "$allow_id" 'any(.policy.route_rules[]?; .id==$id)' "$stage/registry.json" >/dev/null ||
+        { _error 'Tunnel 路由规则登记缺失，请删除后重建节点'; return 1; }
+    content=$(jq --arg tag "$tag" --arg sni "$sni" '(.inbounds[]|select(.tag==$tag)|.override_address)=$sni' "$stage/config.json") || return 1
+    sbd_record_write "$stage/config.json" "$content" || return 1
+    allow=$(sbd_entry_tunnel_allow "$tag" "$sni") || return 1
+    sbd_policy_bundle "$stage" edit "$(jq -cn --arg id "$allow_id" --argjson value "$allow" \
+        '{area:"route_rules",action:"replace",id:$id,value:$value}')" || return 1
+    sbd_policy_finish "$stage"
+}
+
+sbd_entry_tunnel_remove() {
+    local stage="$1" id="$2" tag group content
+    tag=$(sbd_entry_tunnel_tag "$id") || return 1
+    group=$(sbd_entry_tunnel_group "$id") || return 1
+    if jq -e --arg group "$group" 'any(.policy.route_rules[]?; .group==$group)' "$stage/registry.json" >/dev/null; then
+        sbd_policy_bundle "$stage" edit "$(jq -cn --arg group "$group" \
+            '{area:"route_rules",action:"delete_group",id:$group}')" || return 1
+    fi
+    if jq -e --arg tag "$tag" '
+        any([(.route.rules? // []),(.dns.rules? // [])] | .. | objects | .inbound? // empty;
+            if type=="array" then index($tag)!=null else .==$tag end)
+    ' "$stage/config.json" >/dev/null; then
+        _error 'Tunnel 辅助入站仍被其他路由规则引用，请先删除相关规则'
+        return 1
+    fi
+    content=$(jq --arg tag "$tag" '.inbounds |= map(select(.tag!=$tag))' "$stage/config.json") || return 1
+    sbd_record_write "$stage/config.json" "$content" || return 1
+}
+
+sbd_entry_tunnel_align() {
+    local stage="$1" node="$2" scope="${3:-all}" mode id tag main_tag port sni group
+    [[ "$scope" = all ]] || return 0
+    mode=$(jq -r '.reality_mode // "direct"' "$node") || return 1
+    case "$mode" in
+        direct) return 0 ;;
+        tunnel) ;;
+        *) _error '节点 Reality 模式元数据无效'; return 1 ;;
+    esac
+    id=$(sbd_entry_text "$node" .id 节点ID) || return 1
+    tag=$(sbd_entry_text "$node" .tunnel_tag Tunnel入站) || return 1
+    main_tag=$(sbd_entry_text "$node" .inbound_tag inbound标识) || return 1
+    port=$(jq -er '.tunnel_port | select(type=="number" and floor==. and .>=1 and .<=65535)' "$node") ||
+        { _error 'Tunnel 端口元数据无效'; return 1; }
+    sni=$(sbd_entry_text "$node" .client.tls.server_name SNI) || return 1
+    group=$(sbd_entry_tunnel_group "$id") || return 1
+    jq -e --arg tag "$tag" --argjson port "$port" --arg sni "$sni" '
+        [.inbounds[]? | select(.tag==$tag)] as $in |
+        ($in|length)==1 and
+        ($in[0].type=="direct" and $in[0].listen=="127.0.0.1" and $in[0].listen_port==$port and
+         $in[0].network=="tcp" and $in[0].override_address==$sni and $in[0].override_port==443)
+    ' "$stage/config.json" >/dev/null || { _error 'Tunnel 辅助入站或回源目标发生漂移'; return 1; }
+    jq -e --arg tag "$main_tag" --argjson port "$port" '
+        [.inbounds[]? | select(.tag==$tag)] as $in |
+        ($in|length)==1 and $in[0].tls.enabled==true and $in[0].tls.reality.enabled==true and
+        $in[0].tls.reality.handshake.server=="127.0.0.1" and $in[0].tls.reality.handshake.server_port==$port
+    ' "$stage/config.json" >/dev/null || { _error 'Reality handshake 未指向 Tunnel 辅助入站'; return 1; }
+    jq -e --arg tag "$tag" --arg sni "$sni" '
+        def hit($tag): (.inbound // []) | if type=="array" then index($tag)!=null else .==$tag end;
+        def tunnel_hit: (.inbound // []) | if type=="array" then any(.[]; startswith("reality-tunnel-")) else startswith("reality-tunnel-") end;
+        def domain_is($sni): (.domain // []) | if type=="array" then .==[$sni] else .==$sni end;
+        [.route.rules[]? | select(hit($tag))] as $rules |
+        [(.route.rules // []) | to_entries[] | select(.value|hit($tag)) | .key] as $positions |
+        [(.route.rules // []) | to_entries[] | select((.value|hit($tag))|not) | select((.value|tunnel_hit)|not) |
+            select((.value.action // "") == "resolve" or (.value.action // "") == "reject") | .key] as $blockers |
+        ($rules|length)==2 and
+        any($rules[]; domain_is($sni) and ((.action // "route")=="route") and .outbound=="direct") and
+        any($rules[]; (.domain // null)==null and .action=="reject") and
+        (($blockers|min // null) as $blocker | $blocker==null or ($positions|max) < $blocker)
+    ' "$stage/config.json" >/dev/null || { _error 'Tunnel 路由白名单规则发生漂移'; return 1; }
+    jq -e --arg group "$group" '[.policy.route_rules[]? | select(.group==$group)] | length==2' "$stage/registry.json" >/dev/null ||
+        { _error 'Tunnel 路由规则登记缺失，请删除后重建节点'; return 1; }
 }
 
 sbd_entry_cert_sha() (
@@ -245,7 +424,11 @@ sbd_entry_align() {
     profile=$(sbd_entry_text "$node" .profile 配置档) || return 1
     case "$profile" in
         hysteria2|anytls|anyreality) ;;
-        shadowsocks|vmess_ws|vless_ws|vless_reality) sbd_entry_align_classic "$stage" "$node" "$scope"; return $? ;;
+        shadowsocks|vmess_ws|vless_ws|vless_reality)
+            sbd_entry_align_classic "$stage" "$node" "$scope" || return 1
+            sbd_entry_tunnel_align "$stage" "$node" "$scope"
+            return $?
+            ;;
         *) _error '未知托管配置档'; return 1 ;;
     esac
     jq -ce --slurpfile node "$node" '[.inbounds[]? | select(.tag==$node[0].inbound_tag)] | select(length==1) | .[0]' "$stage/config.json" > "$stage/entry-inbound.json" || { _error '节点 inbound 缺失或重复'; return 1; }
@@ -260,6 +443,7 @@ sbd_entry_align() {
     # 删除核对身份和存活引用，不要求即将移除的过期/损坏证书仍能加载。
     [[ "$scope" != delete ]] || return 0
     jq -e '(.tls.client_authentication // "no")=="no" and ((.tls.ech.enabled // false)|not)' "$stage/entry-inbound.json" >/dev/null || { _error '此节点附带未登记的 TLS 客户端认证或 ECH，无法完整重建客户端资料'; return 1; }
+    sbd_entry_tunnel_align "$stage" "$node" "$scope" || return 1
     # 明确更换 TLS 时允许替换已过期/轮换的旧来源，但不绕过节点身份与认证核对。
     [[ "$scope" != replace_tls ]] || return 0
     kind=$(sbd_entry_text "$node" .tls_source.kind TLS来源) || return 1
@@ -356,6 +540,7 @@ sbd_entry_cdn() {
 
 sbd_entry_create_classic() {
     local stage="$1" profile="$2" type network name listen port server external credential method='' uuid='' cdn='{}' source id tag content
+    local reality_mode='direct' tunnel_port='' sni='' tunnel_tag=''
     name=$(sbd_entry_text "$stage/request.json" .name 名称) && listen=$(sbd_entry_text "$stage/request.json" .listen 监听地址) &&
         server=$(sbd_entry_text "$stage/request.json" .server 对外地址) || return 1
     if ! port=$(jq -er '.listen_port' "$stage/request.json") || ! port=$(sbd_integer "$port" 1 65535) ||
@@ -379,6 +564,14 @@ sbd_entry_create_classic() {
     sbd_entry_port "$stage" "$listen" "$port" "$network" || return 1
     if [[ "$profile" = vless_reality ]]; then
         source=$(jq -ce '.tls_source | select(.kind=="reality")' "$stage/request.json") || { _error 'VLESS+Reality 必须使用 Reality'; return 1; }
+        reality_mode=$(jq -r '.mode // "direct"' <<< "$source") || return 1
+        case "$reality_mode" in direct|tunnel) ;; *) _error 'Reality 模式无效'; return 1 ;; esac
+        sni=$(jq -er '.server_name' <<< "$source") || { _error 'Reality 缺少伪装域名'; return 1; }
+        if [[ "$reality_mode" = tunnel ]]; then
+            sbd_entry_domain "$sni" || return 1
+            tunnel_port=$(sbd_entry_tunnel_port "$stage" "$port") || return 1
+            source=$(jq --argjson port "$tunnel_port" '.handshake={server:"127.0.0.1",server_port:$port}' <<< "$source") || return 1
+        fi
         sbd_entry_tls "$stage" "$source" || return 1
     else
         source='{"kind":"none"}'
@@ -404,6 +597,9 @@ sbd_entry_create_classic() {
     sbd_record_write "$stage/new-inbound.json" "$content" || return 1
     content=$(jq --slurpfile inbound "$stage/new-inbound.json" '.inbounds=((.inbounds // [])+$inbound)' "$stage/config.json") || return 1
     sbd_record_write "$stage/config.json" "$content" || return 1
+    if [[ "$reality_mode" = tunnel ]]; then
+        sbd_entry_tunnel_attach "$stage" "$id" "$sni" "$tunnel_port" || return 1
+    fi
     content=$(jq -n --arg profile "$profile" --arg type "$type" --arg id "$id" --arg tag "$tag" --arg name "$name" --arg server "$server" --argjson port "$external" \
         --rawfile credential <(printf '%s' "$credential") --arg method "$method" --arg network "$network" --argjson cdn "$cdn" \
         --slurpfile tls "$stage/source-client.json" --slurpfile source "$stage/source-facts.json" '
@@ -416,6 +612,12 @@ sbd_entry_create_classic() {
                 (if $profile=="vmess_ws" then {security:"auto",alter_id:0} else {} end) end) end))} +
         (if $profile=="vmess_ws" or $profile=="vless_ws" then {ingress:{type:"cdn",host:$cdn.host,origin_port:$cdn.origin_port}} else {} end)') || return 1
     sbd_record_write "$stage/entry-node.json" "$content" || return 1
+    if [[ "$reality_mode" = tunnel ]]; then
+        tunnel_tag=$(sbd_entry_tunnel_tag "$id") || return 1
+        content=$(jq --arg tag "$tunnel_tag" --argjson port "$tunnel_port" \
+            '. + {reality_mode:"tunnel",tunnel_tag:$tag,tunnel_port:$port}' "$stage/entry-node.json") || return 1
+        sbd_record_write "$stage/entry-node.json" "$content" || return 1
+    fi
     content=$(jq --slurpfile node "$stage/entry-node.json" '.nodes += $node' "$stage/registry.json") || return 1
     sbd_record_write "$stage/registry.json" "$content" || return 1
     sbd_export_rebuild "$stage"
@@ -473,6 +675,7 @@ sbd_entry_align_classic() {
 
 sbd_entry_create() {
     local stage="$1" spec="$2" profile type network name listen port server external password source id tag content
+    local reality_mode='direct' tunnel_port='' sni='' tunnel_tag=''
     sbd_record_write "$stage/request.json" "$spec" || return 1
     profile=$(sbd_entry_text "$stage/request.json" .profile 配置档) || return 1
     case "$profile" in
@@ -489,6 +692,14 @@ sbd_entry_create() {
     source=$(jq -ce '.tls_source' "$stage/request.json") || { _error '缺少 TLS 来源'; return 1; }
     if [[ "$profile" = anyreality ]]; then
         [[ "$(jq -r '.kind' <<< "$source")" = reality ]] || { _error 'AnyReality 必须使用 Reality'; return 1; }
+        reality_mode=$(jq -r '.mode // "direct"' <<< "$source") || return 1
+        case "$reality_mode" in direct|tunnel) ;; *) _error 'Reality 模式无效'; return 1 ;; esac
+        sni=$(jq -er '.server_name' <<< "$source") || { _error 'Reality 缺少伪装域名'; return 1; }
+        if [[ "$reality_mode" = tunnel ]]; then
+            sbd_entry_domain "$sni" || return 1
+            tunnel_port=$(sbd_entry_tunnel_port "$stage" "$port") || return 1
+            source=$(jq --argjson port "$tunnel_port" '.handshake={server:"127.0.0.1",server_port:$port}' <<< "$source") || return 1
+        fi
     else
         [[ "$(jq -r '.kind' <<< "$source")" != reality ]] || { _error '普通 TLS 配置档不能混入 Reality'; return 1; }
     fi
@@ -503,6 +714,9 @@ sbd_entry_create() {
     sbd_record_write "$stage/new-inbound.json" "$content" || return 1
     content=$(jq --slurpfile inbound "$stage/new-inbound.json" '.inbounds=((.inbounds // []) + $inbound)' "$stage/config.json") || return 1
     sbd_record_write "$stage/config.json" "$content" || return 1
+    if [[ "$reality_mode" = tunnel ]]; then
+        sbd_entry_tunnel_attach "$stage" "$id" "$sni" "$tunnel_port" || return 1
+    fi
     content=$(jq -n --arg id "$id" --arg tag "$tag" --arg profile "$profile" --arg name "$name" --arg type "$type" --arg server "$server" --argjson port "$external" --rawfile password <(printf '%s' "$password") \
         --slurpfile tls "$stage/source-client.json" --slurpfile source "$stage/source-facts.json" --slurpfile share "$stage/source-share.json" --slurpfile request "$stage/request.json" '
         {id:$id,name:$name,profile:$profile,inbound_tag:$tag,tls_source:$source[0],share:$share[0],client:
@@ -511,16 +725,23 @@ sbd_entry_create() {
          (if $type=="hysteria2" and $request[0].obfs!=null then {obfs:$request[0].obfs} else {} end))} +
         (if $source[0].kind=="certificate" then {certificate_id:$source[0].id} else {} end)') || return 1
     sbd_record_write "$stage/entry-node.json" "$content" || return 1
+    if [[ "$reality_mode" = tunnel ]]; then
+        tunnel_tag=$(sbd_entry_tunnel_tag "$id") || return 1
+        content=$(jq --arg tag "$tunnel_tag" --argjson port "$tunnel_port" \
+            '. + {reality_mode:"tunnel",tunnel_tag:$tag,tunnel_port:$port}' "$stage/entry-node.json") || return 1
+        sbd_record_write "$stage/entry-node.json" "$content" || return 1
+    fi
     content=$(jq --slurpfile node "$stage/entry-node.json" '.nodes += $node' "$stage/registry.json") || return 1
     sbd_record_write "$stage/registry.json" "$content" || return 1
     sbd_export_rebuild "$stage"
 }
 
 sbd_entry_change() {
-    local stage="$1" id="$2" action="$3" value="$4" content tag new_tag='' source tls scope=all profile
+    local stage="$1" id="$2" action="$3" value="$4" content tag new_tag='' source tls sni scope=all profile reality_mode=''
     case "$action" in tls) scope=replace_tls ;; delete) scope=delete ;; esac
     sbd_entry_lookup "$stage" "$id" || return 1
     profile=$(sbd_entry_text "$stage/entry-node.json" .profile 配置档) || return 1
+    reality_mode=$(jq -r '.reality_mode // "direct"' "$stage/entry-node.json") || return 1
     case "$profile" in hysteria2|anytls|anyreality|shadowsocks|vmess_ws|vless_ws|vless_reality) ;; *) _error '此协议的节点操作尚未实现'; return 1 ;; esac
     sbd_entry_align "$stage" "$stage/entry-node.json" "$scope" || return 1
     tag=$(sbd_entry_text "$stage/entry-node.json" .inbound_tag inbound标识) || return 1
@@ -630,6 +851,12 @@ sbd_entry_change() {
             case "$profile" in shadowsocks|vmess_ws|vless_ws) _error '此配置档不使用源站 TLS，不能添加证书或 Reality'; return 1 ;; esac
             if [[ "$profile" = anyreality || "$profile" = vless_reality ]]; then
                 [[ "$(jq -r '.kind' <<< "$value")" = reality ]] || { _error 'Reality 配置档必须使用 Reality'; return 1; }
+                if [[ "$reality_mode" = tunnel ]]; then
+                    source=$(jq -er '.tunnel_port' "$stage/entry-node.json") || { _error 'Tunnel 端口元数据缺失'; return 1; }
+                    sni=$(jq -er '.server_name' <<< "$value") || { _error 'Reality 缺少伪装域名'; return 1; }
+                    sbd_entry_domain "$sni" || return 1
+                    value=$(jq --argjson port "$source" '.handshake={server:"127.0.0.1",server_port:$port}' <<< "$value") || return 1
+                fi
             else
                 [[ "$(jq -r '.kind' <<< "$value")" != reality ]] || { _error '普通 TLS 不能切换为 Reality 配置档'; return 1; }
             fi
@@ -640,7 +867,14 @@ sbd_entry_change() {
             content=$(jq --slurpfile tls "$stage/source-client.json" --slurpfile source "$stage/source-facts.json" --slurpfile share "$stage/source-share.json" '
                 .client.tls |= (del(.enabled,.server_name,.certificate,.certificate_path,.certificate_public_key_sha256,.reality,.utls,.insecure) + $tls[0]) |
                 .tls_source=$source[0] | .share=$share[0] | del(.certificate_id) |
-                if $source[0].kind=="certificate" then .certificate_id=$source[0].id else . end' "$stage/entry-node.json") || return 1 ;;
+                if $source[0].kind=="certificate" then .certificate_id=$source[0].id else . end' "$stage/entry-node.json") || return 1
+            if [[ "$reality_mode" = tunnel ]]; then
+                case "$profile" in
+                    anyreality|vless_reality)
+                        sbd_entry_tunnel_update "$stage" "$id" "$(jq -r '.server_name' <<< "$value")" || return 1
+                        ;;
+                esac
+            fi ;;
         ss)
             [[ "$profile" = shadowsocks ]] || { _error '此节点不是 Shadowsocks'; return 1; }
             sbd_entry_ss_key "$(jq -r '.method' <<< "$value")" <<< "$(jq -r '.password' <<< "$value")" || return 1
@@ -663,6 +897,7 @@ sbd_entry_change() {
                 .client.server=$value.server | .client.server_port=$port | .client.tls.server_name=$value.host |
                 .client.transport.path=$value.path | .client.transport.headers.Host=$value.host' "$stage/entry-node.json") || return 1 ;;
         delete)
+            if [[ "$reality_mode" = tunnel ]]; then sbd_entry_tunnel_remove "$stage" "$id" || return 1; fi
             if jq -e --arg tag "$tag" '
                 any(.inbounds[]?; .tag!=$tag and .detour?==$tag) or
                 any([(.route.rules? // []),(.dns.rules? // [])] | .. | objects | .inbound? // empty;
@@ -801,10 +1036,20 @@ sbd_entry_choose() {
 }
 
 sbd_entry_tls_prompt() {
-    local profile="$1" server="$2" choice id name trust values kind default cert key
+    local profile="$1" server="$2" mode="${3:-}" choice id name trust values kind default cert key
     if [[ "$profile" = anyreality || "$profile" = vless_reality ]]; then
         sbd_entry_host_prompt '伪装域名' www.amd.com || return $?; name="$SBD_REPLY"
-        SBD_TLS_REQUEST=$(jq -n --arg name "$name" '{kind:"reality",server_name:$name,handshake:{server:$name,server_port:443}}') || return 1
+        if [[ -z "$mode" ]]; then
+            sbd_ui_options '[1] 直连伪装站（默认）' '[2] Tunnel（本机回环 + SNI 白名单）'
+            sbd_entry_number_prompt 'Reality 握手方式' 1 2 1 || return $?
+            [[ "$SBD_REPLY" = 2 ]] && mode=tunnel || mode=direct
+            if [[ "$mode" = tunnel ]]; then
+                sbd_info 'Tunnel 会新增 127.0.0.1 direct 入站和两条路由规则；客户端参数不变'
+            fi
+        fi
+        case "$mode" in direct|tunnel) ;; *) _error 'Reality 模式无效'; return 1 ;; esac
+        SBD_TLS_REQUEST=$(jq -n --arg name "$name" --arg mode "$mode" \
+            '{kind:"reality",server_name:$name,mode:$mode,handshake:{server:$name,server_port:443}}') || return 1
         return 0
     fi
     sbd_ui_options '[1] 已有共享 ACME provider' '[2] 已登记 PEM 证书' '[3] 新建 P-256 自签证书' '[4] 自定义证书'
@@ -1304,7 +1549,7 @@ sbd_entry_change_prompt() {
                 sbd_entry_hy2_manage_prompt "$node" 2 || return $?; action="$SBD_HY2_ACTION"; value="$SBD_HY2_REQUEST"
             else
                 case "$profile" in shadowsocks|*_ws) _error '此配置档不在源站使用 TLS；WS 请修改 CDN 参数'; return 1 ;; esac
-                action=tls; sbd_entry_tls_prompt "$profile" "$(jq -r '.client.server' <<< "$node")" || return $?; value="$SBD_TLS_REQUEST"
+                action=tls; sbd_entry_tls_prompt "$profile" "$(jq -r '.client.server' <<< "$node")" "$(jq -r '.reality_mode // "direct"' <<< "$node")" || return $?; value="$SBD_TLS_REQUEST"
             fi ;;
         7)
             if [[ "$mode" = edit && "$profile" = hysteria2 ]]; then
@@ -1357,6 +1602,11 @@ sbd_entry_adopt() {
     sbd_record_write "$stage/adopt-facts.json" "$facts" || return 1
     jq -ce --arg tag "$tag" '[.inbounds[]?|select(.tag==$tag)]|select(length==1)|.[0]' "$stage/config.json" > "$stage/adopt-inbound.json" || { _error '配置中没有唯一的 inbound'; return 1; }
     inbound=$(cat "$stage/adopt-inbound.json") || return 1
+    if jq -e '(.tls.reality.handshake.server? // "") as $server |
+        $server=="127.0.0.1" or $server=="::1" or $server=="localhost"' <<< "$inbound" >/dev/null; then
+        _error '检测到 Reality Tunnel 回环握手，暂不支持接管；请保留原节点或手工登记'
+        return 1
+    fi
     actual_type=$(jq -r .type <<< "$inbound") && transport=$(jq -r '.transport.type // "tcp"' <<< "$inbound") || return 1
     case "$actual_type:$transport:$(jq -r '.tls.reality.enabled // false' <<< "$inbound")" in
         shadowsocks:tcp:false) profile=shadowsocks ;;
