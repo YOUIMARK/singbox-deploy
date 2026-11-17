@@ -79,6 +79,37 @@ warp_sources_contract() {
         and .peers[0].reserved==[7,8,9]
         and .peers[0].allowed_ips==["0.0.0.0/0","::/0"]' <<< "$value"
 }
+warp_auto_sources() {
+    t_fresh
+    warp-reg() { return 1; }
+    sbd_peer_warp_http_get() {
+        case "$1" in
+            "$SBD_PEER_WARP_REG_URL")
+                cat > "$2" <<EOF
+#!/usr/bin/env bash
+cat '$ROOT/tests/fixtures/warp-reg.json'
+EOF
+                ;;
+            "$SBD_PEER_WARP_WGCF_URL")
+                cat > "$2" <<EOF
+#!/usr/bin/env bash
+mkdir -p "\$PREFIX/bin"
+printf '#!/usr/bin/env bash\ncat "$ROOT/tests/fixtures/warp-wgcf.json"\n' > "\$PREFIX/bin/wgcf-cli"
+chmod +x "\$PREFIX/bin/wgcf-cli"
+EOF
+                ;;
+            *) return 1 ;;
+        esac
+    }
+    t_run 0 sbd_peer_warp_fetch_reg "$CASE_TMP/reg"
+    t_assert '本地 warp-reg 失败后自动改用远程脚本' jq -e '
+        .private_key=="AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+        and .endpoint.v4=="162.159.192.1:0"' "$CASE_TMP/reg"
+    t_run 0 sbd_peer_warp_fetch_wgcf "$CASE_TMP/wgcf"
+    t_assert 'wgcf-cli 缺失时临时下载后仍返回注册结果' jq -e '
+        .private_key=="QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8="
+        and .endpoint.v4=="162.159.192.2"' "$CASE_TMP/wgcf"
+}
 warp_fallback_contract() {
     t_fresh
     sbd_peer_warp_fetch_reg() { return 1; }
@@ -226,6 +257,7 @@ tagless_target_contract() {
 t_case 'WARP 注册 API sing-box 字段映射与缺省归一' warp_contract
 t_case 'WARP 下载/JSON/密钥/reserved 失败均不写入' warp_failures
 t_case 'WARP warp-reg/wgcf 注册形态归一' warp_sources_contract
+t_case 'WARP 本地来源失败时自动下载临时工具' warp_auto_sources
 t_case 'WARP 三种来源按序回退' warp_fallback_contract
 t_case 'WARP 三种来源全部失败不写入' warp_all_fail_contract
 t_case 'WARP API 错误体显示 HTTP 状态与原因' warp_api_error_contract

@@ -69,10 +69,11 @@ warp_menu() {
     t_absent "$CASE_TMP/output" "$key"
     t_contains "$CASE_TMP/output" '[2] 添加 WARP'
     t_absent "$CASE_TMP/output" '[2] 添加 WARP（自动获取）'
-    t_assert 'WARP 菜单自动获取、自动 tag 并选择原生默认 DNS' jq -e '
-        .endpoints[0]|.tag=="warp" and .type=="wireguard"
-        and .address==["172.16.0.2/32","2606:4700:110:8a36::2/128"]
-        and .domain_resolver=="cloudflare"' "$SBD_CONFIG"
+    t_assert 'WARP 菜单自动获取、自动 tag 并跟随原生默认 DNS' jq -e '
+        (.endpoints[0] | .tag=="warp" and .type=="wireguard"
+            and .address==["172.16.0.2/32","2606:4700:110:8a36::2/128"]
+            and (.domain_resolver|not))
+        and .route.default_domain_resolver=="cloudflare"' "$SBD_CONFIG"
 }
 wireguard_menu() {
     t_fresh

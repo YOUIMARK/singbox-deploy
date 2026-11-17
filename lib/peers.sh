@@ -2,6 +2,7 @@
 
 # WARP 注册来源按 warp-reg.sh → wgcf-cli → 第三方 API 回退；失败时不修改配置。
 SBD_PEER_WARP_REG_URL='https://warp-reg.vercel.app'
+SBD_PEER_WARP_WGCF_URL='https://wgcf-cli.vercel.app'
 SBD_PEER_WARP_API='https://warp.cloudflare.now.cc/?run=register&format=sing-box'
 
 sbd_peer_cloudflared_route() {
@@ -190,9 +191,9 @@ sbd_peer_warp_download() {
 
 sbd_peer_warp_run() {
     if command -v timeout >/dev/null 2>&1; then
-        timeout 30 "$@"
+        timeout 30 "$@" </dev/null
     else
-        "$@"
+        "$@" </dev/null
     fi
 }
 
@@ -205,19 +206,22 @@ sbd_peer_warp_fetch_reg() {
         sbd_peer_warp_run warp-reg >"$target" 2>/dev/null || rc=$?
     elif command -v warp-reg.sh >/dev/null 2>&1; then
         sbd_peer_warp_run warp-reg.sh >"$target" 2>/dev/null || rc=$?
-    else
-        script=$(mktemp "${TMPDIR:-/tmp}/sbd-warp-reg.XXXXXX") || {
-            SBD_PEER_WARP_ERROR='无法创建临时文件'
-            return 1
-        }
-        if ! sbd_peer_warp_http_get "$SBD_PEER_WARP_REG_URL" "$script"; then
-            rm -f -- "$script"
-            SBD_PEER_WARP_ERROR='下载 warp-reg 脚本失败'
-            return 1
-        fi
-        sbd_peer_warp_run bash "$script" >"$target" 2>/dev/null || rc=$?
-        rm -f -- "$script"
     fi
+    [[ "$rc" = 0 && -s "$target" ]] && return 0
+
+    rc=0
+    script=$(mktemp "${TMPDIR:-/tmp}/sbd-warp-reg.XXXXXX") || {
+        SBD_PEER_WARP_ERROR='无法创建临时文件'
+        return 1
+    }
+    if ! sbd_peer_warp_http_get "$SBD_PEER_WARP_REG_URL" "$script"; then
+        rm -f -- "$script"
+        SBD_PEER_WARP_ERROR='下载 warp-reg 脚本失败'
+        return 1
+    fi
+    : > "$target" || { rm -f -- "$script"; return 1; }
+    sbd_peer_warp_run bash "$script" >"$target" 2>/dev/null || rc=$?
+    rm -f -- "$script"
     if [[ "$rc" != 0 ]]; then
         SBD_PEER_WARP_ERROR='warp-reg 执行失败'
         return 1
@@ -228,20 +232,43 @@ sbd_peer_warp_fetch_reg() {
     fi
 }
 
+sbd_peer_warp_wgcf_install() {
+    local dir="$1" installer="$1/install.sh" candidate
+    [[ -n "$dir" ]] || return 1
+    if ! sbd_peer_warp_http_get "$SBD_PEER_WARP_WGCF_URL" "$installer"; then
+        SBD_PEER_WARP_ERROR='下载 wgcf-cli 安装脚本失败'
+        return 1
+    fi
+    if ! sbd_peer_warp_run env PREFIX="$dir" bash "$installer" >/dev/null 2>&1; then
+        SBD_PEER_WARP_ERROR='wgcf-cli 临时安装失败'
+        return 1
+    fi
+    for candidate in "$dir/bin/wgcf-cli" "$dir/wgcf-cli"; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    SBD_PEER_WARP_ERROR='wgcf-cli 安装后未找到可执行文件'
+    return 1
+}
+
 sbd_peer_warp_fetch_wgcf() {
     local target="$1" dir='' tool='' rc=0 candidate=''
     [[ -n "$target" ]] || return 1
-    if command -v wgcf-cli >/dev/null 2>&1; then
-        tool=wgcf-cli
-    else
-        SBD_PEER_WARP_ERROR='未安装 wgcf-cli'
-        return 1
-    fi
     SBD_PEER_WARP_ERROR=''
+    tool=$(command -v wgcf-cli 2>/dev/null) || tool=''
     dir=$(mktemp -d "${TMPDIR:-/tmp}/sbd-wgcf.XXXXXX") || {
         SBD_PEER_WARP_ERROR='无法创建临时目录'
         return 1
     }
+    if [[ -z "$tool" ]]; then
+        sbd_info 'wgcf-cli 未安装，正在下载临时副本'
+        tool=$(sbd_peer_warp_wgcf_install "$dir") || {
+            rm -rf -- "$dir"
+            return 1
+        }
+    fi
     : > "$target" || { rm -rf -- "$dir"; return 1; }
     (
         cd "$dir" || exit 1
@@ -314,7 +341,6 @@ sbd_peer_warp_prompt() {
     host=$(jq -er '.peers[0].address' <<< "$value") || { _error 'WARP peer 地址缺失'; return 1; }
     if [[ "$(sbd_tls_identity "$host")" = DNS:* ]]; then
         sbd_policy_target dns default || { _error 'WARP peer 使用域名，但当前没有可用的默认 DNS'; return 1; }
-        value=$(jq --arg resolver "$SBD_REPLY" '.domain_resolver=$resolver' <<< "$value") || return 1
     fi
     SBD_PEER_VALUE="$value"
 }
