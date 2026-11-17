@@ -199,6 +199,10 @@ sbd_share_hysteria2() {
     if jq -e '(.client.server_ports // [] | length)>0' "$node" >/dev/null; then
         query=$(jq --slurpfile node "$node" '. + {mport:($node[0].client.server_ports|map(gsub(":";"-"))|join(","))}' <<< "$query") || return 1
     fi
+    # 客户端带宽必须随链接交付，否则导入端会回落到 BBR，服务端带宽上限也随之失效。
+    if jq -e '((.client.up_mbps // 0) > 0) and ((.client.down_mbps // 0) > 0)' "$node" >/dev/null; then
+        query=$(jq --slurpfile node "$node" '. + {upmbps:($node[0].client.up_mbps|tostring),downmbps:($node[0].client.down_mbps|tostring)}' <<< "$query") || return 1
+    fi
     sbd_share_emit "$node" hysteria2 "$query"
 }
 

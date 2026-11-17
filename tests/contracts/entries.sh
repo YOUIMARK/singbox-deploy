@@ -68,6 +68,13 @@ hy2_custom() {
     t_assert '客户端方向独立' jq -e '.nodes[0].client|.up_mbps==3 and .down_mbps==12 and .obfs.min_packet_size==600 and .obfs.max_packet_size==1300' "$SBD_REGISTRY"
     t_run 0 t_entry_uri hysteria2
 }
+hy2_prompt_contract() {
+    t_fresh
+    t_run 0 sbd_entry_hy2_prompt <<< $'2\n100\n50\n1\n'
+    t_assert 'Brutal 一次填写双端方向镜像' jq -e '.server_options=={"up_mbps":100,"down_mbps":50} and .client_options=={"up_mbps":50,"down_mbps":100}' <<< "$SBD_HY2_REQUEST"
+    t_run 0 sbd_entry_hy2_prompt <<< $'1\n3\n1\n'
+    t_assert 'BBR 档位双端写入' jq -e '.server_options=={"bbr_profile":"aggressive"} and .client_options=={"bbr_profile":"aggressive"}' <<< "$SBD_HY2_REQUEST"
+}
 hy2_management() {
     t_seed
     t_entry_add vmess_ws
@@ -84,20 +91,33 @@ hy2_management() {
     t_contains "$CASE_TMP/output" 'sing-box inbound 仍监听单端口'
     t_contains "$CASE_TMP/output" '端口范围格式'
     t_contains "$CASE_TMP/output" '端口范围须为 3050、20000-50000 或 11,13,15-17 这类组合'
-    t_contains "$CASE_TMP/output" '[6] 客户端上/下行带宽'
-    t_contains "$CASE_TMP/output" '[7] 服务端上/下行带宽'
-    t_contains "$CASE_TMP/output" '[8] Salamander/Gecko 混淆'
-    t_contains "$CASE_TMP/output" '[10] HTTP/3 伪装 masquerade'
+    t_contains "$CASE_TMP/output" '[6] 上/下行带宽'
+    t_contains "$CASE_TMP/output" '[7] Salamander/Gecko 混淆'
+    t_contains "$CASE_TMP/output" '[8] 切换 TLS 来源'
+    t_contains "$CASE_TMP/output" '[9] HTTP/3 伪装 masquerade'
+    t_contains "$CASE_TMP/output" '[10] BBR 调优档'
     t_assert '编辑菜单配置客户端跳跃端口' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|(.server_ports==["20000:20100"] and (has("hop_interval")|not))' "$SBD_REGISTRY"
     t_assert 'sing-box 原生客户端导出仅携带跳跃范围' jq -e '.outbounds[0]|(.server_ports=="20000:20100" and (has("hop_interval")|not))' "$SBD_EXPORTS/$id.json"
     t_run 0 t_entry_uri hysteria2
     t_run 0 t_classic_uri
-    t_run 0 sbd_apply sbd_entry_change "$id" hy2_client_bandwidth '{"up_mbps":8,"down_mbps":40}'
-    t_assert '客户端带宽独立保存' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|.up_mbps==8 and .down_mbps==40' "$SBD_REGISTRY"
-    t_run 0 sbd_apply sbd_entry_change "$id" hy2_client_bandwidth '{}'
-    t_assert '切回 BBR 清除客户端带宽限制' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|(has("up_mbps") or has("down_mbps"))|not' "$SBD_REGISTRY"
-    t_run 0 sbd_apply sbd_entry_change "$id" hy2_server_bandwidth '{"up_mbps":100,"down_mbps":25}'
+    t_run 2 sbd_entry_change_prompt edit <<< $'2\n6\n2\n100\n25\ny\n0\n'
+    t_contains "$CASE_TMP/output" '[6] 上/下行带宽'
     t_assert '服务端带宽写入 inbound' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.up_mbps==100 and .down_mbps==25' "$SBD_CONFIG"
+    t_assert '客户端带宽按相反方向镜像' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client.up_mbps==25 and .client.down_mbps==100' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_bandwidth_sync '{}'
+    t_assert '切回 BBR 双端清除带宽' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|(has("up_mbps") or has("down_mbps") or has("ignore_client_bandwidth"))|not' "$SBD_CONFIG"
+    t_assert '切回 BBR 清除客户端带宽' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client|(has("up_mbps") or has("down_mbps"))|not' "$SBD_REGISTRY"
+    node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || exit 1
+    sbd_entry_hy2_manage_prompt "$node" 5 > "$CASE_TMP/bbr-view" 2>&1 <<< $'2' || exit 1
+    t_contains "$CASE_TMP/bbr-view" '当前 BBR 档位: standard'
+    t_assert 'BBR 子菜单生成档位动作' test "$SBD_HY2_ACTION" = hy2_bbr_profile -a "$SBD_HY2_REQUEST" = conservative
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_bbr_profile aggressive
+    t_assert 'BBR 档位写入 inbound' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.bbr_profile=="aggressive"' "$SBD_CONFIG"
+    t_assert 'BBR 档位写入客户端' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client.bbr_profile=="aggressive"' "$SBD_REGISTRY"
+    t_assert '客户端 JSON 携带 BBR 档位' jq -e '.outbounds[0].bbr_profile=="aggressive"' "$SBD_EXPORTS/$id.json"
+    t_run 1 sbd_apply sbd_entry_change "$id" hy2_bbr_profile bogus
+    t_contains "$CASE_TMP/output" 'BBR 档位无效'
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_bbr_profile standard
     t_run 0 sbd_apply sbd_entry_change "$id" hy2_obfs '{"type":"salamander","password":"fixture-obfs"}'
     t_assert '服务端混淆已更新' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.obfs.type=="salamander"' "$SBD_CONFIG"
     t_assert '客户端混淆已同步更新' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.client.obfs.password=="fixture-obfs"' "$SBD_REGISTRY"
@@ -120,13 +140,13 @@ hy2_management() {
     t_assert '反向代理伪装写入 inbound' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.masquerade=={type:"proxy",url:"https://www.amd.com/",rewrite_host:true}' "$SBD_CONFIG"
     node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || exit 1
     SBD_HY2_VIEW=false
-    sbd_entry_hy2_manage_prompt "$node" 5 > "$CASE_TMP/masquerade-view" 2>&1 <<< $'1' || exit 1
+    sbd_entry_hy2_manage_prompt "$node" 4 > "$CASE_TMP/masquerade-view" 2>&1 <<< $'1' || exit 1
     t_contains "$CASE_TMP/masquerade-view" '当前伪装: proxy → https://www.amd.com/（重写 Host）'
     t_run 0 sbd_apply sbd_entry_change "$id" hy2_masquerade '{"type":"string","status_code":200,"content":"welcome"}'
     t_assert '字符串伪装写入 inbound' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.masquerade=={type:"string",status_code:200,content:"welcome"}' "$SBD_CONFIG"
     node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || exit 1
     SBD_HY2_VIEW=false
-    sbd_entry_hy2_manage_prompt "$node" 5 > "$CASE_TMP/masquerade-view" 2>&1 <<< $'1' || exit 1
+    sbd_entry_hy2_manage_prompt "$node" 4 > "$CASE_TMP/masquerade-view" 2>&1 <<< $'1' || exit 1
     t_contains "$CASE_TMP/masquerade-view" '当前伪装: string → HTTP 200：welcome'
     t_run 1 sbd_apply sbd_entry_change "$id" hy2_masquerade '{"type":"proxy","url":"ftp://www.amd.com/"}'
     t_run 1 sbd_apply sbd_entry_change "$id" hy2_masquerade '{"type":"string","content":""}'
@@ -135,9 +155,9 @@ hy2_management() {
     t_assert '关闭伪装清除 inbound' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|has("masquerade")|not' "$SBD_CONFIG"
     node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || exit 1
     SBD_HY2_VIEW=false
-    sbd_entry_hy2_manage_prompt "$node" 5 > "$CASE_TMP/masquerade-view" 2>&1 <<< $'1' || exit 1
+    sbd_entry_hy2_manage_prompt "$node" 4 > "$CASE_TMP/masquerade-view" 2>&1 <<< $'1' || exit 1
     t_contains "$CASE_TMP/masquerade-view" '当前伪装: 未启用'
-    t_run 2 sbd_entry_change_prompt edit <<< $'2\n10\n1\n\n0\n'
+    t_run 2 sbd_entry_change_prompt edit <<< $'2\n9\n1\n\n0\n'
     t_contains "$CASE_TMP/output" '当前伪装: 未启用'
     t_run 0 sbd_check_config
 }
@@ -149,9 +169,9 @@ hy2_paired_bandwidth() {
     tag=$(jq -r --arg id "$id" '.nodes[]|select(.id==$id)|.inbound_tag' "$SBD_REGISTRY") || exit 1
     t_patch_config --arg tag "$tag" '(.inbounds[]|select(.tag==$tag)).ignore_client_bandwidth=true'
     node=$(jq -c --arg id "$id" '.nodes[]|select(.id==$id)' "$SBD_REGISTRY") || exit 1
-    sbd_entry_hy2_manage_prompt "$node" 2 > "$CASE_TMP/prompt" 2>&1 <<< $'2\n8\n40\n100\n25' || exit 1
-    t_assert '任一带宽菜单均进入成对管理' test "$SBD_HY2_ACTION" = hy2_bandwidth
-    t_assert '分别录入两侧带宽值' jq -e '.client_options=={up_mbps:8,down_mbps:40} and .server_options=={up_mbps:100,down_mbps:25}' <<< "$SBD_HY2_REQUEST"
+    sbd_entry_hy2_manage_prompt "$node" 2 > "$CASE_TMP/prompt" 2>&1 <<< $'2\n100\n25' || exit 1
+    t_assert '带宽菜单进入双端同步' test "$SBD_HY2_ACTION" = hy2_bandwidth_sync
+    t_assert '一次录入服务器上下行' jq -e '.=={up_mbps:100,down_mbps:25}' <<< "$SBD_HY2_REQUEST"
     t_entry_save
     t_run 1 sbd_apply sbd_entry_change "$id" hy2_server_bandwidth '{"up_mbps":100,"down_mbps":25}'
     t_contains "$CASE_TMP/output" '节点认证、TLS、混淆或带宽策略与元数据不一致'
@@ -403,6 +423,7 @@ t_case 'AnyTLS 真实配置与 URI 编码' anytls_contract
 t_case 'AnyReality 真实密钥与原生客户端/服务端' reality_contract
 t_case 'Hysteria2 默认 BBR 和证书指纹 URI' hy2_default
 t_case 'Hysteria2 两侧带宽与 Gecko 自定义 URI 扩展' hy2_custom
+t_case 'Hysteria2 创建向导一次带宽询问并镜像双端' hy2_prompt_contract
 t_case 'Hysteria2 编辑管理：端口跳跃、两侧带宽与混淆' hy2_management
 t_case 'ignore_client_bandwidth 下成对修改带宽并保留独立数值' hy2_paired_bandwidth
 t_case '精简向导真实创建、自动分享、JSON 交付和 EOF 语义' create_prompt_contract
