@@ -46,6 +46,7 @@ reality_contract() {
     t_seed
     t_entry_add anyreality
     t_assert 'AnyReality 仍为原生 AnyTLS' jq -e '.inbounds[0]|.type=="anytls" and .tls.reality.enabled and (.users[0]|has("uuid") or has("flow")|not)' "$SBD_CONFIG"
+    t_assert 'direct 模式不创建辅助入站' jq -e '(.inbounds|length)==1' "$SBD_CONFIG"
     t_assert 'uTLS 只在客户端' jq -e 'all(.inbounds[]; (.tls|has("utls")|not))' "$SBD_CONFIG"
     t_assert '客户端为显式 chrome，不含私钥' jq -e '.nodes[0].client | .tls.utls.fingerprint=="chrome" and (.tls.reality|has("private_key")|not) and (has("uuid")|not) and (has("flow")|not)' "$SBD_REGISTRY"
     t_run 0 t_entry_uri anyreality
@@ -232,6 +233,171 @@ listen_overlap_contract() {
     t_run 1 sbd_apply sbd_entry_change "$id" listen '{"listen":"127.0.0.1","listen_port":19507}'
     t_contains "$CASE_TMP/output" '已被占用'
 }
+reality_mode_prompt_contract() {
+    t_fresh
+    t_run 0 sbd_entry_tls_prompt vless_reality 127.0.0.1 <<< $'example.com\n2'
+    t_contains "$CASE_TMP/output" '[1] 直连伪装站（默认）'
+    t_contains "$CASE_TMP/output" '[2] Tunnel（本机回环 + SNI 白名单）'
+    t_assert '选择 Tunnel 写入 TLS 请求' jq -e '.kind=="reality" and .server_name=="example.com" and .mode=="tunnel"' <<< "$SBD_TLS_REQUEST"
+}
+t_reality_tunnel_seed() {
+    t_seed
+    t_patch_config --slurpfile base "$ROOT/presets/base.json" '
+        .route.rules=$base[0].route.rules |
+        .route.default_domain_resolver="system" |
+        .dns={"servers":[{"type":"local","tag":"system"}],"final":"system"}
+    '
+}
+
+reality_tunnel_contract() {
+    t_reality_tunnel_seed
+    local spec id tag tunnel_tag tunnel_port
+    spec=$(jq '.tls_source.mode="tunnel"' "$ROOT/tests/fixtures/entry-vless_reality.json") || exit 1
+    t_run 0 sbd_apply sbd_entry_create "$spec"
+    id=$(jq -r '.nodes[0].id' "$SBD_REGISTRY") || exit 1
+    tag=$(jq -r '.nodes[0].inbound_tag' "$SBD_REGISTRY") || exit 1
+    tunnel_tag=$(jq -r '.nodes[0].tunnel_tag' "$SBD_REGISTRY") || exit 1
+    tunnel_port=$(jq -r '.nodes[0].tunnel_port' "$SBD_REGISTRY") || exit 1
+    t_assert 'Tunnel 模式元数据稳定' jq -e '.nodes[0]|.reality_mode=="tunnel" and .tunnel_tag==("reality-tunnel-" + .id) and (.tunnel_port|type=="number")' "$SBD_REGISTRY"
+    t_assert '辅助 direct 入站固定回源' jq -e --arg tag "$tunnel_tag" --argjson port "$tunnel_port" \
+        '.inbounds[]|select(.tag==$tag)|.type=="direct" and .listen=="127.0.0.1" and .listen_port==$port and .network=="tcp" and .override_address=="example.com" and .override_port==443' "$SBD_CONFIG"
+    t_assert 'Reality handshake 指向回环' jq -e --arg tag "$tag" --argjson port "$tunnel_port" \
+        '.inbounds[]|select(.tag==$tag)|.tls.reality.handshake.server=="127.0.0.1" and .tls.reality.handshake.server_port==$port' "$SBD_CONFIG"
+    t_assert 'Tunnel 规则紧跟 sniff 且位于 resolve 之前' jq -e --arg tag "$tunnel_tag" --slurpfile base "$ROOT/presets/base.json" '
+        ($base[0].route.rules) as $defaults |
+        (.route.rules|length)==(($defaults|length)+2) and
+        .route.rules[0]==$defaults[0] and
+        .route.rules[1].inbound==$tag and
+        .route.rules[2].inbound==$tag and
+        .route.rules[3:]==$defaults[1:]
+    ' "$SBD_CONFIG"
+    t_assert 'Tunnel 白名单和兜底拒绝' jq -e --arg tag "$tunnel_tag" '
+        def hit($tag): (.inbound // []) | if type=="array" then index($tag)!=null else .==$tag end;
+        def domain_is($sni): (.domain // []) | if type=="array" then .==[$sni] else .==$sni end;
+        [.route.rules[]|select(hit($tag))] as $rules |
+        ($rules|length)==2 and
+        any($rules[]; domain_is("example.com") and ((.action // "route")=="route") and .outbound=="direct") and
+        any($rules[]; (.domain // null)==null and .action=="reject")
+    ' "$SBD_CONFIG"
+    t_assert 'Tunnel 规则组完整登记' jq -e --arg group "reality-tunnel.$id" \
+        '[.policy.route_rules[]|select(.group==$group)]|length==2' "$SBD_REGISTRY"
+    t_run 0 sbd_check_config
+    t_run 0 sbd_export_node "$id" link inline
+    t_contains "$CASE_TMP/output" '分享链接: vless://'
+}
+
+reality_tunnel_anyreality_contract() {
+    t_reality_tunnel_seed
+    local spec id tag tunnel_tag
+    spec=$(jq '.tls_source.mode="tunnel"' "$ROOT/tests/fixtures/entry-anyreality.json") || exit 1
+    t_run 0 sbd_apply sbd_entry_create "$spec"
+    id=$(jq -r '.nodes[0].id' "$SBD_REGISTRY") || exit 1
+    tag=$(jq -r '.nodes[0].inbound_tag' "$SBD_REGISTRY") || exit 1
+    tunnel_tag=$(jq -r '.nodes[0].tunnel_tag' "$SBD_REGISTRY") || exit 1
+    t_assert 'AnyReality Tunnel 元数据' jq -e '.nodes[0]|.reality_mode=="tunnel"' "$SBD_REGISTRY"
+    t_assert 'AnyReality 辅助入站' jq -e --arg tag "$tunnel_tag" '.inbounds[]|select(.tag==$tag)|.override_address=="example.com"' "$SBD_CONFIG"
+    t_assert 'AnyReality handshake 回环' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.tls.reality.handshake.server=="127.0.0.1"' "$SBD_CONFIG"
+    t_run 0 sbd_apply sbd_entry_change "$id" delete ''
+    t_assert '删除节点清理辅助入站' jq -e --arg tag "$tunnel_tag" 'all((.inbounds // [])[]; .tag!=$tag)' "$SBD_CONFIG"
+    t_assert '删除节点清理规则' jq -e --arg tag "$tunnel_tag" 'all((.route.rules // [])[]; ((.inbound // [])|if type=="array" then index($tag) else .==$tag end)==null)' "$SBD_CONFIG"
+    t_assert '删除节点清理规则登记' jq -e --arg group "reality-tunnel.$id" 'all(.policy.route_rules[]; .group!=$group)' "$SBD_REGISTRY"
+}
+
+reality_tunnel_change_contract() {
+    t_reality_tunnel_seed
+    local spec id tag tunnel_tag
+    spec=$(jq '.tls_source.mode="tunnel"' "$ROOT/tests/fixtures/entry-vless_reality.json") || exit 1
+    t_run 0 sbd_apply sbd_entry_create "$spec"
+    id=$(jq -r '.nodes[0].id' "$SBD_REGISTRY") || exit 1
+    tag=$(jq -r '.nodes[0].inbound_tag' "$SBD_REGISTRY") || exit 1
+    tunnel_tag=$(jq -r '.nodes[0].tunnel_tag' "$SBD_REGISTRY") || exit 1
+    t_run 0 sbd_apply sbd_entry_change "$id" tls '{"kind":"reality","server_name":"new.example.com","handshake":{"server":"new.example.com","server_port":443}}'
+    t_assert '改 SNI 同步辅助入站' jq -e --arg tag "$tunnel_tag" '.inbounds[]|select(.tag==$tag)|.override_address=="new.example.com"' "$SBD_CONFIG"
+    t_assert '改 SNI 同步白名单' jq -e --arg tag "$tunnel_tag" '
+        def hit($tag): (.inbound // []) | if type=="array" then index($tag)!=null else .==$tag end;
+        any(.route.rules[]; hit($tag) and
+            ((.domain // []) | if type=="array" then .==["new.example.com"] else .=="new.example.com" end))
+    ' "$SBD_CONFIG"
+    t_assert '改 SNI 后 handshake 仍回环' jq -e --arg tag "$tag" '.inbounds[]|select(.tag==$tag)|.tls.reality.handshake.server=="127.0.0.1"' "$SBD_CONFIG"
+    t_assert '客户端 SNI 已更新' jq -e '.nodes[0].client.tls.server_name=="new.example.com"' "$SBD_REGISTRY"
+    t_run 1 sbd_apply sbd_entry_change "$id" tls '{"kind":"reality","server_name":"1.1.1.1","handshake":{"server":"1.1.1.1","server_port":443}}'
+    t_contains "$CASE_TMP/output" '伪装域名必须是 DNS 名称'
+    t_assert 'IP SNI 变更整组回滚' jq -e '.nodes[0].client.tls.server_name=="new.example.com"' "$SBD_REGISTRY"
+    t_run 0 sbd_check_config
+}
+
+reality_tunnel_drift_contract() {
+    t_reality_tunnel_seed
+    local spec id tunnel_tag name
+    spec=$(jq '.tls_source.mode="tunnel"' "$ROOT/tests/fixtures/entry-vless_reality.json") || exit 1
+    t_run 0 sbd_apply sbd_entry_create "$spec"
+    id=$(jq -r '.nodes[0].id' "$SBD_REGISTRY") || exit 1
+    tunnel_tag=$(jq -r '.nodes[0].tunnel_tag' "$SBD_REGISTRY") || exit 1
+    name=$(jq -r '.nodes[0].name' "$SBD_REGISTRY") || exit 1
+    t_patch_config --arg tag "$tunnel_tag" '(.inbounds[]|select(.tag==$tag)|.override_address)="wrong.example.com"'
+    t_run 1 sbd_apply sbd_entry_change "$id" name '漂移后的名字'
+    t_contains "$CASE_TMP/output" 'Tunnel 辅助入站或回源目标发生漂移'
+    t_assert '漂移时节点名未提交' jq -e --arg name "$name" '.nodes[0].name==$name' "$SBD_REGISTRY"
+}
+
+reality_tunnel_requires_defaults() {
+    t_seed
+    local spec
+    spec=$(jq '.tls_source.mode="tunnel"' "$ROOT/tests/fixtures/entry-vless_reality.json") || exit 1
+    t_run 1 sbd_apply sbd_entry_create "$spec"
+    t_contains "$CASE_TMP/output" '需要默认 sniff 路由规则'
+    t_assert '缺少默认规则时不写节点' jq -e '.nodes|length==0' "$SBD_REGISTRY"
+    t_assert '缺少默认规则时不写入站' jq -e '(.inbounds // [])|length==0' "$SBD_CONFIG"
+}
+reality_tunnel_rejects_ip_contract() {
+    t_reality_tunnel_seed
+    local spec
+    spec=$(jq '.tls_source.mode="tunnel" | .tls_source.server_name="1.1.1.1"' "$ROOT/tests/fixtures/entry-vless_reality.json") || exit 1
+    t_run 1 sbd_apply sbd_entry_create "$spec"
+    t_contains "$CASE_TMP/output" '伪装域名必须是 DNS 名称'
+    t_assert 'IP 伪装目标不写节点' jq -e '.nodes|length==0' "$SBD_REGISTRY"
+}
+reality_tunnel_defaults_restore_contract() {
+    t_reality_tunnel_seed
+    local spec id tunnel_tag group
+    spec=$(jq '.tls_source.mode="tunnel"' "$ROOT/tests/fixtures/entry-vless_reality.json") || exit 1
+    t_run 0 sbd_apply sbd_entry_create "$spec"
+    id=$(jq -r '.nodes[0].id' "$SBD_REGISTRY") || exit 1
+    tunnel_tag=$(jq -r '.nodes[0].tunnel_tag' "$SBD_REGISTRY") || exit 1
+    group="reality-tunnel.$id"
+    t_run 0 sbd_apply sbd_route_defaults
+    t_assert '恢复默认后 Tunnel 规则仍在 sniff 之后' jq -e --arg tag "$tunnel_tag" --slurpfile base "$ROOT/presets/base.json" '
+        ($base[0].route.rules) as $defaults |
+        .route.rules[0]==$defaults[0] and
+        .route.rules[1].inbound==$tag and
+        .route.rules[2].inbound==$tag and
+        .route.rules[3:]==$defaults[1:]
+    ' "$SBD_CONFIG"
+    t_assert '恢复默认后保留 Tunnel 分组和位置登记' jq -e --arg group "$group" '
+        ([.policy.route_rules[]?|select(.group==$group)] | sort_by(.index) | map(.index)) == [1,2]
+    ' "$SBD_REGISTRY"
+    t_run 1 sbd_apply sbd_policy_rule route_rules delete "$group.allow"
+    t_contains "$CASE_TMP/output" 'Tunnel 托管规则不能单独修改或删除'
+}
+reality_tunnel_two_nodes_contract() {
+    t_reality_tunnel_seed
+    local spec
+    spec=$(jq '.tls_source.mode="tunnel"' "$ROOT/tests/fixtures/entry-vless_reality.json") || exit 1
+    t_run 0 sbd_apply sbd_entry_create "$spec"
+    spec=$(jq '.tls_source.mode="tunnel" | .name="第二个 Tunnel" | .listen_port=19508' "$ROOT/tests/fixtures/entry-vless_reality.json") || exit 1
+    t_run 0 sbd_apply sbd_entry_create "$spec"
+    t_assert '两个 Tunnel 节点的规则都紧跟 sniff' jq -e --slurpfile base "$ROOT/presets/base.json" '
+        def tunnel_hit: (.inbound // []) | if type=="array" then any(.[]; startswith("reality-tunnel-")) else startswith("reality-tunnel-") end;
+        ($base[0].route.rules) as $defaults |
+        ([.route.rules[] | select(tunnel_hit)] | length)==4 and
+        .route.rules[0]==$defaults[0] and
+        ([.route.rules[1:5][] | tunnel_hit] | all) and
+        .route.rules[5:]==$defaults[1:]
+    ' "$SBD_CONFIG"
+    t_assert '两个 Tunnel 节点各保留两条分组登记' jq -e '
+        ([.policy.route_rules[]? | select((.group // "")|startswith("reality-tunnel."))] | group_by(.group) | map(length) | all(.==2))
+    ' "$SBD_REGISTRY"
+}
 t_case '节点字段重问、十进制与秘密随机输入' field_contract
 t_case 'AnyTLS 真实配置与 URI 编码' anytls_contract
 t_case 'AnyReality 真实密钥与原生客户端/服务端' reality_contract
@@ -240,7 +406,16 @@ t_case 'Hysteria2 两侧带宽与 Gecko 自定义 URI 扩展' hy2_custom
 t_case 'Hysteria2 编辑管理：端口跳跃、两侧带宽与混淆' hy2_management
 t_case 'ignore_client_bandwidth 下成对修改带宽并保留独立数值' hy2_paired_bandwidth
 t_case '精简向导真实创建、自动分享、JSON 交付和 EOF 语义' create_prompt_contract
+t_case 'Reality 创建时选择直连或 Tunnel 握手' reality_mode_prompt_contract
 t_case '添加节点时导入自定义 PEM 证书并选择客户端信任' custom_certificate_prompt_contract
+t_case 'VLESS Reality Tunnel 创建、规则与导出' reality_tunnel_contract
+t_case 'AnyReality Tunnel 创建与删除清理' reality_tunnel_anyreality_contract
+t_case 'Reality Tunnel 改 SNI 同步辅助入站和规则' reality_tunnel_change_contract
+t_case 'Reality Tunnel 辅助入站漂移拒绝提交' reality_tunnel_drift_contract
+t_case 'Reality Tunnel 缺少默认路由规则时拒绝创建' reality_tunnel_requires_defaults
+t_case 'Reality Tunnel 拒绝 IP 伪装目标' reality_tunnel_rejects_ip_contract
+t_case '恢复默认路由规则后 Tunnel 仍紧跟 sniff' reality_tunnel_defaults_restore_contract
+t_case '两个 Tunnel 节点规则互不误判' reality_tunnel_two_nodes_contract
 t_case '编辑自身时监听地址重叠不误判冲突，其他入口仍判冲突' listen_overlap_contract
 t_case '首页空列表明确提示、坏登记不冒充没有节点' empty_list_contract
 t_finish

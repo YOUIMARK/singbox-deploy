@@ -44,6 +44,11 @@ sbd_policy_rule() {
     local stage="$1" area="$2" action="$3" id="$4" value="${5:-}" position="${6:--1}" request
     [[ -n "$value" ]] || value='{}'
     case "$area" in route_rules|dns_rules) ;; *) _error '未知规则区域'; return 1 ;; esac
+    if [[ "$area" = route_rules && "$action" != add ]] &&
+        jq -e --arg id "$id" 'any(.policy.route_rules[]?; .id==$id and (.group // "" | startswith("reality-tunnel.")))' "$stage/registry.json" >/dev/null; then
+        _error 'Tunnel 托管规则不能单独修改或删除；请删除对应节点'
+        return 1
+    fi
     if [[ "$action" = add ]]; then
         id=$(openssl rand -hex 8) || { _error '生成规则 ID 失败'; return 1; }; id="rule.$id"
     fi
