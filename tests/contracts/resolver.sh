@@ -36,19 +36,21 @@ dns_rules_contract() {
 }
 race_contract() {
     t_policy_seed
-    t_policy_udp
-    t_run 0 sbd_apply sbd_resolver_race '["system","upstream"]' '{"domain_suffix":["example.com"]}'
-    t_assert '原生两个 evaluate 和两个 respond/race，不添加 Xray 布尔开关' jq -e '(.dns|has("enableParallelQuery")|not) and (.dns.rules|length==4) and .dns.rules[0].action=="evaluate" and .dns.rules[1].action=="evaluate" and .dns.rules[2].action=="respond" and .dns.rules[2].race==true and .dns.rules[3].race==true' "$SBD_CONFIG"
-    t_assert '竞速不偷偷改变默认上游' jq -e '.dns.final=="system"' "$SBD_CONFIG"
-    t_assert '组 ID 只在管理记录中保存' jq -e '.policy.dns_rules|length==4 and ([.[].group]|unique|length==1)' "$SBD_REGISTRY"
-    local group request
-    group=$(jq -r '.policy.dns_rules[0].group' "$SBD_REGISTRY") || exit 1
-    request=$(jq -n --arg group "$group" '{area:"dns_rules",action:"delete_group",id:$group}') || exit 1
-    t_run 0 sbd_apply sbd_policy_edit "$request"
+    t_run 0 sbd_apply sbd_resolver_switch 'local,https://dns.example.com/dns-query'
+    t_assert '多上游切换生成原生 evaluate 与 NOERROR/NXDOMAIN 竞速' jq -e '
+        (.dns.rules|length==6)
+        and ([.dns.rules[]|select(.action=="evaluate")]|length==2)
+        and ([.dns.rules[]|select(.action=="respond" and .race==true)]|length==4)
+        and ([.dns.rules[]|select(.action=="respond" and .response_rcode=="NOERROR")]|length==2)
+        and ([.dns.rules[]|select(.action=="respond" and .response_rcode=="NXDOMAIN")]|length==2)
+    ' "$SBD_CONFIG"
+    t_assert '首个选中上游成为默认 DNS，并补上原生 resolve 动作' jq -e '.dns.final=="system" and .route.default_domain_resolver=="system" and .route.rules[0].action=="resolve"' "$SBD_CONFIG"
+    t_assert '竞速组 ID 只在管理记录中保存' jq -e '.policy.dns_rules|length==6 and ([.[].group]|unique)==["dns.default.race"]' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_policy_edit '{"area":"dns_rules","action":"delete_group","id":"dns.default.race"}'
     t_assert '竞速组完整删除' jq -e '(.dns.rules // [])==[]' "$SBD_CONFIG"
 }
 t_case '六种新格式 DNS 上游真实 Schema/check' typed_contract
 t_case '域名 bootstrap、默认策略与循环拒绝' bootstrap_contract
 t_case 'DNS 查询分流和响应 IP 原生规则' dns_rules_contract
-t_case '原生 DNS 竞速组与整体删除' race_contract
+t_case '多上游切换生成原生竞速组与整体删除' race_contract
 t_finish
