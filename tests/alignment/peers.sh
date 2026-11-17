@@ -62,6 +62,8 @@ warp_menu() {
     t_stopped
     local key
     key=$(jq -r '.endpoints[0].private_key' "$ROOT/tests/fixtures/warp-api.json") || exit 1
+    sbd_peer_warp_fetch_reg() { return 1; }
+    sbd_peer_warp_fetch_wgcf() { return 1; }
     sbd_peer_warp_download() { cp "$ROOT/tests/fixtures/warp-api.json" "$1"; }
     t_run 0 sbd_peers_menu <<< $'2\n0'
     t_absent "$CASE_TMP/output" "$key"

@@ -7,6 +7,8 @@ warp_contract() {
     t_fresh
     local value
     t_assert 'WARP 注册接口请求 sing-box 原生格式' test "$SBD_PEER_WARP_API" = 'https://warp.cloudflare.now.cc/?run=register&format=sing-box'
+    sbd_peer_warp_fetch_reg() { return 1; }
+    sbd_peer_warp_fetch_wgcf() { return 1; }
     sbd_peer_warp_download() { cp "$ROOT/tests/fixtures/warp-api.json" "$1"; }
     t_run 0 sbd_peer_warp_obtain
     value="$SBD_PEER_VALUE"
@@ -29,6 +31,8 @@ warp_failures() {
     local key
     key=$(jq -r '.endpoints[0].private_key' "$ROOT/tests/fixtures/warp-api.json") || exit 1
     cp "$ROOT/tests/fixtures/warp-api.json" "$CASE_TMP/raw" || exit 1
+    sbd_peer_warp_fetch_reg() { return 1; }
+    sbd_peer_warp_fetch_wgcf() { return 1; }
     sbd_peer_warp_download() { cp "$CASE_TMP/raw" "$1"; }
     t_run 0 sbd_peer_warp_obtain
     t_absent "$CASE_TMP/output" "$key"
@@ -42,6 +46,66 @@ warp_failures() {
     jq '.endpoints[0].peers[0].reserved=[1,2]' "$ROOT/tests/fixtures/warp-api.json" > "$CASE_TMP/raw" || exit 1
     t_run 1 sbd_peer_warp_obtain
     t_contains "$CASE_TMP/output" '配置未修改'
+}
+warp_sources_contract() {
+    t_fresh
+    local value
+    t_run 0 python3 "$ROOT/support/warp.py" normalize "$ROOT/tests/fixtures/warp-reg.json"
+    value=$(cat "$CASE_TMP/output")
+    t_assert 'warp-reg 注册形态归一' jq -e '
+        .type=="wireguard" and .tag=="warp" and .system==false and .listen_port==0
+        and .address==["172.16.0.2/32","2606:4700:110:8a36::2/128"]
+        and .private_key=="AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+        and .mtu==1280 and .peers[0].address=="engage.cloudflareclient.com"
+        and .peers[0].port==2408 and .peers[0].reserved==[12,34,56]
+        and .peers[0].allowed_ips==["0.0.0.0/0","::/0"]' <<< "$value"
+    t_run 0 python3 "$ROOT/support/warp.py" normalize "$ROOT/tests/fixtures/warp-wgcf.json"
+    value=$(cat "$CASE_TMP/output")
+    t_assert 'wgcf 注册形态归一' jq -e '
+        .address==["172.16.0.3/32","2606:4700:110:8a36::3/128"]
+        and .peers[0].address=="engage.cloudflareclient.com" and .peers[0].port==2408
+        and .peers[0].reserved==[1,2,3]' <<< "$value"
+    t_run 0 python3 "$ROOT/support/warp.py" normalize "$ROOT/tests/fixtures/warp-reg-v6.json"
+    value=$(cat "$CASE_TMP/output")
+    t_assert '仅 IPv6 注册端点保留 IPv6' jq -e '
+        .address==["2606:4700:110:8a36::9/128"]
+        and .peers[0].address=="2606:4700:110:8a36::9"
+        and .peers[0].port==2408' <<< "$value"
+    t_run 0 python3 "$ROOT/support/warp.py" normalize "$ROOT/tests/fixtures/warp-wgcf-xray.json"
+    value=$(cat "$CASE_TMP/output")
+    t_assert 'wgcf Xray 形态归一' jq -e '
+        .address==["172.16.0.5/32"]
+        and .peers[0].address=="162.159.192.5" and .peers[0].port==2408
+        and .peers[0].reserved==[7,8,9]
+        and .peers[0].allowed_ips==["0.0.0.0/0","::/0"]' <<< "$value"
+}
+warp_fallback_contract() {
+    t_fresh
+    sbd_peer_warp_fetch_reg() { return 1; }
+    sbd_peer_warp_fetch_wgcf() { cp "$ROOT/tests/fixtures/warp-wgcf.json" "$1"; }
+    sbd_peer_warp_download() { return 1; }
+    t_run 0 sbd_peer_warp_obtain
+    t_assert 'warp-reg 失败后回退 wgcf-cli' jq -e '
+        .peers[0].address=="engage.cloudflareclient.com" and .peers[0].port==2408' <<< "$SBD_PEER_VALUE"
+    t_contains "$CASE_TMP/output" 'warp-reg 不可用'
+}
+warp_all_fail_contract() {
+    t_fresh
+    sbd_peer_warp_fetch_reg() { return 1; }
+    sbd_peer_warp_fetch_wgcf() { return 1; }
+    sbd_peer_warp_download() { return 1; }
+    t_run 1 sbd_peer_warp_obtain
+    t_contains "$CASE_TMP/output" '三种 WARP 注册方式均失败'
+    t_contains "$CASE_TMP/output" '配置未修改'
+}
+warp_api_error_contract() {
+    t_fresh
+    printf '%s\n' '{"error":"Cloudflare security check failed (Error 1015). Please try again later."}' > "$CASE_TMP/body"
+    # shellcheck disable=SC2034
+    SBD_PEER_WARP_HTTP_CODE=500
+    t_run 0 sbd_peer_warp_error_from_body "$CASE_TMP/body"
+    t_assert 'WARP API 错误体保留 HTTP 状态与原因' test "$SBD_PEER_WARP_ERROR" = \
+        'HTTP 500: Cloudflare security check failed (Error 1015). Please try again later.'
 }
 wireguard_contract() {
     t_policy_seed
@@ -161,6 +225,10 @@ tagless_target_contract() {
 }
 t_case 'WARP 注册 API sing-box 字段映射与缺省归一' warp_contract
 t_case 'WARP 下载/JSON/密钥/reserved 失败均不写入' warp_failures
+t_case 'WARP warp-reg/wgcf 注册形态归一' warp_sources_contract
+t_case 'WARP 三种来源按序回退' warp_fallback_contract
+t_case 'WARP 三种来源全部失败不写入' warp_all_fail_contract
+t_case 'WARP API 错误体显示 HTTP 状态与原因' warp_api_error_contract
 t_case 'WireGuard 原生 endpoints 与 peer reserved 真实检查' wireguard_contract
 t_case 'Cloudflared QUIC/HTTP2 原生入站' cloudflare_contract
 t_case '已有 Tunnel 恢复默认规则与删除清理' cloudflare_defaults_contract

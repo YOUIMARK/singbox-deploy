@@ -1,0 +1,11 @@
+{
+  "private_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "public_key": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+  "endpoint": {
+    "v4": "162.159.192.1:0",
+    "v6": "[2606:4700:110:8a36::1]:0"
+  },
+  "reserved_dec": [12, 34, 56],
+  "v4": "172.16.0.2",
+  "v6": "2606:4700:110:8a36::2"
+}

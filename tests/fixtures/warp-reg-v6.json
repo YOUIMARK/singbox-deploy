@@ -1,0 +1,9 @@
+{
+  "private_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "public_key": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+  "endpoint": {
+    "v6": "[2606:4700:110:8a36::9]:0"
+  },
+  "reserved_dec": [4, 5, 6],
+  "v6": "2606:4700:110:8a36::9"
+}
