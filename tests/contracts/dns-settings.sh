@@ -111,9 +111,23 @@ no_implicit_race() {
     local cloudflare
     cloudflare=$(jq -c '.dns.servers[]|select(.tag=="cloudflare")' "$SBD_APP/presets/base.json") || exit 1
     t_run 0 sbd_apply sbd_resolver_server add cloudflare "$cloudflare"
-    t_run 0 sbd_apply sbd_resolver_race '["cloudflare","google"]' '{"domain_suffix":["example.com"]}'
+    # 用户手工维护的竞速组：直接按 evaluate/respond 写入，不由切换生成。
+    local index value request
+    local -a rules
+    mapfile -t rules < <(jq -cn '
+        ["cloudflare","google"] as $servers |
+        ($servers | to_entries | map({domain_suffix:["example.com"],action:"evaluate",server:.value,tag:("keep.race."+(.key|tostring))}))
+        + ($servers | to_entries | map({domain_suffix:["example.com"],action:"respond",match_response:("keep.race."+(.key|tostring)),response_rcode:"NOERROR",race:true}))
+        | .[]') || exit 1
+    index=0
+    for value in "${rules[@]}"; do
+        request=$(jq -n --arg id "keep.race.rule.$index" --arg group keep.race --argjson value "$value" \
+            '{area:"dns_rules",action:"add",id:$id,group:$group,value:$value}') || exit 1
+        t_run 0 sbd_apply sbd_policy_edit "$request"
+        index=$((index + 1))
+    done
     t_run 0 sbd_apply sbd_resolver_switch https://doh.pub/dns-query
-    t_assert '用户显式创建的竞速仍保留且使用固定 tag' jq -e '.dns.final=="dnspod" and (.dns.rules|length==4) and .dns.rules[0].server=="cloudflare" and .dns.rules[1].server=="google" and .dns.rules[2].race and .dns.rules[3].race' "$SBD_CONFIG"
+    t_assert '用户手工创建的竞速仍保留且不改写 tag' jq -e '.dns.final=="dnspod" and (.dns.rules|length==4) and .dns.rules[0].server=="cloudflare" and .dns.rules[1].server=="google" and .dns.rules[2].match_response=="keep.race.0" and .dns.rules[3].match_response=="keep.race.1" and .dns.rules[2].response_rcode=="NOERROR" and .dns.rules[2].race and .dns.rules[3].race' "$SBD_CONFIG"
 }
 preset_cleanup() {
     t_policy_seed

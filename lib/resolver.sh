@@ -24,29 +24,6 @@ sbd_resolver_default() {
     sbd_policy_finish "$stage"
 }
 
-sbd_resolver_race() {
-    local stage="$1" servers="$2" match="$3" position="${4:--1}" group index count server tag request value i
-    sbd_policy_begin "$stage" || return 1
-    jq -e 'type=="array" and length>=2 and length==(unique|length) and all(.[];type=="string" and length>0)' <<< "$servers" >/dev/null || { _error '竞速须选择至少两个不同的已存在上游'; return 1; }
-    jq -e 'type=="object" and (has("action") or has("tag") or has("match_response") or has("race") or has("server")|not)' <<< "$match" >/dev/null || { _error '竞速匹配对象不得覆盖生成动作'; return 1; }
-    count=$(jq 'length' <<< "$servers") || return 1
-    if [[ "$position" = -1 ]]; then position=$(jq '.dns.rules // []|length' "$stage/config.json") || return 1; fi
-    position=$(sbd_integer "$position" 0 "$(jq '.dns.rules // []|length' "$stage/config.json")") || { _error '竞速插入位置无效'; return 1; }
-    group=$(openssl rand -hex 8) || { _error '生成竞速组 ID 失败'; return 1; }; group="race.$group"
-    # 先发起各 evaluate，再用带标识的 respond/race 竞争，不映射 Xray 开关。
-    for ((i=0; i<count*2; i++)); do
-        index=$((i % count))
-        server=$(jq -r --argjson i "$index" '.[$i]' <<< "$servers") || return 1
-        tag="$group.$index"
-        if (( i < count )); then value=$(jq --arg server "$server" --arg tag "$tag" '. + {action:"evaluate",server:$server,tag:$tag}' <<< "$match")
-        else value=$(jq --arg tag "$tag" '. + {action:"respond",match_response:$tag,race:true}' <<< "$match"); fi || return 1
-        request=$(jq -n --arg id "$group.rule.$i" --arg group "$group" --argjson value "$value" --argjson position "$((position+i))" \
-            '{area:"dns_rules",action:"add",id:$id,group:$group,value:$value,position:$position}') || return 1
-        sbd_policy_bundle "$stage" edit "$request" || return 1
-    done
-    sbd_policy_finish "$stage"
-}
-
 sbd_resolver_switch() {
     local stage="$1" address="$2" content
     sbd_policy_begin "$stage" || return 1
