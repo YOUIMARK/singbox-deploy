@@ -173,6 +173,10 @@
         "action": "resolve"
       },
       {
+        "ip_is_private": true,
+        "action": "reject"
+      },
+      {
         "rule_set": [
           "geoip-cn",
           "geoip-private",
@@ -181,10 +185,6 @@
         ],
         "action": "reject",
         "method": "drop"
-      },
-      {
-        "ip_is_private": true,
-        "action": "reject"
       }
     ]
   }

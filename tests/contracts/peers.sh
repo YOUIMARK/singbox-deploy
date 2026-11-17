@@ -84,8 +84,8 @@ cloudflare_defaults_contract() {
     t_run 0 sbd_apply sbd_route_defaults
     t_run 0 sbd_apply sbd_route_defaults
     t_assert '已有 Tunnel 补齐默认规则时自动放行且不复制' jq -e '
-        .route.rules[4]=={inbound:"cf-fixture",outbound:"direct"}
-        and .route.rules[5]=={ip_is_private:true,action:"reject"}
+        .route.rules[3]=={inbound:"cf-fixture",outbound:"direct"}
+        and .route.rules[4]=={ip_is_private:true,action:"reject"}
         and (.route.rules|length)==6' "$SBD_CONFIG"
     t_run 0 sbd_apply sbd_peer_change connectors delete cf-fixture
     t_assert '删除隧道同步清理默认规则中的自动例外' jq -e '
