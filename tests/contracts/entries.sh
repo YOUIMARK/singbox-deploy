@@ -235,8 +235,9 @@ custom_certificate_prompt_contract() {
 }
 empty_list_contract() {
     t_fresh
-    t_run 0 sbd_dispatch 2
+    t_run 0 sbd_dispatch 2 < /dev/null
     t_contains "$CASE_TMP/output" '暂无节点，请先添加节点'
+    t_contains "$CASE_TMP/output" '[r] 重新生成全部节点链接与配置'
     printf '{"format":1}\n' > "$SBD_REGISTRY" || exit 1
     t_run 1 sbd_dispatch 2
     t_contains "$CASE_TMP/output" '读取节点列表失败'
