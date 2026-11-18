@@ -43,20 +43,24 @@ empty_contract() {
 single_node_contract() {
     t_seed
     t_entry_add anytls
-    local first="$NODE_ID" first_link second_link
+    local first="$NODE_ID" first_link second_link revision
     first_link=$(cat "$SBD_EXPORTS/$first.txt") || exit 1
     t_entry_add shadowsocks
     second_link=$(cat "$SBD_EXPORTS/$NODE_ID.txt") || exit 1
     t_entry_save
-    t_run 0 sbd_export_menu <<< $'3\n1\n1\n2\n0\n0'
+    revision=$(jq -r .revision "$SBD_STATE") || exit 1
+    t_run 0 sbd_entries_list <<< $'1\n0\n'
+    t_contains "$CASE_TMP/output" "[1] $first"
     t_contains "$CASE_TMP/output" "$first_link"
     t_contains "$CASE_TMP/output" "$SBD_EXPORTS/$first.json"
     t_absent "$CASE_TMP/output" "$second_link"
     t_entry_unchanged
-    t_run 0 sbd_export_node_menu "$first" <<< 0
-    t_absent "$CASE_TMP/output" "$first_link"
-    t_run 0 sbd_export_node_menu "$first" < /dev/null
+    t_run 0 sbd_entries_list <<< $'re\nn\n0\n'
+    t_absent "$CASE_TMP/output" '导出已重建'
     t_entry_unchanged
+    t_run 0 sbd_entries_list <<< $'RE\ny\n0\n'
+    t_contains "$CASE_TMP/output" '导出已重建'
+    t_assert '列表内重建参与状态提交' jq -e --argjson before "$revision" '.revision==($before+1)' "$SBD_STATE"
 }
 single_node_failure() {
     t_seed
@@ -79,6 +83,6 @@ single_node_failure() {
 t_case '统一 URI 编码、IPv6、端口规范化和扩展参数回读' uri_contract
 t_case '节点元数据缺值与重复明确失败' metadata_contract
 t_case '空登记经过真实事务清空派生输出' empty_contract
-t_case '按节点选择链接/JSON，不混入其他节点且查看不写状态' single_node_contract
+t_case '列表内选节点看链接/JSON，re/RE 重建，查看不写状态' single_node_contract
 t_case '单节点资料 ID/缺文件/坏元数据明确失败，不隐式重建' single_node_failure
 t_finish

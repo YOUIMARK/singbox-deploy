@@ -1595,7 +1595,48 @@ sbd_entry_change_prompt() {
 }
 
 sbd_entries_list() {
-    jq -r 'if .nodes==[] then "暂无节点，请先添加节点" else .nodes[] | "\(.id)  \(.name)  \(.profile)  \(.client.server):\(.client.server_port)" end' "$SBD_REGISTRY" || { _error '读取节点列表失败'; return 1; }
+    local values count index row reply page id
+    values=$(jq -c '.nodes | if type=="array" then . else error("nodes must be an array") end' "$SBD_REGISTRY") || { _error '读取节点列表失败'; return 1; }
+    count=$(jq -er 'length' <<< "$values") || { _error '读取节点列表失败'; return 1; }
+    if (( count == 0 )); then printf '暂无节点，请先添加节点\n'; return 0; fi
+    while true; do
+        sbd_ui_begin '查看节点'
+        page="$SBD_UI_PAGE"
+        index=0
+        while (( index < count )); do
+            row=$(jq -r --argjson index "$index" '.[$index] | "[\($index + 1)] \(.id)  \(.name)  \(.profile)  \(.client.server):\(.client.server_port)"' <<< "$values") || { _error '读取节点列表失败'; return 1; }
+            sbd_ui_rows "$row"
+            index=$((index + 1))
+        done
+        printf '\n'
+        sbd_ui_rows '[r] 重新生成全部节点链接与配置'
+        while true; do
+            printf '\n  查看某节点分享链接?\n'
+            SBD_UI_AFTER_PROMPT=true
+            sbd_read_optional '输入编号(0 返回)' || return 0
+            reply="$SBD_REPLY"
+            case "$reply" in
+                0) return 0 ;;
+                r|R|re|RE) break ;;
+            esac
+            index=$(sbd_integer "$reply" 1 "$count") && break
+            _error '请输入列表中的编号、0 或 r/re'
+        done
+        case "$reply" in
+            r|R|re|RE)
+                sbd_read_required '重建将替换旧派生输出，输入 y 确认，其他输入取消' || return 0
+                if [[ "$SBD_REPLY" = y ]]; then
+                    sbd_apply sbd_export_rebuild || return 1
+                    sbd_success "导出已重建: $SBD_EXPORTS；客户端 JSON 不含本地监听设置，未验证客户端连接"
+                    sbd_ui_pause "$page"
+                fi
+                continue ;;
+        esac
+        id=$(jq -r --argjson index "$((index - 1))" '.[$index].id' <<< "$values") || { _error '读取节点列表失败'; return 1; }
+        sbd_export_node "$id" link inline || return 1
+        sbd_export_node "$id" json inline || return 1
+        sbd_ui_pause "$page"
+    done
 }
 
 sbd_entry_adopt() {
