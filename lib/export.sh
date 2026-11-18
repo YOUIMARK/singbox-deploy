@@ -270,8 +270,7 @@ sbd_export_node() {
         else sbd_info '以下是已提交的分享链接，含凭据；未实时重建，也不代表连通已验证'; fi
         cat -- "$path" || { _error '读取该节点分享链接失败'; return 1; }
     else
-        [[ -s "$SBD_EXPORTS/schema.json" ]] || { _error '客户端 JSON 的本地 Schema 缺失'; return 1; }
-        printf '客户端 JSON: %s\n本地 Schema: %s\n' "$path" "$SBD_EXPORTS/schema.json"
-        sbd_info '客户端 JSON 含凭据，不含本地监听/TUN 设置；传输时保留同目录的 schema.json'
+        if [[ "$display" = inline ]]; then printf '  客户端 JSON: %s\n' "$path"
+        else printf '客户端 JSON: %s\n' "$path"; fi
     fi
 }

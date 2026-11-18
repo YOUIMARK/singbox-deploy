@@ -1643,8 +1643,8 @@ sbd_entries_list() {
                 continue ;;
         esac
         id=$(jq -r --argjson index "$((index - 1))" '.[$index].id' <<< "$values") || { _error '读取节点列表失败'; return 1; }
-        sbd_export_node "$id" link inline || return 1
         sbd_export_node "$id" json inline || return 1
+        sbd_export_node "$id" link inline || return 1
         sbd_ui_pause "$page"
     done
 }

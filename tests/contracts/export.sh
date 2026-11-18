@@ -53,7 +53,10 @@ single_node_contract() {
     t_contains "$CASE_TMP/output" "[1] $first"
     t_contains "$CASE_TMP/output" "$first_link"
     t_contains "$CASE_TMP/output" "$SBD_EXPORTS/$first.json"
+    t_contains "$CASE_TMP/output" '  客户端 JSON: '
     t_absent "$CASE_TMP/output" "$second_link"
+    t_absent "$CASE_TMP/output" '本地 Schema'
+    t_absent "$CASE_TMP/output" '客户端 JSON 含凭据'
     t_entry_unchanged
     t_run 0 sbd_entries_list <<< $'re\nn\n0\n'
     t_absent "$CASE_TMP/output" '导出已重建'
