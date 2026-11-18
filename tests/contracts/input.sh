@@ -30,7 +30,7 @@ prompt_once() {
 }
 direct_script_update() {
     sbd_update_script() { printf 'update called\n'; SBD_EXIT_MENU=true; }
-    t_run 0 sbd_dispatch 19
+    t_run 0 sbd_dispatch 18
     t_contains "$CASE_TMP/output" 'update called'
     t_assert '更新完成后直接退出旧菜单' test "$SBD_EXIT_MENU" = true
 }
@@ -39,11 +39,11 @@ sync_failure_view() {
     sbd_resolver_menu() { printf 'DNS view opened\n'; }
     sbd_rules_menu() { printf 'rules view opened\n'; }
     sbd_peers_menu() { printf 'tunnel view opened\n'; }
-    t_run 0 sbd_dispatch 7
+    t_run 0 sbd_dispatch 6
     t_contains "$CASE_TMP/output" 'DNS view opened'
-    t_run 0 sbd_dispatch 8
+    t_run 0 sbd_dispatch 7
     t_contains "$CASE_TMP/output" 'rules view opened'
-    t_run 0 sbd_dispatch 10
+    t_run 0 sbd_dispatch 9
     t_contains "$CASE_TMP/output" 'tunnel view opened'
 }
 t_case '同步失败仍可进入设置查看配置' sync_failure_view

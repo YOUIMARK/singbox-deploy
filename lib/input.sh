@@ -76,7 +76,7 @@ sbd_ui_pause() {
 
 sbd_ui_item() {
     local text="$1" number label
-    if [[ "$text" =~ ^(\[[0-9]+\])[[:space:]](.*)$ ]]; then
+    if [[ "$text" =~ ^(\[[0-9]+\]|\[r\])[[:space:]](.*)$ ]]; then
         number="${BASH_REMATCH[1]}" label="${BASH_REMATCH[2]}"
         sbd_ui_tint 32 "$number"; printf ' %s' "$label"
     else printf '%s' "$text"; fi

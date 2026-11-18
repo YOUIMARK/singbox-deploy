@@ -229,9 +229,9 @@ sbd_outbound_add_prompt() {
     joined=$(printf '%s, ' "${tags[@]}") || return 1
     joined=${joined%, }
     if ((count == 1)); then
-        sbd_info "将添加出口: $joined；不会修改默认路由，可在 [8] 分流设置中选择"
+        sbd_info "将添加出口: $joined；不会修改默认路由，可在 [7] 分流设置中选择"
     else
-        sbd_info "将添加 $count 个出口: $joined；不会修改默认路由，可在 [8] 分流设置中选择"
+        sbd_info "将添加 $count 个出口: $joined；不会修改默认路由，可在 [7] 分流设置中选择"
     fi
     sbd_read_required '确认添加并按需重启？输入 y 确认，其他输入取消' || return $?
     SBD_REPLY="${SBD_REPLY%$'\r'}"

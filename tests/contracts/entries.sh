@@ -214,10 +214,10 @@ create_prompt_contract() {
     t_contains "$CASE_TMP/output" "客户端 JSON: $SBD_EXPORTS/"
     t_absent "$CASE_TMP/output" fixture-password
     t_assert '已提交节点的准确 ID 贯穿资料交付' test "$SBD_NEW_ENTRY_ID" = "$(jq -r '.nodes[0].id' "$SBD_REGISTRY")"
-    t_run 0 sbd_export_node_menu "$SBD_NEW_ENTRY_ID" < /dev/null
-    t_contains "$CASE_TMP/output" '已提交的节点不受影响'
+    t_run 0 sbd_entries_list < /dev/null
+    t_contains "$CASE_TMP/output" '输入结束，已取消'
     t_assert '结束资料查看不会创建第二次修订' jq -e '.revision==1' "$SBD_STATE"
-    t_run 0 sbd_entries_list
+    t_run 0 sbd_entries_list <<< 0
     t_absent "$CASE_TMP/output" fixture-password
 }
 custom_certificate_prompt_contract() {
@@ -235,8 +235,9 @@ custom_certificate_prompt_contract() {
 }
 empty_list_contract() {
     t_fresh
-    t_run 0 sbd_dispatch 2
+    t_run 0 sbd_dispatch 2 < /dev/null
     t_contains "$CASE_TMP/output" '暂无节点，请先添加节点'
+    t_contains "$CASE_TMP/output" '[r] 重新生成全部节点链接与配置'
     printf '{"format":1}\n' > "$SBD_REGISTRY" || exit 1
     t_run 1 sbd_dispatch 2
     t_contains "$CASE_TMP/output" '读取节点列表失败'

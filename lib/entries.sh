@@ -1595,7 +1595,58 @@ sbd_entry_change_prompt() {
 }
 
 sbd_entries_list() {
-    jq -r 'if .nodes==[] then "暂无节点，请先添加节点" else .nodes[] | "\(.id)  \(.name)  \(.profile)  \(.client.server):\(.client.server_port)" end' "$SBD_REGISTRY" || { _error '读取节点列表失败'; return 1; }
+    local values count index row reply page id hint label invalid
+    values=$(jq -c '.nodes | if type=="array" then . else error("nodes must be an array") end' "$SBD_REGISTRY") || { _error '读取节点列表失败'; return 1; }
+    count=$(jq -er 'length' <<< "$values") || { _error '读取节点列表失败'; return 1; }
+    while true; do
+        sbd_ui_begin '查看节点'
+        page="$SBD_UI_PAGE"
+        index=0
+        if (( count == 0 )); then
+            printf '暂无节点，请先添加节点\n'
+        else
+            while (( index < count )); do
+                row=$(jq -r --argjson index "$index" '.[$index] | "[\($index + 1)] \(.id)  \(.name)  \(.profile)  \(.client.server):\(.client.server_port)"' <<< "$values") || { _error '读取节点列表失败'; return 1; }
+                sbd_ui_rows "$row"
+                index=$((index + 1))
+            done
+        fi
+        printf '\n'
+        sbd_ui_rows '[r] 重新生成全部节点链接与配置'
+        if (( count == 0 )); then
+            hint='输入 r 重建，0 返回'; label='请选择'; invalid='请输入 0 或 r/R/re/RE'
+        else
+            hint='查看某节点分享链接?'; label='输入编号(0 返回)'; invalid='请输入 0、r/R/re/RE 或列表编号'
+        fi
+        while true; do
+            printf '\n  %s\n' "$hint"
+            SBD_UI_AFTER_PROMPT=true
+            sbd_read_optional "$label" || return 0
+            reply="$SBD_REPLY"
+            case "$reply" in
+                r|R|re|RE) break ;;
+            esac
+            if index=$(sbd_integer "$reply" 0 "$count"); then
+                (( index == 0 )) && return 0
+                break
+            fi
+            _error "$invalid"
+        done
+        case "$reply" in
+            r|R|re|RE)
+                sbd_read_required '重建将替换旧派生输出，输入 y 确认，其他输入取消' || return 0
+                if [[ "$SBD_REPLY" = y ]]; then
+                    sbd_apply sbd_export_rebuild || return 1
+                    sbd_success "导出已重建: $SBD_EXPORTS；客户端 JSON 不含本地监听设置，未验证客户端连接"
+                    sbd_ui_pause "$page"
+                fi
+                continue ;;
+        esac
+        id=$(jq -r --argjson index "$((index - 1))" '.[$index].id' <<< "$values") || { _error '读取节点列表失败'; return 1; }
+        sbd_export_node "$id" link inline || return 1
+        sbd_export_node "$id" json inline || return 1
+        sbd_ui_pause "$page"
+    done
 }
 
 sbd_entry_adopt() {
