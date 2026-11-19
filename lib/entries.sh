@@ -207,7 +207,7 @@ sbd_entry_tunnel_attach() {
         'all(.policy.route_rules[]?; .id!=$allow and .id!=$reject)' "$stage/registry.json" >/dev/null ||
         { _error 'Tunnel 路由规则登记已存在'; return 1; }
     position=$(sbd_entry_tunnel_position "$stage") ||
-        { _error 'Reality Tunnel 需要默认 sniff 路由规则；请先在分流设置执行 [8] 恢复默认路由规则'; return 1; }
+        { _error 'Reality Tunnel 需要默认 sniff 路由规则；请先在分流设置执行 [7] 恢复默认路由规则'; return 1; }
     inbound=$(jq -cn --arg tag "$tag" --argjson port "$port" --arg sni "$sni" \
         '{type:"direct",tag:$tag,listen:"127.0.0.1",listen_port:$port,network:"tcp",override_address:$sni,override_port:443}') || return 1
     allow=$(sbd_entry_tunnel_allow "$tag" "$sni") || return 1

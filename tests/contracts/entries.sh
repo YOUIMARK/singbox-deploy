@@ -377,6 +377,8 @@ reality_tunnel_requires_defaults() {
     spec=$(jq '.tls_source.mode="tunnel"' "$ROOT/tests/fixtures/entry-vless_reality.json") || exit 1
     t_run 1 sbd_apply sbd_entry_create "$spec"
     t_contains "$CASE_TMP/output" '需要默认 sniff 路由规则'
+    t_contains "$CASE_TMP/output" '执行 [7] 恢复默认路由规则'
+    t_absent "$CASE_TMP/output" '执行 [8] 恢复默认路由规则'
     t_assert '缺少默认规则时不写节点' jq -e '.nodes|length==0' "$SBD_REGISTRY"
     t_assert '缺少默认规则时不写入站' jq -e '(.inbounds // [])|length==0' "$SBD_CONFIG"
 }
