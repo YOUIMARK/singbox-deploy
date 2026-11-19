@@ -129,6 +129,84 @@ EOF
     t_run 1 sbd_peer_warp_fetch_wgcf "$CASE_TMP/wgcf-fail"
     t_assert 'wgcf-cli 下载失败原因回传父 shell' test "$SBD_PEER_WARP_ERROR" = '下载 wgcf-cli 失败'
 }
+warp_reg_hint_trim_contract() {
+    t_fresh
+    export PATH="$CASE_TMP/bin:/usr/bin:/bin"
+    cat > "$CASE_TMP/bin/warp-reg" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' '缺少 xxd，请先安装'
+cat '$ROOT/tests/fixtures/warp-reg.json'
+EOF
+    chmod +x "$CASE_TMP/bin/warp-reg" || exit 1
+    t_run 0 sbd_peer_warp_fetch_reg "$CASE_TMP/reg"
+    t_assert 'warp-reg 安装提示之后从首个 JSON 保留' jq -e '
+        .private_key=="AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+    ' "$CASE_TMP/reg"
+    t_absent "$CASE_TMP/reg" '缺少 xxd'
+}
+
+warp_wgcf_tar_contract() {
+    t_fresh
+    mkdir -p "$CASE_TMP/pkg" "$CASE_TMP/out" || exit 1
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$CASE_TMP/pkg/wgcf-cli" || exit 1
+    chmod +x "$CASE_TMP/pkg/wgcf-cli" || exit 1
+    tar --zstd -cf "$CASE_TMP/wgcf.tar.zstd" -C "$CASE_TMP/pkg" wgcf-cli || exit 1
+    # 模拟 busybox tar：不认 --zstd，只接受普通 tar 参数。
+    cat > "$CASE_TMP/bin/tar" <<'EOF'
+#!/usr/bin/env bash
+for arg in "$@"; do [[ "$arg" != --zstd ]] || exit 2; done
+exec /usr/bin/tar "$@"
+EOF
+    chmod +x "$CASE_TMP/bin/tar" || exit 1
+    sbd_peer_warp_http_get() { cp -- "$CASE_TMP/wgcf.tar.zstd" "$2"; }
+    export PATH="$CASE_TMP/bin:/usr/bin:/bin"
+    t_run 0 sbd_peer_warp_wgcf_install "$CASE_TMP/out"
+    t_assert 'wgcf-cli 解压不依赖 tar --zstd' test -x "$SBD_PEER_WARP_TOOL"
+}
+
+warp_wgcf_generate_fallback_contract() {
+    t_fresh
+    export PATH="$CASE_TMP/bin:/usr/bin:/bin"
+    cat > "$CASE_TMP/bin/wgcf-cli" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" = register ]]; then
+    printf '%s\n' 'registration failed' > reg.json
+    exit 0
+fi
+if [[ "\$1" = generate ]]; then
+    cp '$ROOT/tests/fixtures/warp-wgcf-xray.json' wgcf.xray.json
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$CASE_TMP/bin/wgcf-cli" || exit 1
+    t_run 0 sbd_peer_warp_fetch_wgcf "$CASE_TMP/wgcf"
+    t_assert 'register 非 JSON 时继续 generate --xray' jq -e '
+        .outbounds[0].settings.secretKey=="AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+    ' "$CASE_TMP/wgcf"
+}
+
+warp_alpine_skip_contract() {
+    t_fresh
+    export PATH="$CASE_TMP/bin:/usr/bin:/bin"
+    : > "$CASE_TMP/bin/apk"
+    chmod +x "$CASE_TMP/bin/apk" || exit 1
+    sbd_peer_warp_http_get() { touch "$CASE_TMP/downloaded"; return 0; }
+    t_run 1 sbd_peer_warp_fetch_reg "$CASE_TMP/reg"
+    t_assert 'Alpine 明确回传远程脚本不兼容' test "$SBD_PEER_WARP_ERROR" = '远程 warp-reg.sh 不支持 Alpine'
+    t_assert 'Alpine 不再尝试下载远程 warp-reg 脚本' test ! -e "$CASE_TMP/downloaded"
+}
+
+warp_api_message_contract() {
+    t_fresh
+    printf '%s\n' '{"message":"registration quota exceeded"}' > "$CASE_TMP/body"
+    # shellcheck disable=SC2034
+    SBD_PEER_WARP_HTTP_CODE=429
+    t_run 0 sbd_peer_warp_error_from_body "$CASE_TMP/body"
+    t_assert 'WARP API 的 message 字段也作为错误原因' test "$SBD_PEER_WARP_ERROR" = \
+        'HTTP 429: registration quota exceeded'
+}
+
 warp_resolver_fallback_contract() {
     t_fresh
     jq -n '{dns:{final:"cloudflare",servers:[{type:"udp",tag:"cloudflare",server:"1.1.1.1"}]},route:{}}' > "$SBD_CONFIG" || exit 1
@@ -285,6 +363,11 @@ t_case 'WARP 注册 API sing-box 字段映射与缺省归一' warp_contract
 t_case 'WARP 下载/JSON/密钥/reserved 失败均不写入' warp_failures
 t_case 'WARP warp-reg/wgcf 注册形态归一' warp_sources_contract
 t_case 'WARP 本地来源失败时自动下载临时工具' warp_auto_sources
+t_case 'WARP warp-reg 安装提示不污染 JSON' warp_reg_hint_trim_contract
+t_case 'WARP wgcf-cli 解压兼容 busybox tar' warp_wgcf_tar_contract
+t_case 'WARP wgcf register 非 JSON 时回退 generate' warp_wgcf_generate_fallback_contract
+t_case 'WARP Alpine 跳过不兼容的远程脚本' warp_alpine_skip_contract
+t_case 'WARP API message 错误原因' warp_api_message_contract
 t_case 'WARP 域名端点缺少全局 resolver 时写回 endpoint' warp_resolver_fallback_contract
 t_case 'WARP 三种来源按序回退' warp_fallback_contract
 t_case 'WARP 三种来源全部失败不写入' warp_all_fail_contract

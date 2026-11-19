@@ -238,6 +238,58 @@ socks_contract() {
     ' "$SBD_CONFIG"
 }
 
+socks_link_contract() {
+    t_seed
+    # dXNlcjpwYXM/ = base64("user:pas?")；认证串里的字面 "/" 不能当路径切分。
+    t_run 0 parse_link 'socks5://dXNlcjpwYXM/@socks.example.com:1080#SOCKS-B64-Slash'
+    t_assert 'SOCKS Base64 凭据含字面斜杠' jq -e '
+        .outbound | .username=="user" and .password=="pas?" and .server_port==1080
+    ' "$CASE_TMP/output"
+    # 单段 userinfo 无字面 ':'：%3A 属于用户名内容，不能拆成用户名/密码。
+    t_run 0 parse_link 'socks5://a%3Ab@socks.example.com:1080#SOCKS-EncColonOnly'
+    t_assert 'SOCKS 单段认证串的编码冒号整体作为用户名' jq -e '
+        .outbound | .username=="a:b" and (.password|not)
+    ' "$CASE_TMP/output"
+    t_run 0 sbd_apply sbd_outbound_add "$(jq -c '.outbound + {tag:.tag}' "$CASE_TMP/output")"
+    t_run 0 sbd_check_config
+    t_run 0 parse_link 'socks5://user%3Apass@socks.example.com:1080#SOCKS-EncSep'
+    t_assert 'SOCKS 无字面冒号时不拆分编码冒号' jq -e '
+        .outbound | .username=="user:pass" and (.password|not)
+    ' "$CASE_TMP/output"
+    t_run 0 parse_link 'socks5://dXNlcjpwYXNz%3D@socks.example.com:1080#SOCKS-B64-EncPad'
+    t_assert 'SOCKS 整段 Base64 凭据仍可拆分' jq -e '
+        .outbound | .username=="user" and .password=="pass"
+    ' "$CASE_TMP/output"
+    t_run 0 parse_link 'socks5://user%3Aname:pass@socks.example.com:1080#SOCKS-EncColon'
+    t_assert 'SOCKS 用户名内的编码冒号不被当分隔符' jq -e '
+        .outbound | .username=="user:name" and .password=="pass"
+    ' "$CASE_TMP/output"
+    t_run 1 parse_link 'socks5://user:pa/ss@socks.example.com:1080#SOCKS-PlainSlash'
+    t_contains "$CASE_TMP/output" 'SOCKS 链接不能包含路径'
+    t_run 0 parse_link 'socks5://user:pa%2Fss@socks.example.com:1080#SOCKS-EncSlash'
+    t_assert 'SOCKS 普通凭据中的编码斜杠可用' jq -e '.outbound.password=="pa/ss"' "$CASE_TMP/output"
+    t_run 1 parse_link 'socks5://user:pass@socks.example.com:1080/proxy#SOCKS-Path'
+    t_contains "$CASE_TMP/output" 'SOCKS 链接不能包含路径'
+    t_run 0 parse_link 'socks5://user:pass@socks.example.com:1080/#SOCKS-TrailingSlash'
+    t_assert 'SOCKS 端口后的单个尾斜杠可接受' jq -e '.outbound.server_port==1080' "$CASE_TMP/output"
+}
+
+link_compat_contract() {
+    t_seed
+    t_run 0 parse_link 'ss://YWVzLTEyOC1nY206cGFzcw@example.com:8388/#SS-SIP002'
+    t_assert 'Shadowsocks SIP002 尾斜杠可接受' jq -e '
+        .outbound | .server=="example.com" and .server_port==8388 and .method=="aes-128-gcm"
+    ' "$CASE_TMP/output"
+    t_run 1 parse_link 'ss://YWVzLTEyOC1nY206cGFzcw@example.com:8388//#SS-DoubleSlash'
+    t_contains "$CASE_TMP/output" '服务器地址格式无效'
+    t_run 0 parse_link 'vless://11111111-1111-1111-1111-111111111111@example.com:443?encryption=none&security=tls&type=ws&path=%2Fa+b#Query-Plus'
+    t_assert '查询串中的加号按字面保留' jq -e '.outbound.transport.path=="/a+b"' "$CASE_TMP/output"
+    t_run 0 parse_link 'vless://11111111-1111-1111-1111-111111111111@example.com:443?encryption=none&security=tls&type=ws&path=%2Fa%2Bb#Query-EncodedPlus'
+    t_assert '百分号编码的加号仍解码为加号' jq -e '.outbound.transport.path=="/a+b"' "$CASE_TMP/output"
+    t_run 0 parse_link 'vless://11111111-1111-1111-1111-111111111111@example.com:443?encryption=none&security=tls&foo=#Unknown-Empty'
+    t_assert '空值未知参数沿用现有忽略约定' jq -e '.tag=="Unknown-Empty"' "$CASE_TMP/output"
+}
+
 base64_batch_contract() {
     t_seed
     local links blob b1 b2 final
@@ -374,6 +426,13 @@ separator_batch_contract() {
             "Sep-SOCKS", "Sep-SS", "Sep-Hy2-2"
         ])
     ' "$CASE_TMP/output"
+
+    t_run 0 parse_links 'vless://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?encryption=none&security=tls#Tag-JP，'
+    t_assert '单个链接的 fragment 末尾全角标点保留为 tag 内容' jq -e '.[0].tag=="Tag-JP，"' "$CASE_TMP/output"
+    t_run 0 parse_links 'vless://899954a1-86c4-4db7-b7a3-8b6f196a890e@a.example.com:443?encryption=none&security=tls#A，vless://899954a1-86c4-4db7-b7a3-8b6f196a890e@b.example.com:443?encryption=none&security=tls#B'
+    t_assert '全角标点后紧跟协议头时仍按分隔符处理' jq -e 'map(.tag)==["A","B"]' "$CASE_TMP/output"
+    t_run 0 parse_links 'vless://899954a1-86c4-4db7-b7a3-8b6f196a890e@example.com:443?encryption=none&security=tls；'
+    t_assert '无 fragment 的裸链接尾随全角分号被剥离' jq -e 'length==1 and .[0].server=="example.com"' "$CASE_TMP/output"
 }
 
 chinese_tag_contract() {
@@ -514,6 +573,8 @@ t_case 'VMess Base64 与 URL 形式映射' vmess_contract
 t_case 'Hysteria2 Gecko 自定义包长导入' gecko_contract
 t_case 'Shadowsocks/AnyTLS 映射与真实配置检查' ss_anytls_contract
 t_case 'SOCKS/SOCKS5 映射与真实配置检查' socks_contract
+t_case 'SOCKS 字面斜杠/编码分隔符/路径判定' socks_link_contract
+t_case 'Shadowsocks SIP002 尾斜杠与查询串字面加号' link_compat_contract
 t_case '整串 Base64 批量添加且不改默认路由' base64_batch_contract
 t_case '普通/延迟/连续拼接链接一次粘贴批量添加' plain_batch_contract
 t_case '批量解析跳过失败项并添加成功项' batch_skip_invalid_contract
