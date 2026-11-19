@@ -1146,24 +1146,28 @@ def parse_socks(link):
         "version": "5",
     }
     if userinfo is not None:
-        # 原始 userinfo 先按字面冒号分段，避免认证信息里的 %3A 被当成分隔符。
+        username = ''
+        password = None
+        # URI userinfo 只有字面 ':' 才是用户名/密码分隔符；%3A 属于字段内容。
         if ":" in userinfo:
             raw_user, raw_password = userinfo.split(":", 1)
             username = decode_component(raw_user, "SOCKS 用户名")
             password = decode_component(raw_password, "SOCKS 密码")
         else:
             decoded = decode_component(userinfo, "SOCKS 认证信息")
-            if ":" in decoded:
-                username, password = decoded.split(":", 1)
+            if not decoded:
+                fail("SOCKS 认证信息不能为空")
+            # 兼容整段 Base64 的 user:password 形式；解码结果必须含 ':' 才视为认证对。
+            base64_auth = try_decode_base64_text(decoded)
+            if base64_auth is not None and ":" in base64_auth:
+                username, password = base64_auth.split(":", 1)
             else:
-                decoded = try_decode_base64_text(decoded)
-                if decoded is None or ":" not in decoded:
-                    fail("SOCKS 认证缺少密码")
-                username, password = decoded.split(":", 1)
-        if not username or not password:
+                username = decoded
+        if not username or (password is not None and not password):
             fail("SOCKS 用户名和密码不能为空")
         outbound["username"] = username
-        outbound["password"] = password
+        if password is not None:
+            outbound["password"] = password
     return (
         tag_value(fragment),
         outbound,

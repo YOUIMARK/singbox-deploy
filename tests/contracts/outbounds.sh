@@ -245,8 +245,19 @@ socks_link_contract() {
     t_assert 'SOCKS Base64 凭据含字面斜杠' jq -e '
         .outbound | .username=="user" and .password=="pas?" and .server_port==1080
     ' "$CASE_TMP/output"
+    # 单段 userinfo 无字面 ':'：%3A 属于用户名内容，不能拆成用户名/密码。
+    t_run 0 parse_link 'socks5://a%3Ab@socks.example.com:1080#SOCKS-EncColonOnly'
+    t_assert 'SOCKS 单段认证串的编码冒号整体作为用户名' jq -e '
+        .outbound | .username=="a:b" and (.password|not)
+    ' "$CASE_TMP/output"
+    t_run 0 sbd_apply sbd_outbound_add "$(jq -c '.outbound + {tag:.tag}' "$CASE_TMP/output")"
+    t_run 0 sbd_check_config
     t_run 0 parse_link 'socks5://user%3Apass@socks.example.com:1080#SOCKS-EncSep'
-    t_assert 'SOCKS 百分号编码的凭据分隔符' jq -e '
+    t_assert 'SOCKS 无字面冒号时不拆分编码冒号' jq -e '
+        .outbound | .username=="user:pass" and (.password|not)
+    ' "$CASE_TMP/output"
+    t_run 0 parse_link 'socks5://dXNlcjpwYXNz%3D@socks.example.com:1080#SOCKS-B64-EncPad'
+    t_assert 'SOCKS 整段 Base64 凭据仍可拆分' jq -e '
         .outbound | .username=="user" and .password=="pass"
     ' "$CASE_TMP/output"
     t_run 0 parse_link 'socks5://user%3Aname:pass@socks.example.com:1080#SOCKS-EncColon'
