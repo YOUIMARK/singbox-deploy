@@ -148,7 +148,9 @@ sbd_peer_tag_prompt() {
 sbd_peer_warp_http_get() {
     local url="$1" target="$2" code
     [[ -n "$url" && -n "$target" ]] || return 1
+    case "$url" in https://*) ;; *) return 1 ;; esac
     SBD_PEER_WARP_HTTP_CODE=''
+    : > "$target" || return 1
     if command -v curl >/dev/null 2>&1; then
         code=$(curl -sSL --proto '=https' --proto-redir '=https' --max-redirs 5 \
             --connect-timeout 8 --max-time 25 -o "$target" -w '%{http_code}' "$url" 2>/dev/null) || return 1
@@ -166,7 +168,7 @@ sbd_peer_warp_http_get() {
 sbd_peer_warp_error_from_body() {
     local target="$1" message=''
     [[ -s "$target" ]] || return 1
-    message=$(jq -r '.error // empty' "$target" 2>/dev/null) || message=''
+    message=$(jq -r '(.error // .message // empty) | if type=="string" then . else tojson end' "$target" 2>/dev/null) || message=''
     if [[ -z "$message" ]]; then
         message=$(head -c 200 "$target" 2>/dev/null | tr '\n' ' ')
     fi
@@ -190,24 +192,57 @@ sbd_peer_warp_download() {
 }
 
 sbd_peer_warp_run() {
+    local timeout_s="${1:-30}" kind=''
+    shift
+    [[ "$#" -gt 0 ]] || return 1
+    # 外部注册工具可能因网络半开阻塞；timeout 无法包裹 shell 函数，函数自身限时由调用方负责。
+    kind=$(type -t "$1" 2>/dev/null) || kind=''
+    case "$kind" in
+        function|builtin) "$@" </dev/null; return $? ;;
+    esac
     if command -v timeout >/dev/null 2>&1; then
-        timeout 30 "$@" </dev/null
+        timeout "$timeout_s" "$@" </dev/null
     else
         "$@" </dev/null
     fi
 }
 
+# warp-reg.sh 在缺 xxd/python3 时会先向 stdout 打印安装提示；从首个 JSON 起点开始保留。
+sbd_peer_warp_trim_reg() {   # <outfile>
+    local target="${1:-}" tmp
+    [[ -n "$target" && -f "$target" ]] || return 1
+    tmp="$target.trim"
+    awk 'seen || /^[[:space:]]*\{/ { seen=1; print }' "$target" > "$tmp" || {
+        rm -f -- "$tmp"
+        return 1
+    }
+    mv -- "$tmp" "$target" || {
+        rm -f -- "$tmp"
+        return 1
+    }
+}
+
 sbd_peer_warp_fetch_reg() {
-    local target="$1" script='' rc=0
+    local target="$1" script='' rc=0 local_failed=0
     [[ -n "$target" ]] || return 1
     SBD_PEER_WARP_ERROR=''
     : > "$target" || return 1
     if command -v warp-reg >/dev/null 2>&1; then
-        sbd_peer_warp_run warp-reg >"$target" 2>/dev/null || rc=$?
+        sbd_peer_warp_run 30 warp-reg >"$target" 2>/dev/null || { rc=$?; local_failed=1; }
     elif command -v warp-reg.sh >/dev/null 2>&1; then
-        sbd_peer_warp_run warp-reg.sh >"$target" 2>/dev/null || rc=$?
+        sbd_peer_warp_run 30 warp-reg.sh >"$target" 2>/dev/null || { rc=$?; local_failed=1; }
     fi
-    [[ "$rc" = 0 && -s "$target" ]] && return 0
+    if [[ "$rc" = 0 && -s "$target" ]]; then
+        sbd_peer_warp_trim_reg "$target" || { SBD_PEER_WARP_ERROR='warp-reg 输出无法读取'; return 1; }
+        [[ -s "$target" ]] && return 0
+    fi
+    if ((local_failed)); then SBD_PEER_WARP_ERROR='本机 warp-reg 执行失败'; fi
+
+    # 远程脚本按 Debian 包管理器编写；Alpine 上直接回退到 wgcf/API，避免无效执行。
+    if command -v apk >/dev/null 2>&1; then
+        SBD_PEER_WARP_ERROR='远程 warp-reg.sh 不支持 Alpine'
+        return 1
+    fi
 
     rc=0
     script=$(mktemp "${TMPDIR:-/tmp}/sbd-warp-reg.XXXXXX") || {
@@ -220,12 +255,18 @@ sbd_peer_warp_fetch_reg() {
         return 1
     fi
     : > "$target" || { rm -f -- "$script"; return 1; }
-    sbd_peer_warp_run bash "$script" >"$target" 2>/dev/null || rc=$?
+    sbd_peer_warp_run 30 bash "$script" >"$target" 2>/dev/null || rc=$?
     rm -f -- "$script"
     if [[ "$rc" != 0 ]]; then
-        SBD_PEER_WARP_ERROR='warp-reg 执行失败'
+        SBD_PEER_WARP_ERROR='warp-reg 脚本执行失败'
+        ((local_failed == 0)) || SBD_PEER_WARP_ERROR="本机 warp-reg 执行失败, $SBD_PEER_WARP_ERROR"
         return 1
     fi
+    if [[ ! -s "$target" ]]; then
+        SBD_PEER_WARP_ERROR='warp-reg 未返回注册结果'
+        return 1
+    fi
+    sbd_peer_warp_trim_reg "$target" || { SBD_PEER_WARP_ERROR='warp-reg 输出无法读取'; return 1; }
     if [[ ! -s "$target" ]]; then
         SBD_PEER_WARP_ERROR='warp-reg 未返回注册结果'
         return 1
@@ -233,7 +274,7 @@ sbd_peer_warp_fetch_reg() {
 }
 
 sbd_peer_warp_wgcf_install() {
-    local dir="$1" machine archive candidate url
+    local dir="$1" machine archive tarball candidate url
     SBD_PEER_WARP_ERROR=''
     SBD_PEER_WARP_TOOL=''
     [[ -n "$dir" && -d "$dir" ]] || { SBD_PEER_WARP_ERROR='wgcf-cli 临时目录不可用'; return 1; }
@@ -245,15 +286,20 @@ sbd_peer_warp_wgcf_install() {
         *) SBD_PEER_WARP_ERROR='当前架构没有可用的 wgcf-cli'; return 1 ;;
     esac
     archive="$dir/wgcf-cli.tar.zstd"
+    tarball="$dir/wgcf-cli.tar"
     url="$SBD_PEER_WARP_WGCF_URL/wgcf-cli-linux-$machine.tar.zstd"
     if ! sbd_peer_warp_http_get "$url" "$archive"; then
         SBD_PEER_WARP_ERROR='下载 wgcf-cli 失败'
         return 1
     fi
-    if ! tar --zstd -xf "$archive" -C "$dir" >/dev/null 2>&1; then
+    # busybox tar 不认 --zstd；先解压再按普通 tar 展开，兼容 Alpine。
+    if ! command -v zstd >/dev/null 2>&1 ||
+        ! zstd -d -q -f -o "$tarball" "$archive" >/dev/null 2>&1 ||
+        ! tar -xf "$tarball" -C "$dir" >/dev/null 2>&1; then
         SBD_PEER_WARP_ERROR='解压 wgcf-cli 失败'
         return 1
     fi
+    rm -f -- "$tarball"
     candidate="$dir/wgcf-cli"
     if [[ ! -f "$candidate" ]] || ! chmod +x -- "$candidate"; then
         SBD_PEER_WARP_ERROR='wgcf-cli 安装后未找到可执行文件'
@@ -283,22 +329,31 @@ sbd_peer_warp_fetch_wgcf() {
     : > "$target" || { rm -rf -- "$dir"; return 1; }
     (
         cd "$dir" || exit 1
-        sbd_peer_warp_run "$tool" register >"$dir/reg.json" 2>/dev/null || exit 1
+        sbd_peer_warp_run 60 "$tool" register >"$dir/reg.json" 2>/dev/null || exit 1
     ) || rc=$?
     if [[ "$rc" = 0 ]]; then
+        # 命令成功不代表产出可用；非 JSON 输出不能让 generate 回退被跳过。
         for candidate in "$dir/reg.json" "$dir/wgcf.json"; do
-            if [[ -s "$candidate" ]]; then cp -- "$candidate" "$target" || rc=1; break; fi
+            if [[ -s "$candidate" ]] && jq -e . "$candidate" >/dev/null 2>&1; then
+                cp -- "$candidate" "$target" || rc=1
+                break
+            fi
         done
     fi
     if [[ "$rc" != 0 || ! -s "$target" ]]; then
         rc=0
+        : > "$target" || { rm -rf -- "$dir"; return 1; }
         (
             cd "$dir" || exit 1
-            sbd_peer_warp_run "$tool" generate --xray >"$dir/generate.log" 2>/dev/null || exit 1
+            sbd_peer_warp_run 60 "$tool" generate --xray >"$dir/generate.log" 2>/dev/null || exit 1
         ) || rc=$?
         if [[ "$rc" = 0 ]]; then
-            for candidate in "$dir/wgcf.xray.json" "$dir/wgcf.json" "$dir/generate.log"; do
-                if [[ -s "$candidate" ]]; then cp -- "$candidate" "$target" || rc=1; break; fi
+            for candidate in "$dir"/*.xray.json "$dir/wgcf.json" "$dir/generate.log"; do
+                [[ -e "$candidate" && -s "$candidate" ]] || continue
+                if jq -e . "$candidate" >/dev/null 2>&1; then
+                    cp -- "$candidate" "$target" || rc=1
+                    break
+                fi
             done
         fi
     fi

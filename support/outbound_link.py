@@ -77,11 +77,9 @@ def empty_value(value):
     return value is None or value == "" or value == [] or value == {}
 
 
-def decode_component(raw, label, plus=False):
+def decode_component(raw, label):
     if raw is None:
         return ""
-    if plus:
-        raw = raw.replace("+", " ")
     if re.search(r"%(?![0-9A-Fa-f]{2})", raw):
         fail("%s包含无效的百分号编码" % label)
     try:
@@ -142,13 +140,14 @@ def parse_query(query):
         raw_key, separator, raw_value = part.partition("=")
         if not separator:
             raw_value = ""
-        key = decode_component(raw_key, "查询参数名", plus=True).lower()
+        # RFC 3986 查询串里的 '+' 是字面字符，只有表单编码才映射为空格。
+        key = decode_component(raw_key, "查询参数名").lower()
         if not re.fullmatch(r"[a-z0-9_.-]+", key):
             fail("查询参数名无效")
         if key in seen:
             fail("查询参数重复: %s" % key)
         seen.add(key)
-        value = decode_component(raw_value, "查询参数 %s" % key, plus=True)
+        value = decode_component(raw_value, "查询参数 %s" % key)
         if not empty_value(value):
             params[key] = value
     return params
@@ -1061,6 +1060,9 @@ def parse_ss(link):
 
     if "@" in body:
         userinfo, endpoint_text = body.rsplit("@", 1)
+        # SIP002 允许端口后跟一个可选路径 "/"；整串 Base64 形式不做此处理，斜杠可能是载荷。
+        if endpoint_text.endswith("/"):
+            endpoint_text = endpoint_text[:-1]
         userinfo = decode_component(userinfo, "Shadowsocks 凭据")
         if ":" in userinfo:
             method_password = userinfo
@@ -1108,6 +1110,8 @@ def parse_socks(link):
         fail("SOCKS 链接格式无效")
     body, separator, fragment = raw.partition("#")
     body, query_separator, query = body.partition("?")
+    if not body:
+        fail("SOCKS 链接为空")
     if "@" not in body and ":" not in body:
         decoded = try_decode_base64_text(body)
         if decoded is not None:
@@ -1118,36 +1122,50 @@ def parse_socks(link):
                 link += "?" + query
             if separator:
                 link += "#" + fragment
-    url = split_url(link)
-    host, port = endpoint(url)
-    params = parse_query(url.query)
-    reject_unknown(params, set())
-    if url.path not in ("", "/"):
+            return parse_socks(link)
+    # 认证串先按 "@" 与地址分离，再由 "/" 判定路径；否则 Base64 凭据里的字面斜杠会被误认成路径。
+    if "@" in body:
+        userinfo, hostport = body.rsplit("@", 1)
+    else:
+        userinfo, hostport = None, body
+    hostport, slash, path = hostport.partition("/")
+    if slash and path:
         fail("SOCKS 链接不能包含路径")
+    # 字面斜杠只允许出现在 Base64 认证串；普通凭据里的 "/" 仍按路径拒绝，需用 %2F 编码。
+    if userinfo is not None and "/" in userinfo and ":" in userinfo:
+        fail("SOCKS 链接不能包含路径")
+    if query:
+        params = parse_query(query)
+        reject_unknown(params, set())
+    url = split_url("//" + hostport)
+    host, port = endpoint(url)
     outbound = {
         "type": "socks",
         "server": host,
         "server_port": port,
         "version": "5",
     }
-    if url.username is not None:
-        username = decode_component(url.username, "SOCKS 用户名")
-        if url.password is not None:
-            password = decode_component(url.password, "SOCKS 密码")
+    if userinfo is not None:
+        # 原始 userinfo 先按字面冒号分段，避免认证信息里的 %3A 被当成分隔符。
+        if ":" in userinfo:
+            raw_user, raw_password = userinfo.split(":", 1)
+            username = decode_component(raw_user, "SOCKS 用户名")
+            password = decode_component(raw_password, "SOCKS 密码")
         else:
-            decoded = try_decode_base64_text(username)
-            if decoded is None or ":" not in decoded:
-                fail("SOCKS 认证缺少密码")
-            username, password = decoded.split(":", 1)
-        if not username and not password:
-            username = ""
-        elif not username or not password:
+            decoded = decode_component(userinfo, "SOCKS 认证信息")
+            if ":" in decoded:
+                username, password = decoded.split(":", 1)
+            else:
+                decoded = try_decode_base64_text(decoded)
+                if decoded is None or ":" not in decoded:
+                    fail("SOCKS 认证缺少密码")
+                username, password = decoded.split(":", 1)
+        if not username or not password:
             fail("SOCKS 用户名和密码不能为空")
-        if username:
-            outbound["username"] = username
-            outbound["password"] = password
+        outbound["username"] = username
+        outbound["password"] = password
     return (
-        tag_value(url.fragment),
+        tag_value(fragment),
         outbound,
         {"protocol": "socks", "server": host, "port": port},
     )
@@ -1205,7 +1223,10 @@ def split_links(text):
                 if part:
                     parts.append(part)
             start = match.start()
-        tail = line[start:].strip(" \t,;，；")
+        # 有 fragment 时尾随全角标点可能是 tag 内容；无 fragment 时才按粘贴分隔符剥离。
+        tail = line[start:].strip(" \t,;")
+        if "#" not in tail:
+            tail = tail.strip("，；").strip(" \t,;")
         if tail:
             parts.append(tail)
     return [part for part in parts if part]
