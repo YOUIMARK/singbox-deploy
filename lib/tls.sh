@@ -113,8 +113,8 @@ sbd_tls_material_add() {
         import)
             [[ "$cert" = /* && "$key" = /* ]] || { _error '导入证书和私钥必须使用绝对路径'; return 1; }
             [[ "$cert" != "$key" && -f "$cert" && -f "$key" ]] || { _error '证书和私钥必须是两个可读文件'; return 1; }
-            # 复用同一对路径的既有记录，避免协调/接管反复导入产生重复证书资料。
-            id=$(jq -r --arg cert "$cert" --arg key "$key" '[.tls.certificates[]? | select(.kind=="import" and .certificate_path==$cert and .key_path==$key)] | if length==1 then .[0].id else empty end' "$stage/registry.json") || return 1
+            # 复用同一对路径与 SNI 的既有记录，避免协调/接管反复导入产生重复证书资料。
+            id=$(jq -r --arg cert "$cert" --arg key "$key" --arg name "$name" '[.tls.certificates[]? | select(.kind=="import" and .certificate_path==$cert and .key_path==$key and .server_name==$name)] | if length==1 then .[0].id else empty end' "$stage/registry.json") || return 1
             if [[ -z "$id" ]]; then
                 id=$(openssl rand -hex 4) || { _error '生成证书标识失败'; return 1; }
                 id="cert.$id"

@@ -80,9 +80,24 @@ external_contract() {
     t_run 1 sbd_apply sbd_tls_material_add import wrong.example.com "$CASE_TMP/external-cert.pem" "$CASE_TMP/external-key.pem"
     t_run 1 sbd_apply sbd_tls_material_add import import.example.com "$CASE_TMP/external-cert.pem" "$CASE_TMP/missing.pem"
 }
+shared_import_contract() {
+    t_seed
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 -subj /CN=first.example.com \
+        -addext subjectAltName=DNS:first.example.com,DNS:second.example.com \
+        -keyout "$CASE_TMP/shared-key.pem" -out "$CASE_TMP/shared-cert.pem" >/dev/null 2>&1 || exit 1
+    t_run 0 sbd_apply sbd_tls_material_add import first.example.com "$CASE_TMP/shared-cert.pem" "$CASE_TMP/shared-key.pem"
+    t_run 0 sbd_apply sbd_tls_material_add import second.example.com "$CASE_TMP/shared-cert.pem" "$CASE_TMP/shared-key.pem"
+    t_assert '同一证书路径的不同 SNI 各自登记' jq -e --arg cert "$CASE_TMP/shared-cert.pem" --arg key "$CASE_TMP/shared-key.pem" '
+        [.tls.certificates[]|select(.certificate_path==$cert and .key_path==$key)] as $items |
+        ($items|length)==2 and ([$items[].id]|unique|length)==2 and ([$items[].server_name]|sort)==["first.example.com","second.example.com"]' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_tls_material_add import first.example.com "$CASE_TMP/shared-cert.pem" "$CASE_TMP/shared-key.pem"
+    t_assert '相同路径与 SNI 仍复用原记录' jq -e --arg cert "$CASE_TMP/shared-cert.pem" --arg key "$CASE_TMP/shared-key.pem" '
+        [.tls.certificates[]|select(.certificate_path==$cert and .key_path==$key)]|length==2' "$SBD_REGISTRY"
+}
 # 本套件只调用真实菜单、OpenSSL、Schema 和核心；不向 CA 发起签发。
 t_case 'TLS 名称和标识输入契约' identity_contract
 t_case '三种 DNS-01 原生 provider 真实校验' provider_contract
 t_case 'P-256 IPv6 SAN 与证书/公钥信任' self_signed_contract
 t_case '导入 PEM 校验并保留外部所有权' external_contract
+t_case '共享证书按 SNI 保留独立登记' shared_import_contract
 t_finish

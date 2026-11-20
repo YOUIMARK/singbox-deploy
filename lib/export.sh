@@ -298,18 +298,49 @@ sbd_export_rebuild() {
     mv -- "$next" "$stage/exports" || { _error '发布暂存导出失败'; return 1; }
 }
 
+# 删除节点只清理该节点的派生输出并刷新分享清单，不重验其余节点的服务端事实。
+sbd_export_delete_cleanup() {
+    local stage="$1" next id
+    sbd_export_metadata_check "$stage/registry.json" || return 1
+    next=$(mktemp -d "$stage/exports.XXXXXXXX") || { _error '创建暂存导出目录失败'; return 1; }
+    if [[ -d "$stage/exports" ]]; then
+        cp -a -- "$stage/exports/." "$next/" || { _error '复制现有导出失败'; return 1; }
+    fi
+    sbd_export_prune "$stage" "$next" || return 1
+    : > "$next/links.txt" || { _error '清空分享清单失败'; return 1; }
+    while IFS= read -r id; do
+        [[ -n "$id" && -s "$next/$id.txt" ]] || continue
+        jq -e --arg id "$id" '.nodes[]|select(.id==$id)|(.stale // false)==false' "$stage/registry.json" >/dev/null || continue
+        cat -- "$next/$id.txt" >> "$next/links.txt" || { _error '重建分享清单失败'; return 1; }
+    done < <(jq -r '.nodes[].id' "$stage/registry.json") || return 1
+    rm -rf -- "$stage/exports" || { _error '替换暂存导出失败'; return 1; }
+    mv -- "$next" "$stage/exports" || { _error '发布暂存导出失败'; return 1; }
+}
+
 sbd_export_stale_mark() {
     local stage="$1" id="$2" reason="$3" content
     content=$(jq --arg id "$id" --arg reason "$reason" '(.nodes[]|select(.id==$id)) |= (. + {stale:true,stale_reason:$reason})' "$stage/registry.json") || return 1
     sbd_record_write "$stage/registry.json" "$content"
 }
 
-# 节点事实指纹：只覆盖 inbound_tag 与 config.json 中的该 inbound，不使用 mtime。
+# 节点事实指纹：覆盖 inbound_tag、config.json 中的该 inbound 及引用证书内容，不使用 mtime。
 sbd_export_stamp() {
-    local stage="$1" node="$2" tag stamp
+    local stage="$1" node="$2" tag inbound kind id cert cert_sha=''
     tag=$(jq -er '.inbound_tag' "$node") || return 1
-    stamp=$(jq -cS --arg tag "$tag" '[.inbounds[]? | select(.tag==$tag)] | if length==1 then .[0] else null end' "$stage/config.json" | sha256sum | cut -d' ' -f1) || return 1
-    printf '%s\n' "$stamp"
+    inbound=$(jq -cS --arg tag "$tag" '[.inbounds[]? | select(.tag==$tag)] | if length==1 then .[0] else null end' "$stage/config.json") || return 1
+    kind=$(jq -r '.tls_source.kind // empty' "$node") || return 1
+    if [[ "$kind" = certificate ]]; then
+        id=$(jq -r '.tls_source.id // empty' "$node") || return 1
+        cert=$(jq -r --arg id "$id" '[.tls.certificates[]? | select(.id==$id) | .certificate_path][0] // empty' "$stage/registry.json") || return 1
+        if [[ -n "$cert" && -f "$cert" ]]; then
+            cert_sha=$(sbd_entry_cert_sha "$cert" 2>/dev/null) || cert_sha='unreadable'
+        else
+            cert_sha='missing'
+        fi
+    fi
+    jq -cn --argjson inbound "$inbound" --arg cert_sha "$cert_sha" \
+        '{inbound:$inbound,certificate_sha256:(if $cert_sha=="" then null else $cert_sha end)}' |
+        sha256sum | cut -d' ' -f1 || return 1
 }
 
 sbd_export_clear_stale() {
@@ -331,10 +362,11 @@ sbd_export_prune() {
     while IFS= read -r -d '' path; do
         name=$(basename -- "$path") || return 1
         case "$name" in
-            node.*)
-                id="${name%.*}"
-                jq -e --arg id "$id" '.nodes[]|select(.id==$id)' "$stage/registry.json" >/dev/null 2>&1 || rm -f -- "$path" ;;
             links.txt|schema.json) ;;
+            *.json|*.txt)
+                id="${name%.*}"
+                [[ "$name" = "$id.json" || "$name" = "$id.txt" ]] || { rm -f -- "$path"; continue; }
+                jq -e --arg id "$id" '.nodes[]|select(.id==$id)' "$stage/registry.json" >/dev/null 2>&1 || rm -f -- "$path" ;;
             *) rm -f -- "$path" ;;
         esac
     done < <(find "$next" -maxdepth 1 -type f -print0)

@@ -648,7 +648,7 @@ sbd_entry_reconcile_all() {
     while IFS= read -r id; do
         [[ -n "$id" ]] || continue
         count=$((count+1))
-        targets="$targets $id"
+        targets="${targets:+$targets,}$id"
         if ! sbd_entry_reconcile "$stage" "$id"; then
             failed="$failed $id"
             rc=1
@@ -783,7 +783,7 @@ sbd_entry_create() {
     fi
     content=$(jq --slurpfile node "$stage/entry-node.json" '.nodes += $node' "$stage/registry.json") || return 1
     sbd_record_write "$stage/registry.json" "$content" || return 1
-    sbd_export_rebuild "$stage"
+    sbd_export_rebuild "$stage" "$id" strict
 }
 
 sbd_entry_change() {
@@ -793,8 +793,10 @@ sbd_entry_change() {
     profile=$(sbd_entry_text "$stage/entry-node.json" .profile 配置档) || return 1
     reality_mode=$(jq -r '.reality_mode // "direct"' "$stage/entry-node.json") || return 1
     case "$profile" in hysteria2|anytls|anyreality|shadowsocks|vmess_ws|vless_ws|vless_reality) ;; *) _error '此协议的节点操作尚未实现'; return 1 ;; esac
-    # 删除只核对身份；编辑仍严格比对节点自身事实，漂移时拒绝覆盖。
-    sbd_entry_align "$stage" "$stage/entry-node.json" "$scope" || return 1
+    # 删除不再需要连接该节点，只按登记清理；编辑仍严格比对节点自身事实。
+    if [[ "$action" != delete ]]; then
+        sbd_entry_align "$stage" "$stage/entry-node.json" "$scope" || return 1
+    fi
     tag=$(sbd_entry_text "$stage/entry-node.json" .inbound_tag inbound标识) || return 1
     case "$action" in
         name) [[ -n "$value" ]] || { _error '名称不能为空'; return 1; }; content=$(jq --arg value "$value" '.name=$value' "$stage/entry-node.json") || return 1 ;;
@@ -981,7 +983,7 @@ sbd_entry_change() {
             sbd_record_write "$stage/config.json" "$content" || return 1
             content=$(jq --arg id "$id" '.nodes |= map(select(.id!=$id))' "$stage/registry.json") || return 1
             sbd_record_write "$stage/registry.json" "$content" || return 1
-            sbd_export_rebuild "$stage" "$id"
+            sbd_export_delete_cleanup "$stage"
             return $?
             ;;
         *) _error '未知节点操作'; return 1 ;;

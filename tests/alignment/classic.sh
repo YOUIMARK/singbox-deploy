@@ -98,7 +98,7 @@ drift_contract() {
         jq "$expression" <<< "$original" > "$CASE_TMP/drift" || exit 1
         cp "$CASE_TMP/drift" "$SBD_CONFIG" || exit 1
         t_entry_save
-        t_run 1 sbd_apply sbd_export_rebuild
+        t_run 1 sbd_apply sbd_export_rebuild "$NODE_ID" strict
         t_entry_unchanged
     done
 }
