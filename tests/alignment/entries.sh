@@ -46,6 +46,93 @@ delete_referenced() {
     t_contains "$CASE_TMP/output" '仍被路由'
     t_entry_unchanged
 }
+delete_vmess_ws() {
+    t_seed
+    t_entry_add vmess_ws
+    local id="$NODE_ID" tag
+    tag=$(jq -r '.nodes[0].inbound_tag' "$SBD_REGISTRY") || exit 1
+    t_entry_save
+    t_run 0 sbd_apply sbd_entry_change "$id" delete ''
+    t_assert '节点登记已移除' jq -e '.nodes|length==0' "$SBD_REGISTRY"
+    t_assert 'CDN WS inbound 已移除' jq -e --arg tag "$tag" '([(.inbounds // [])[]|select(.tag==$tag)]|length)==0' "$SBD_CONFIG"
+}
+delete_with_unrelated_drift() {
+    t_seed
+    t_entry_add vmess_ws
+    local delete_id="$NODE_ID" drift_id drift_tag
+    t_entry_add anytls
+    drift_id="$NODE_ID"
+    drift_tag=$(jq -r --arg id "$drift_id" '.nodes[]|select(.id==$id)|.inbound_tag' "$SBD_REGISTRY") || exit 1
+    # 模拟手工编辑：改掉无关 AnyTLS 的凭据，使其登记事实与服务端 inbound 漂移。
+    t_patch_config '.inbounds |= map(if .tag==$tag then .users[0].password="manual-change" else . end)' --arg tag "$drift_tag"
+    t_run 0 sbd_apply sbd_entry_change "$delete_id" delete ''
+    t_assert '被删节点已移除' jq -e --arg id "$delete_id" 'all(.nodes[];.id!=$id)' "$SBD_REGISTRY"
+    t_assert '漂移节点保留登记并标记待协调' jq -e --arg id "$drift_id" '.nodes[]|select(.id==$id)|.stale==true' "$SBD_REGISTRY"
+    t_assert '漂移节点旧导出仍保留' test -f "$SBD_EXPORTS/$drift_id.txt"
+    t_assert '漂移节点不进入当前分享清单' test ! -s "$SBD_EXPORTS/links.txt"
+}
+reconcile_drift() {
+    t_seed
+    t_entry_add anytls
+    local id="$NODE_ID" tag
+    tag=$(jq -r '.nodes[0].inbound_tag' "$SBD_REGISTRY") || exit 1
+    t_patch_config --arg tag "$tag" '.inbounds |= map(if .tag==$tag then .users[0].password="manual-change" else . end)'
+    t_entry_save
+    # 先让重建把漂移节点标成待协调；随后协调应以当前配置为准回灌。
+    t_run 0 sbd_apply sbd_export_rebuild
+    t_assert '漂移节点被标记待协调' jq -e '.nodes[0].stale==true' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_entry_reconcile_all
+    t_assert '协调后清除待协调标记' jq -e '.nodes[0].stale!=true' "$SBD_REGISTRY"
+    t_assert '协调后登记跟随当前配置' jq -e '.nodes[0].client.password=="manual-change"' "$SBD_REGISTRY"
+    t_assert '协调后导出可读' test -s "$SBD_EXPORTS/$id.txt"
+}
+edit_with_own_drift() {
+    t_seed
+    t_entry_add anytls
+    local tag
+    tag=$(jq -r '.nodes[0].inbound_tag' "$SBD_REGISTRY") || exit 1
+    t_patch_config --arg tag "$tag" '.inbounds |= map(if .tag==$tag then .users[0].password="manual-change" else . end)'
+    t_entry_save
+    # 本次节点自身与配置不一致时不得被“待协调”掩盖，整次编辑必须回滚。
+    t_run 1 sbd_apply sbd_entry_change "$NODE_ID" password replace
+    t_contains "$CASE_TMP/output" '不一致'
+    t_entry_unchanged
+}
+cert_path_drift() {
+    t_seed
+    t_entry_add anytls
+    local id="$NODE_ID" tag cert key alt
+    tag=$(jq -r --arg id "$id" '.nodes[]|select(.id==$id)|.inbound_tag' "$SBD_REGISTRY") || exit 1
+    cert=$(jq -r --arg id "$id" '.nodes[]|select(.id==$id)|.certificate_id' "$SBD_REGISTRY") || exit 1
+    key=$(jq -r --arg id "$cert" '.tls.certificates[]|select(.id==$id)|.key_path' "$SBD_REGISTRY") || exit 1
+    alt="$CASE_TMP/alt"
+    mkdir -p "$alt" || exit 1
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -sha256 -days 30 \
+        -subj '/CN=node.example.com' -addext 'subjectAltName=DNS:node.example.com' \
+        -keyout "$alt/key.pem" -out "$alt/cert.pem" >/dev/null 2>&1 || exit 1
+    # 模拟手工改证书路径：只改 config.json，登记仍指向旧证书。
+    t_patch_config --arg tag "$tag" --arg cert "$alt/cert.pem" --arg key "$alt/key.pem" \
+        '.inbounds |= map(if .tag==$tag then .tls.certificate_path=$cert | .tls.key_path=$key else . end)'
+    t_entry_save
+    t_run 0 sbd_apply sbd_export_rebuild
+    t_assert '证书路径漂移被标记待协调' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.stale==true' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_entry_reconcile_all
+    t_assert '协调后节点可用新证书路径生成资料' test -s "$SBD_EXPORTS/$id.txt"
+    t_assert '协调后不重复登记同一对证书路径' jq -e --arg cert "$alt/cert.pem" --arg key "$alt/key.pem" '[.tls.certificates[]|select(.certificate_path==$cert and .key_path==$key)]|length==1' "$SBD_REGISTRY"
+}
+stamp_reuse() {
+    t_seed
+    t_entry_add anytls
+    t_entry_add vmess_ws
+    local id="$NODE_ID" stamp
+    stamp=$(jq -r --arg id "$id" '.nodes[]|select(.id==$id)|.facts_stamp' "$SBD_REGISTRY") || exit 1
+    [[ -n "$stamp" && "$stamp" != null ]] || { echo '缺少 facts_stamp'; exit 1; }
+    t_entry_save
+    # 配置未变时应直接复用导出，不能再把节点判成漂移。
+    t_run 0 sbd_apply sbd_export_rebuild
+    t_assert '未改配置时复用导出且不标记漂移' jq -e --arg id "$id" '.nodes[]|select(.id==$id)|.stale!=true and .facts_stamp!=null' "$SBD_REGISTRY"
+    t_assert '未改配置时导出逐字节保留' sbd_tree_compare "$ENTRY_SAVED/exports" "$SBD_EXPORTS"
+}
 state_failure() {
     t_seed
     mv() {
@@ -61,5 +148,11 @@ t_case '改名/认证/对外地址统一重建且稳定 ID 不变' edit_identity
 t_case '外部认证漂移拒绝覆盖且保留旧导出' drift_password
 t_case '定点节点编辑保留合法自定义配置' preserve_custom
 t_case '引用中的 inbound 不能删除' delete_referenced
+t_case '删除不带源站 TLS 的 CDN WS 节点' delete_vmess_ws
+t_case '无关节点漂移不阻塞删除并保留旧导出' delete_with_unrelated_drift
+t_case '按当前配置重新协调漂移节点' reconcile_drift
+t_case '本次节点自身漂移仍拒绝编辑' edit_with_own_drift
+t_case '证书路径漂移可由协调修复且不重复登记' cert_path_drift
+t_case '配置未变时复用校验摘要' stamp_reuse
 t_case '创建节点 state 失败整组回滚' state_failure
 t_finish

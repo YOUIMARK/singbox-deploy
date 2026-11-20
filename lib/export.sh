@@ -223,21 +223,62 @@ sbd_export_metadata_check() {
     ' "$1" >/dev/null 2>&1 || { _error '节点元数据缺失、重复或无效，保留旧输出'; return 1; }
 }
 
-# 从 registry 全量重建 exports：逐节点校验并生成客户端 JSON/分享链接，失败时保留旧输出。
+# 从 registry 全量重建 exports：逐节点校验并生成客户端 JSON/分享链接。
+# 对齐失败的节点保留旧导出并标为待协调，不让无关节点的历史漂移阻塞本次删除或编辑。
 sbd_export_rebuild() {
-    local stage="$1" next="$1/exports-next" work="$1/export-work" count index id name outbound uri content
+    local stage="$1" isolate="${2:-}" mode="${3:-isolate}" next="$1/exports-next" work="$1/export-work"
+    local count index id name outbound uri content stale='' old is_target targets stamp fresh
+    targets=",$isolate,"
     sbd_export_metadata_check "$stage/registry.json" || return 1
     [[ ! -e "$next" && ! -e "$work" ]] || { _error '导出候选位置被占用'; return 1; }
     mkdir -m 700 -- "$next" "$work" || { _error '创建导出候选失败'; return 1; }
+    old="$stage/exports"
+    [[ ! -d "$old" ]] || cp -a -- "$old/." "$next/" || { _error '复制旧导出失败'; return 1; }
+    # 重建分享清单时排除旧文件；失败节点仍沿用 next 中复制过来的旧资料。
     printf '' > "$next/links.txt" || { _error '创建分享清单失败'; return 1; }
     count=$(jq -r '.nodes|length' "$stage/registry.json") || return 1
     index=0
     while (( index < count )); do
         jq --argjson index "$index" '.nodes[$index]' "$stage/registry.json" > "$work/node.json" || { _error '读取节点资料失败'; return 1; }
         id=$(jq -er '.id' "$work/node.json") && name=$(jq -er '.name' "$work/node.json") || return 1
-        # 只导出实际登记的原生 inbound；漂移时拒绝选一边覆盖。
-        jq -e --slurpfile node "$work/node.json" '[.inbounds[]? | select(.tag==$node[0].inbound_tag)] | length==1 and .[0].type==$node[0].client.type' "$stage/config.json" >/dev/null || { _error '节点关联的 inbound 缺失、重复或协议不一致，保留旧输出'; return 1; }
-        sbd_entry_align "$stage" "$work/node.json" || return 1
+        # 本次操作的节点必须通过严格校验；其余节点的历史漂移才允许隔离。
+        is_target=false
+        [[ "$targets" != *",$id,"* ]] || is_target=true
+        # 登记中的事实指纹记录上次通过校验的 inbound 形态：配置未变就直接复用，
+        # 手动改过 config.json 才重新校验，避免每次操作都对全部节点重跑 TLS 检查。
+        stamp=$(sbd_export_stamp "$stage" "$work/node.json") || { _error '计算节点配置摘要失败'; return 1; }
+        fresh=false
+        if [[ -s "$next/$id.txt" && -s "$next/$id.json" ]] &&
+            jq -e --arg stamp "$stamp" '.facts_stamp == $stamp' "$work/node.json" >/dev/null; then
+            fresh=true
+        fi
+        # 漂移节点保留旧导出，但不得进入当前分享清单冒充最新资料。
+        if [[ "$fresh" != true ]] && jq -e '(.stale // false)==true' "$work/node.json" >/dev/null; then
+            if [[ "$mode" = strict && "$is_target" = true ]]; then
+                _error "本次操作的节点登记仍待协调，拒绝提交: $name"
+                return 1
+            fi
+            stale="$stale $name($id)"
+            index=$((index+1))
+            continue
+        fi
+        if [[ "$fresh" != true ]] && ! jq -e --slurpfile node "$work/node.json" '[.inbounds[]? | select(.tag==$node[0].inbound_tag)] | length==1 and .[0].type==$node[0].client.type' "$stage/config.json" >/dev/null; then
+            [[ "$mode" != strict || "$is_target" != true ]] || { _error "本次操作的节点关联 inbound 已缺失、重复或协议不一致: $name"; return 1; }
+            sbd_export_stale_mark "$stage" "$id" '节点关联的 inbound 缺失、重复或协议不一致' || return 1
+            stale="$stale $name($id)"
+            index=$((index+1))
+            continue
+        fi
+        if [[ "$fresh" != true ]] && ! sbd_entry_align "$stage" "$work/node.json"; then
+            if [[ "$mode" = strict && "$is_target" = true ]]; then
+                _error "本次操作的节点仍与已提交配置不一致，拒绝提交: $name"
+                return 1
+            fi
+            sbd_export_stale_mark "$stage" "$id" '服务端事实与登记不一致' || return 1
+            stale="$stale $name($id)"
+            index=$((index+1))
+            continue
+        fi
         outbound=$(jq '.client + {tag:.id}' "$work/node.json") || return 1
         content=$(jq -n --slurpfile outbound <(printf '%s' "$outbound") --arg id "$id" '{log:{level:"warn"},dns:{servers:[{type:"local",tag:"system"}],final:"system"},outbounds:$outbound,route:{final:$id,default_domain_resolver:"system"}}') || return 1
         sbd_record_write "$work/config.json" "$content" || return 1
@@ -248,11 +289,55 @@ sbd_export_rebuild() {
             ! printf '%s\n' "$uri" > "$next/$id.txt" || ! printf '%s\n' "$uri" >> "$next/links.txt"; then
             _error "写入节点导出失败: $name"; return 1
         fi
+        sbd_export_stamp_save "$stage" "$id" "$stamp" || return 1
         index=$((index+1))
     done
-    # 空登记也能显式清空旧派生输出；没有默认监听端口、TUN 或公网订阅服务。
+    sbd_export_prune "$stage" "$next" || return 1
+    [[ -z "$stale" ]] || printf '[信息] 以下节点与当前配置不一致，已保留旧导出:%s\n' "$stale" >&2
     rm -rf -- "$stage/exports" || { _error '替换暂存导出失败'; return 1; }
     mv -- "$next" "$stage/exports" || { _error '发布暂存导出失败'; return 1; }
+}
+
+sbd_export_stale_mark() {
+    local stage="$1" id="$2" reason="$3" content
+    content=$(jq --arg id "$id" --arg reason "$reason" '(.nodes[]|select(.id==$id)) |= (. + {stale:true,stale_reason:$reason})' "$stage/registry.json") || return 1
+    sbd_record_write "$stage/registry.json" "$content"
+}
+
+# 节点事实指纹：只覆盖 inbound_tag 与 config.json 中的该 inbound，不使用 mtime。
+sbd_export_stamp() {
+    local stage="$1" node="$2" tag stamp
+    tag=$(jq -er '.inbound_tag' "$node") || return 1
+    stamp=$(jq -cS --arg tag "$tag" '[.inbounds[]? | select(.tag==$tag)] | if length==1 then .[0] else null end' "$stage/config.json" | sha256sum | cut -d' ' -f1) || return 1
+    printf '%s\n' "$stamp"
+}
+
+sbd_export_clear_stale() {
+    local stage="$1" id="$2" content
+    jq -e --arg id "$id" '.nodes[]|select(.id==$id)|has("stale")' "$stage/registry.json" >/dev/null 2>&1 || return 0
+    content=$(jq --arg id "$id" '(.nodes[]|select(.id==$id)) |= del(.stale,.stale_reason)' "$stage/registry.json") || return 1
+    sbd_record_write "$stage/registry.json" "$content"
+}
+
+sbd_export_stamp_save() {
+    local stage="$1" id="$2" stamp="$3" content
+    content=$(jq --arg id "$id" --arg stamp "$stamp" '(.nodes[]|select(.id==$id)) |= (. + {facts_stamp:$stamp} + {stale:false} | del(.stale_reason))' "$stage/registry.json") || return 1
+    sbd_record_write "$stage/registry.json" "$content"
+}
+
+# exports 只保留当前登记节点的派生文件；删除节点的旧链接不能继续残留。
+sbd_export_prune() {
+    local stage="$1" next="$2" path name id
+    while IFS= read -r -d '' path; do
+        name=$(basename -- "$path") || return 1
+        case "$name" in
+            node.*)
+                id="${name%.*}"
+                jq -e --arg id "$id" '.nodes[]|select(.id==$id)' "$stage/registry.json" >/dev/null 2>&1 || rm -f -- "$path" ;;
+            links.txt|schema.json) ;;
+            *) rm -f -- "$path" ;;
+        esac
+    done < <(find "$next" -maxdepth 1 -type f -print0)
 }
 
 sbd_export_node() {

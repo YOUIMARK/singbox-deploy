@@ -105,8 +105,9 @@ sbd_dispatch() {
         16) sbd_check_config_tidy && sbd_success 'Schema 与核心检查通过；未验证网络连通' ;;
         17) sbd_observe_menu ;;
         18) sbd_update_script ;;
-        19) sbd_engine_menu ;;
-        20) sbd_uninstall_menu ;;
+        19) sbd_entry_reconcile_prompt ;;
+        20) sbd_engine_menu ;;
+        21) sbd_uninstall_menu ;;
         *) _error '无效菜单编号'; return 1 ;;
     esac
 }
@@ -120,9 +121,10 @@ sbd_console() {
             '@网络设置' '[6] DNS 设置' '[7] 分流设置' '[8] 证书管理' '[9] 隧道管理' \
             '@服务控制' '[10] 重启服务' '[11] 停止服务' '[12] 查看状态' '[13] 查看日志' '[14] 启用自启' '[15] 关闭自启' \
             '@配置与维护' '[16] 检查配置' '[17] 日志设置' '[18] 更新脚本' \
-            '@核心管理' '[19] sing-box 核心' '[20] 卸载脚本' '[0] 退出'
+            '[19] 协调托管节点' \
+            '@核心管理' '[20] sing-box 核心' '[21] 卸载脚本' '[0] 退出'
         page="$SBD_UI_PAGE"
-        sbd_read_integer '请选择' 0 20 || return 0
+        sbd_read_integer '请选择' 0 21 || return 0
         choice="$SBD_REPLY"
         [[ "$choice" != 0 ]] || return 0
         if sbd_dispatch "$choice"; then

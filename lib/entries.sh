@@ -621,7 +621,56 @@ sbd_entry_create_classic() {
     fi
     content=$(jq --slurpfile node "$stage/entry-node.json" '.nodes += $node' "$stage/registry.json") || return 1
     sbd_record_write "$stage/registry.json" "$content" || return 1
-    sbd_export_rebuild "$stage"
+    sbd_export_rebuild "$stage" "$id" strict
+}
+
+# 以当前 config.json 为服务端事实，重新生成已漂移节点的客户端事实；只处理显式指定的节点。
+sbd_entry_reconcile() {
+    local stage="$1" id="$2" node tag facts content client profile type server port
+    sbd_entry_lookup "$stage" "$id" || return 1
+    node="$stage/entry-node.json"
+    jq -e '(.stale // false)==true or (.stale_reason|type=="string")' "$node" >/dev/null || return 0
+    tag=$(sbd_entry_text "$node" .inbound_tag inbound标识) || return 1
+    profile=$(sbd_entry_text "$node" .profile 配置档) || return 1
+    jq -ce --arg tag "$tag" '[.inbounds[]?|select(.tag==$tag)]|select(length==1)|.[0]' "$stage/config.json" > "$stage/reconcile-inbound.json" || { _error '当前配置中找不到该节点唯一的 inbound'; return 1; }
+    type=$(jq -r '.type' "$stage/reconcile-inbound.json") || return 1
+    server=$(jq -r '.client.server' "$node") && port=$(jq -r '.client.server_port' "$node") || return 1
+    facts=$(jq -n --arg name "$(jq -r '.name' "$node")" --arg server "$server" --argjson port "$port" --arg server_name "$(jq -r '.client.tls.server_name // empty' "$node")" --arg trust "$(jq -r '.tls_source.trust // "system"' "$node")" --arg short "$(jq -r '.client.tls.reality.short_id // empty' "$node")" --argjson cdn "$(jq -c '.ingress // {}' "$node")" --argjson options "$(jq -c '{up_mbps: (.client.up_mbps // null), down_mbps: (.client.down_mbps // null)}' "$node")" \
+        '{name:$name,server:$server,server_port:$port,server_name:$server_name,trust:$trust,short_id:$short,cdn:$cdn,client_options:($options|with_entries(select(.value!=null)))}') || return 1
+    # 协调只复用 adopt 的事实回灌；导出由协调入口统一重建一次，避免暂存目录重入。
+    SBD_RECONCILE_ID=''
+    sbd_entry_adopt "$stage" "$tag" "$facts" "$id" 'no-export' || return 1
+    SBD_RECONCILE_ID="$id"
+}
+
+sbd_entry_reconcile_all() {
+    local stage="$1" id targets='' rc=0 failed='' count=0
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        count=$((count+1))
+        targets="$targets $id"
+        if ! sbd_entry_reconcile "$stage" "$id"; then
+            failed="$failed $id"
+            rc=1
+        fi
+    done < <(jq -r '.nodes[]|select((.stale // false)==true or (.stale_reason|type=="string"))|.id' "$stage/registry.json") || return 1
+    [[ -z "$failed" ]] || { _error "以下节点未能按当前配置协调，登记与旧导出保持不变:$failed"; return 1; }
+    [[ "$count" != 0 ]] || sbd_info '没有待协调节点'
+    # 协调产出的节点必须通过严格校验；其余节点仍按隔离规则处理，不能被“待协调”标记掩盖。
+    sbd_export_rebuild "$stage" "$targets" strict
+}
+
+sbd_entry_reconcile_prompt() {
+    local count ids answer
+    count=$(jq -r '[.nodes[]|select((.stale // false)==true)]|length' "$SBD_REGISTRY") || return 1
+    [[ "$count" != 0 ]] || { sbd_info '没有待协调节点；当前登记与已提交配置一致'; return 0; }
+    ids=$(jq -r '.nodes[]|select((.stale // false)==true)|"  \(.name) (\(.id))\(if .stale_reason then "  - "+.stale_reason else "" end)"' "$SBD_REGISTRY") || return 1
+    printf '[信息] 以下节点的登记事实与当前 config.json 不一致：\n%s\n' "$ids"
+    sbd_read_required '按当前配置重新协调这些节点并重建导出？输入 y 确认，其他输入取消' || return $?
+    [[ "$SBD_REPLY" = y ]] || return 2
+    sbd_apply sbd_entry_reconcile_all || return 1
+    sbd_success '待协调节点已按当前配置回灌；未验证外网连通'
+    sbd_service_after_change || sbd_info '登记已更新，但服务尚未运行；按上方提示处理后客户端才能连接'
 }
 
 sbd_entry_align_classic() {
@@ -744,6 +793,7 @@ sbd_entry_change() {
     profile=$(sbd_entry_text "$stage/entry-node.json" .profile 配置档) || return 1
     reality_mode=$(jq -r '.reality_mode // "direct"' "$stage/entry-node.json") || return 1
     case "$profile" in hysteria2|anytls|anyreality|shadowsocks|vmess_ws|vless_ws|vless_reality) ;; *) _error '此协议的节点操作尚未实现'; return 1 ;; esac
+    # 删除只核对身份；编辑仍严格比对节点自身事实，漂移时拒绝覆盖。
     sbd_entry_align "$stage" "$stage/entry-node.json" "$scope" || return 1
     tag=$(sbd_entry_text "$stage/entry-node.json" .inbound_tag inbound标识) || return 1
     case "$action" in
@@ -931,7 +981,7 @@ sbd_entry_change() {
             sbd_record_write "$stage/config.json" "$content" || return 1
             content=$(jq --arg id "$id" '.nodes |= map(select(.id!=$id))' "$stage/registry.json") || return 1
             sbd_record_write "$stage/registry.json" "$content" || return 1
-            sbd_export_rebuild "$stage"
+            sbd_export_rebuild "$stage" "$id"
             return $?
             ;;
         *) _error '未知节点操作'; return 1 ;;
@@ -954,7 +1004,7 @@ sbd_entry_change() {
         else . end
     ' "$stage/registry.json") || return 1
     sbd_record_write "$stage/registry.json" "$content" || return 1
-    sbd_export_rebuild "$stage"
+    sbd_export_rebuild "$stage" "$id" strict
 }
 
 sbd_entry_default() {
@@ -1464,7 +1514,7 @@ sbd_entry_actions() {
         *) _error '未知托管配置档'; return 1 ;;
     esac
     if [[ "$mode" != edit ]]; then
-        sbd_ui_options '[7] 删除节点（保留证书/provider 资料）'
+        sbd_ui_options '[7] 删除节点（不删除证书/provider 资料）'
         SBD_ENTRY_ACTIONS+='7 '
     fi
     case "$profile" in
@@ -1490,7 +1540,7 @@ sbd_entry_change_prompt() {
         profile=$(jq -r '.profile' <<< "$node") || return 1
         if [[ "$mode" = delete ]]; then
             name=$(jq -r '.name' <<< "$node") || { _error '读取节点名称失败'; return 1; }
-            sbd_info "将删除节点: $name ($id)；保留证书资料"
+            sbd_info "将删除节点: $name ($id)"
             choice=7
         else
             if [[ "$mode" = edit && "$profile" = hysteria2 ]]; then
@@ -1650,7 +1700,7 @@ sbd_entries_list() {
 }
 
 sbd_entry_adopt() {
-    local stage="$1" tag="$2" facts="$3" id="${4:-}" content profile inbound client source share='{}' name server port cert key public short trust cid actual_type transport
+    local stage="$1" tag="$2" facts="$3" id="${4:-}" export_mode="${5:-rebuild}" content profile inbound client source share='{}' name server port cert key public short trust cid actual_type transport
     sbd_record_write "$stage/adopt-facts.json" "$facts" || return 1
     jq -ce --arg tag "$tag" '[.inbounds[]?|select(.tag==$tag)]|select(length==1)|.[0]' "$stage/config.json" > "$stage/adopt-inbound.json" || { _error '配置中没有唯一的 inbound'; return 1; }
     inbound=$(cat "$stage/adopt-inbound.json") || return 1
@@ -1736,5 +1786,5 @@ sbd_entry_adopt() {
     sbd_entry_align "$stage" "$stage/adopt-node.json" || return 1
     content=$(jq --arg id "$id" --slurpfile node "$stage/adopt-node.json" '.nodes=([.nodes[]|select(.id!=$id)]+$node)' "$stage/registry.json") || return 1
     sbd_record_write "$stage/registry.json" "$content" || return 1
-    sbd_export_rebuild "$stage"
+    [[ "$export_mode" = no-export ]] || sbd_export_rebuild "$stage" "$id" strict
 }
