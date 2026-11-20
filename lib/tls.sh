@@ -113,15 +113,20 @@ sbd_tls_material_add() {
         import)
             [[ "$cert" = /* && "$key" = /* ]] || { _error '导入证书和私钥必须使用绝对路径'; return 1; }
             [[ "$cert" != "$key" && -f "$cert" && -f "$key" ]] || { _error '证书和私钥必须是两个可读文件'; return 1; }
-            id=$(openssl rand -hex 4) || { _error '生成证书标识失败'; return 1; }
-            id="cert.$id"; directory=''
+            # 复用同一对路径与 SNI 的既有记录，避免协调/接管反复导入产生重复证书资料。
+            id=$(jq -r --arg cert "$cert" --arg key "$key" --arg name "$name" '[.tls.certificates[]? | select(.kind=="import" and .certificate_path==$cert and .key_path==$key and .server_name==$name)] | if length==1 then .[0].id else empty end' "$stage/registry.json") || return 1
+            if [[ -z "$id" ]]; then
+                id=$(openssl rand -hex 4) || { _error '生成证书标识失败'; return 1; }
+                id="cert.$id"
+            fi
+            directory=''
             ;;
         *) _error '未知证书来源'; return 1 ;;
     esac
     sbd_tls_pair "$cert" "$key" "$name" "$stage" || return 1
     pin=$(sbd_tls_pin "$cert") || return 1
     content=$(jq --arg id "$id" --arg kind "$kind" --arg name "$name" --arg cert "$cert" --arg key "$key" --arg directory "$directory" --arg pin "$pin" '
-        .tls.certificates = ((.tls.certificates // []) + [{id:$id,kind:$kind,server_name:$name,
+        .tls.certificates = (((.tls.certificates // []) | map(select(.id!=$id))) + [{id:$id,kind:$kind,server_name:$name,
         certificate_path:$cert,key_path:$key,directory:$directory,public_key_sha256:$pin}])' "$stage/registry.json") || { _error '生成证书元数据失败'; return 1; }
     sbd_record_write "$stage/registry.json" "$content"
 }

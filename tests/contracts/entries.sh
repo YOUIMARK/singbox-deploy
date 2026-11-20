@@ -51,6 +51,16 @@ anytls_contract() {
     t_assert 'ID 不依赖名称和端口' test "$NODE_ID" != anytls-19501
     t_run 0 t_entry_uri anytls
 }
+reconcile_targets_contract() {
+    t_seed
+    local stage="$CASE_TMP/reconcile-stage"
+    mkdir -p -- "$stage" || exit 1
+    jq '.nodes=[{id:"node.first",stale:true},{id:"node.second",stale:true}]' "$SBD_REGISTRY" > "$stage/registry.json" || exit 1
+    sbd_entry_reconcile() { return 0; }
+    sbd_export_rebuild() { printf '%s\n' "$2" > "$CASE_TMP/targets"; }
+    t_run 0 sbd_entry_reconcile_all "$stage"
+    t_assert '多节点严格目标使用逗号分隔' test "$(cat "$CASE_TMP/targets")" = 'node.first,node.second'
+}
 reality_contract() {
     t_seed
     t_entry_add anyreality
@@ -433,6 +443,7 @@ reality_tunnel_two_nodes_contract() {
 }
 t_case '节点字段重问、十进制与秘密随机输入' field_contract
 t_case '节点编辑菜单不再询问映射端口' edit_menu_contract
+t_case '多节点协调统一严格目标分隔' reconcile_targets_contract
 t_case 'AnyTLS 真实配置与 URI 编码' anytls_contract
 t_case 'AnyReality 真实密钥与原生客户端/服务端' reality_contract
 t_case 'Hysteria2 默认 BBR 和证书指纹 URI' hy2_default
