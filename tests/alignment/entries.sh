@@ -102,6 +102,17 @@ delete_tls_drifted_target() {
     t_assert 'TLS 漂移的目标节点仍可删除' jq -e '.nodes|length==0' "$SBD_REGISTRY"
     t_assert 'TLS 漂移的目标 inbound 已移除' jq -e --arg tag "$tag" '[.inbounds // [] | .[] | select(.tag==$tag)]|length==0' "$SBD_CONFIG"
 }
+delete_missing_tag() {
+    t_seed
+    t_entry_add anytls
+    local id="$NODE_ID" tag
+    tag=$(jq -r '.nodes[0].inbound_tag' "$SBD_REGISTRY") || exit 1
+    t_patch_config --arg tag "$tag" '.inbounds |= map(if .tag==$tag then .tag=($tag+"-moved") else . end)'
+    t_entry_save
+    t_run 1 sbd_apply sbd_entry_change "$id" delete ''
+    t_contains "$CASE_TMP/output" '登记 inbound 不存在或重复'
+    t_entry_unchanged
+}
 reconcile_drift() {
     t_seed
     t_entry_add anytls
@@ -116,6 +127,34 @@ reconcile_drift() {
     t_assert '协调后清除待协调标记' jq -e '.nodes[0].stale!=true' "$SBD_REGISTRY"
     t_assert '协调后登记跟随当前配置' jq -e '.nodes[0].client.password=="manual-change"' "$SBD_REGISTRY"
     t_assert '协调后导出可读' test -s "$SBD_EXPORTS/$id.txt"
+}
+reconcile_ws_utls() {
+    t_seed
+    t_entry_add vmess_ws
+    local id="$NODE_ID" tag
+    tag=$(jq -r '.nodes[0].inbound_tag' "$SBD_REGISTRY") || exit 1
+    t_patch_config --arg tag "$tag" '.inbounds |= map(if .tag==$tag then .transport.path="/drift" else . end)'
+    t_entry_save
+    t_run 0 sbd_apply sbd_export_rebuild
+    t_assert 'WS 漂移节点被标记待协调' jq -e '.nodes[0].stale==true' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_entry_reconcile_all
+    t_assert '协调保留 uTLS Chrome 指纹' jq -e '.nodes[0].client.tls.utls.enabled==true and .nodes[0].client.tls.utls.fingerprint=="chrome"' "$SBD_REGISTRY"
+    t_assert '协调后客户端 JSON 保留 uTLS' jq -e '.outbounds[0].tls.utls.fingerprint=="chrome"' "$SBD_EXPORTS/$id.json"
+}
+reconcile_hy2_ports() {
+    t_seed
+    t_entry_add hysteria2
+    local id="$NODE_ID" tag
+    tag=$(jq -r '.nodes[0].inbound_tag' "$SBD_REGISTRY") || exit 1
+    t_run 0 sbd_apply sbd_entry_change "$id" hy2_hops '{"server_ports":["20000:20100"]}'
+    t_patch_config --arg tag "$tag" '.inbounds |= map(if .tag==$tag then .users[0].password="manual-change" else . end)'
+    t_entry_save
+    t_run 0 sbd_apply sbd_export_rebuild
+    t_assert 'Hy2 漂移节点被标记待协调' jq -e '.nodes[0].stale==true' "$SBD_REGISTRY"
+    t_run 0 sbd_apply sbd_entry_reconcile_all
+    t_assert '协调保留端口跳跃' jq -e '.nodes[0].client.server_ports==["20000:20100"]' "$SBD_REGISTRY"
+    t_assert '协调后客户端 JSON 保留端口跳跃' jq -e '.outbounds[0].server_ports==["20000:20100"] or .outbounds[0].server_ports=="20000:20100"' "$SBD_EXPORTS/$id.json"
+    t_run 0 t_entry_uri hysteria2
 }
 edit_with_own_drift() {
     t_seed
@@ -217,7 +256,10 @@ t_case '删除不带源站 TLS 的 CDN WS 节点' delete_vmess_ws
 t_case '删除不重验无关节点且保留旧导出' delete_with_unrelated_drift
 t_case '无关节点 TLS 漂移不阻塞删除' delete_with_unrelated_tls_drift
 t_case '目标节点 TLS 漂移仍可直接删除' delete_tls_drifted_target
+t_case '登记 inbound 缺失时拒绝删除' delete_missing_tag
 t_case '按当前配置重新协调漂移节点' reconcile_drift
+t_case '协调保留 CDN WS 的 uTLS' reconcile_ws_utls
+t_case '协调保留 Hysteria2 端口跳跃' reconcile_hy2_ports
 t_case '本次节点自身漂移仍拒绝编辑' edit_with_own_drift
 t_case '证书路径漂移可由协调修复且不重复登记' cert_path_drift
 t_case '配置未变时复用校验摘要' stamp_reuse

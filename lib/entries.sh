@@ -635,8 +635,8 @@ sbd_entry_reconcile() {
     jq -ce --arg tag "$tag" '[.inbounds[]?|select(.tag==$tag)]|select(length==1)|.[0]' "$stage/config.json" > "$stage/reconcile-inbound.json" || { _error '当前配置中找不到该节点唯一的 inbound'; return 1; }
     type=$(jq -r '.type' "$stage/reconcile-inbound.json") || return 1
     server=$(jq -r '.client.server' "$node") && port=$(jq -r '.client.server_port' "$node") || return 1
-    facts=$(jq -n --arg name "$(jq -r '.name' "$node")" --arg server "$server" --argjson port "$port" --arg server_name "$(jq -r '.client.tls.server_name // empty' "$node")" --arg trust "$(jq -r '.tls_source.trust // "system"' "$node")" --arg short "$(jq -r '.client.tls.reality.short_id // empty' "$node")" --argjson cdn "$(jq -c '.ingress // {}' "$node")" --argjson options "$(jq -c '{up_mbps: (.client.up_mbps // null), down_mbps: (.client.down_mbps // null)}' "$node")" \
-        '{name:$name,server:$server,server_port:$port,server_name:$server_name,trust:$trust,short_id:$short,cdn:$cdn,client_options:($options|with_entries(select(.value!=null)))}') || return 1
+    facts=$(jq -n --arg name "$(jq -r '.name' "$node")" --arg server "$server" --argjson port "$port" --arg server_name "$(jq -r '.client.tls.server_name // empty' "$node")" --arg trust "$(jq -r '.tls_source.trust // "system"' "$node")" --arg short "$(jq -r '.client.tls.reality.short_id // empty' "$node")" --argjson cdn "$(jq -c '.ingress // {}' "$node")" --argjson options "$(jq -c '{up_mbps: (.client.up_mbps // null), down_mbps: (.client.down_mbps // null)}' "$node")" --argjson utls "$(jq -c '.client.tls.utls // {}' "$node")" --argjson ports "$(jq -c '.client.server_ports // []' "$node")" \
+        '{name:$name,server:$server,server_port:$port,server_name:$server_name,trust:$trust,short_id:$short,cdn:$cdn,client_options:($options|with_entries(select(.value!=null))),utls:$utls,server_ports:$ports}') || return 1
     # 协调只复用 adopt 的事实回灌；导出由协调入口统一重建一次，避免暂存目录重入。
     SBD_RECONCILE_ID=''
     sbd_entry_adopt "$stage" "$tag" "$facts" "$id" 'no-export' || return 1
@@ -798,6 +798,10 @@ sbd_entry_change() {
         sbd_entry_align "$stage" "$stage/entry-node.json" "$scope" || return 1
     fi
     tag=$(sbd_entry_text "$stage/entry-node.json" .inbound_tag inbound标识) || return 1
+    if [[ "$action" = delete ]]; then
+        jq -e --arg tag "$tag" '[.inbounds[]? | select(.tag==$tag)] | length==1' "$stage/config.json" >/dev/null ||
+            { _error "登记 inbound 不存在或重复，拒绝删除: $tag"; return 1; }
+    fi
     case "$action" in
         name) [[ -n "$value" ]] || { _error '名称不能为空'; return 1; }; content=$(jq --arg value "$value" '.name=$value' "$stage/entry-node.json") || return 1 ;;
         password)
@@ -1702,7 +1706,7 @@ sbd_entries_list() {
 }
 
 sbd_entry_adopt() {
-    local stage="$1" tag="$2" facts="$3" id="${4:-}" export_mode="${5:-rebuild}" content profile inbound client source share='{}' name server port cert key public short trust cid actual_type transport
+    local stage="$1" tag="$2" facts="$3" id="${4:-}" export_mode="${5:-rebuild}" content profile inbound client source share='{}' name server port cert key public short trust cid actual_type transport ports
     sbd_record_write "$stage/adopt-facts.json" "$facts" || return 1
     jq -ce --arg tag "$tag" '[.inbounds[]?|select(.tag==$tag)]|select(length==1)|.[0]' "$stage/config.json" > "$stage/adopt-inbound.json" || { _error '配置中没有唯一的 inbound'; return 1; }
     inbound=$(cat "$stage/adopt-inbound.json") || return 1
@@ -1742,7 +1746,7 @@ sbd_entry_adopt() {
         if [[ "$profile" = *_ws ]]; then
             content=$(jq -c --slurpfile inbound "$stage/adopt-inbound.json" '.cdn + {path:$inbound[0].transport.path}' "$stage/adopt-facts.json") || return 1
             sbd_entry_cdn "$content" || return 1
-            client=$(jq --argjson cdn "$content" '. + {tls:{enabled:true,server_name:$cdn.host},transport:{type:"ws",path:$cdn.path,headers:{Host:$cdn.host}}}' <<< "$client") || return 1
+            client=$(jq --argjson cdn "$content" --argjson utls "$(jq -c '.utls // {}' "$stage/adopt-facts.json")" '. + {tls:({enabled:true,server_name:$cdn.host} + (if ($utls|length)>0 then {utls:$utls} else {} end)),transport:{type:"ws",path:$cdn.path,headers:{Host:$cdn.host}}}' <<< "$client") || return 1
             source='{"kind":"cdn"}'
         elif [[ "$profile" = anyreality || "$profile" = vless_reality ]]; then
             key=$(jq -er '.tls.reality.private_key' <<< "$inbound") || return 1
@@ -1772,7 +1776,8 @@ sbd_entry_adopt() {
             fi
             if [[ "$profile" = hysteria2 ]]; then
                 content=$(jq -c '.client_options // {}' "$stage/adopt-facts.json") || return 1
-                client=$(jq --argjson options "$content" --slurpfile inbound "$stage/adopt-inbound.json" '. + $options + (if $inbound[0].obfs!=null then {obfs:$inbound[0].obfs} else {} end) + (if $inbound[0].bbr_profile!=null then {bbr_profile:$inbound[0].bbr_profile} else {} end)' <<< "$client") || return 1
+                ports=$(jq -c '.server_ports // []' "$stage/adopt-facts.json") || return 1
+                client=$(jq --argjson options "$content" --argjson ports "$ports" --slurpfile inbound "$stage/adopt-inbound.json" '. + $options + (if ($ports|length)>0 then {server_ports:$ports} else {} end) + (if $inbound[0].obfs!=null then {obfs:$inbound[0].obfs} else {} end) + (if $inbound[0].bbr_profile!=null then {bbr_profile:$inbound[0].bbr_profile} else {} end)' <<< "$client") || return 1
             fi
         fi
     fi
